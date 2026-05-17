@@ -1,0 +1,111 @@
+import type { SchemaMetadata } from "./types.js";
+import type { AdapterProjection, KeymaDatabaseAdapter } from "./adapter.js";
+import type { KeymaOperation, KeymaLeafResult } from "./protocol.js";
+
+export type AclAction = "read" | "list" | "create" | "update" | "delete" | "traverse";
+
+export type RequestContext = {
+    identity?: {
+        id?: string;
+        roles?: readonly string[];
+        isSystem?: boolean;
+        [key: string]: unknown;
+    };
+    [key: string]: unknown;
+};
+
+export interface KeymaServerPlugin {
+    readonly name: string;
+
+    /** Called once after the server is constructed. */
+    init?(server: PluginServerHandle): Promise<void> | void;
+
+    /** Observe or early-reject the operation. Throw KeymaDenied to abort. */
+    beforeOperation?(
+        ctx: RequestContext,
+        op: KeymaOperation,
+    ): Promise<void> | void;
+
+    /** Rewrite the where clause for list/read/update/delete. Return undefined
+     *  to leave unchanged. The returned filter may use top-level logical
+     *  operators `$and` / `$or` / `$nor` (each carrying an array of sub-filter
+     *  objects) to combine clauses; adapters translate these recursively. */
+    transformFilter?(
+        ctx: RequestContext,
+        schema: SchemaMetadata,
+        where: Record<string, unknown>,
+        action: AclAction,
+    ):
+        | Promise<Record<string, unknown> | undefined>
+        | Record<string, unknown>
+        | undefined;
+
+    /** Trim the projection. Return undefined to leave unchanged. */
+    transformProjection?(
+        ctx: RequestContext,
+        schema: SchemaMetadata,
+        projection: AdapterProjection,
+        action: AclAction,
+    ): Promise<AdapterProjection | undefined> | AdapterProjection | undefined;
+
+    /** Validate/strip a write payload for create/update. Throw KeymaDenied or
+     *  KeymaFieldForbidden for hard reject. Return data (possibly mutated) or void. */
+    checkWrite?(
+        ctx: RequestContext,
+        schema: SchemaMetadata,
+        data: Record<string, unknown>,
+        action: "create" | "update",
+    ):
+        | Promise<Record<string, unknown> | void>
+        | Record<string, unknown>
+        | void;
+
+    /** Post-process records leaving the server. */
+    transformResult?(
+        ctx: RequestContext,
+        schema: SchemaMetadata,
+        records: Record<string, unknown>[],
+        action: AclAction,
+    ):
+        | Promise<Record<string, unknown>[] | undefined>
+        | Record<string, unknown>[]
+        | undefined;
+
+    /** Called after every operation regardless of outcome. Throws here are
+     *  swallowed (logged) so they cannot poison the response. */
+    afterOperation?(
+        ctx: RequestContext,
+        op: KeymaOperation,
+        result: KeymaLeafResult,
+    ): Promise<void> | void;
+}
+
+/** Subset of KeymaServer that plugins are allowed to call during init.
+ *  Avoids importing the concrete class (which would be a cycle). */
+export interface PluginServerHandle {
+    readonly schemas: readonly SchemaMetadata[];
+    readonly adapter: KeymaDatabaseAdapter;
+    schema(name: string): SchemaMetadata | undefined;
+}
+
+export class KeymaDenied extends Error {
+    readonly code = "FORBIDDEN" as const;
+    constructor(
+        message: string,
+        public readonly plugin?: string,
+    ) {
+        super(message);
+        this.name = "KeymaDenied";
+    }
+}
+
+export class KeymaFieldForbidden extends Error {
+    readonly code = "FIELD_FORBIDDEN" as const;
+    constructor(
+        public readonly fields: string[],
+        public readonly plugin?: string,
+    ) {
+        super(`Forbidden fields: ${fields.join(", ")}`);
+        this.name = "KeymaFieldForbidden";
+    }
+}

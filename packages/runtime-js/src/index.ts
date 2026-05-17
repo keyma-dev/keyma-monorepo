@@ -92,3 +92,11 @@ export type {
 
 export { KeymaServer } from "./server.js";
 export { createDirectTransport } from "./client.js";
+
+export { KeymaDenied, KeymaFieldForbidden } from "./plugin.js";
+export type {
+    KeymaServerPlugin,
+    PluginServerHandle,
+    RequestContext,
+    AclAction,
+} from "./plugin.js";

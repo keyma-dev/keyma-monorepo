@@ -87,6 +87,10 @@ export type KeymaLeafFailure = {
     error: string;
     code: string;
     errors?: ValidationError[];
+    /** Set when the failure originates in a plugin (FORBIDDEN, FIELD_FORBIDDEN, PLUGIN_ERROR). */
+    plugin?: string;
+    /** Set on FIELD_FORBIDDEN to identify the rejected fields. */
+    fields?: string[];
 };
 export type KeymaLeafResult<T = unknown> = KeymaLeafSuccess<T> | KeymaLeafFailure;
 

@@ -21,60 +21,118 @@ import type {
 } from "./protocol.js";
 import { validate, type ValidatorRegistry } from "./validate.js";
 import { format, type FormatterRegistry } from "./format.js";
+import {
+    KeymaDenied,
+    KeymaFieldForbidden,
+    type AclAction,
+    type KeymaServerPlugin,
+    type PluginServerHandle,
+    type RequestContext,
+} from "./plugin.js";
 
 type ServerOptions = {
     schemas: SchemaMetadata[];
     adapter: KeymaDatabaseAdapter;
     validators?: ValidatorRegistry;
     formatters?: FormatterRegistry;
+    plugins?: KeymaServerPlugin[];
 };
 
 export class KeymaServer {
     private readonly schemaMap: Map<string, SchemaMetadata>;
+    private readonly plugins: readonly KeymaServerPlugin[];
+    private initialized = false;
 
     constructor(private readonly opts: ServerOptions) {
         this.schemaMap = new Map(opts.schemas.map((s) => [s.name, s]));
+        this.plugins = opts.plugins ?? [];
     }
 
     async ensureSchemas(): Promise<void> {
+        await this.ensureInitialized();
         for (const schema of this.opts.schemas) {
             await this.opts.adapter.ensureSchema(schema);
         }
     }
 
-    async handle(request: KeymaRequest): Promise<KeymaBatchResponse> {
+    async handle(
+        request: KeymaRequest,
+        context: RequestContext = {},
+    ): Promise<KeymaBatchResponse> {
+        await this.ensureInitialized();
         const results: Record<string, KeymaLeafResult> = {};
         for (const [key, op] of Object.entries(request.operations)) {
-            results[key] = await this.handleOne(op);
+            results[key] = await this.handleOne(op, context);
         }
         return { results };
     }
 
-    private async handleOne(op: KeymaOperation): Promise<KeymaLeafResult> {
+    private async ensureInitialized(): Promise<void> {
+        if (this.initialized) return;
+        this.initialized = true;
+        const handle: PluginServerHandle = {
+            schemas: this.opts.schemas,
+            adapter: this.opts.adapter,
+            schema: (name) => this.schemaMap.get(name),
+        };
+        for (const p of this.plugins) {
+            if (p.init !== undefined) await p.init(handle);
+        }
+    }
+
+    private async handleOne(
+        op: KeymaOperation,
+        context: RequestContext,
+    ): Promise<KeymaLeafResult> {
         const schema = this.schemaMap.get(op.schema);
         if (schema === undefined) {
             return fail(`Unknown schema: ${op.schema}`, "SCHEMA_NOT_FOUND");
         }
 
-        switch (op.op) {
-            case "list":
-                return this.handleList(schema, op);
-            case "read":
-                return this.handleRead(schema, op);
-            case "create":
-                return this.handleCreate(schema, op);
-            case "update":
-                return this.handleUpdate(schema, op);
-            case "delete":
-                return this.handleDelete(schema, op);
-            case "traverse":
-                return this.handleTraverse(schema, op);
+        let result: KeymaLeafResult;
+        try {
+            for (const p of this.plugins) {
+                if (p.beforeOperation !== undefined) await p.beforeOperation(context, op);
+            }
+            switch (op.op) {
+                case "list":
+                    result = await this.handleList(schema, op, context);
+                    break;
+                case "read":
+                    result = await this.handleRead(schema, op, context);
+                    break;
+                case "create":
+                    result = await this.handleCreate(schema, op, context);
+                    break;
+                case "update":
+                    result = await this.handleUpdate(schema, op, context);
+                    break;
+                case "delete":
+                    result = await this.handleDelete(schema, op, context);
+                    break;
+                case "traverse":
+                    result = await this.handleTraverse(schema, op, context);
+                    break;
+            }
+        } catch (err) {
+            result = pluginErrorToResult(err);
         }
+
+        for (const p of this.plugins) {
+            if (p.afterOperation === undefined) continue;
+            try {
+                await p.afterOperation(context, op, result);
+            } catch {
+                // afterOperation errors must not change the response.
+            }
+        }
+        return result;
     }
 
     private async handleTraverse(
         terminalSchema: SchemaMetadata,
         op: Extract<KeymaOperation, { op: "traverse" }>,
+        context: RequestContext,
     ): Promise<KeymaLeafResult> {
         if (this.opts.adapter.traverse === undefined) {
             return fail(
@@ -99,8 +157,6 @@ export class KeymaServer {
                 return fail(`Schema "${name}" is not an edge schema`, "NOT_AN_EDGE");
             }
             edges.set(name, s);
-            // Track endpoint node schemas (looked up by sourceName, which matches
-            // how the frontend records edge.from / edge.to).
             for (const endpoint of [s.edge.from, s.edge.to]) {
                 const node = this.findBySourceName(endpoint);
                 if (node !== undefined) nodes.set(node.name, node);
@@ -115,13 +171,23 @@ export class KeymaServer {
             edges,
             nodes,
         };
-        const projection = this.buildAdapterProjection(terminalSchema, op.project);
+        let projection = this.buildAdapterProjection(terminalSchema, op.project);
+        projection = await this.runProjectionHooks(context, terminalSchema, projection, "traverse");
         const records = await this.opts.adapter.traverse(ctx, op.spec, projection);
+        // Traversal results may be records or paths; only run record hooks for
+        // the plain-records shape. Path-shaped results are passed through.
+        if (Array.isArray(records) && records.every((r) => isPlainRecord(r))) {
+            const out = await this.runResultHooks(
+                context,
+                terminalSchema,
+                records as Record<string, unknown>[],
+                "traverse",
+            );
+            return { ok: true, data: out };
+        }
         return { ok: true, data: records };
     }
 
-    /** Lookup helper for resolving edge-endpoint schemas, which are stored by
-     *  sourceName (TS class name) rather than the database `name`. */
     private findBySourceName(sourceName: string): SchemaMetadata | undefined {
         for (const s of this.opts.schemas) {
             if (s.sourceName === sourceName) return s;
@@ -132,35 +198,45 @@ export class KeymaServer {
     private async handleList(
         schema: SchemaMetadata,
         op: Extract<KeymaOperation, { op: "list" }>,
+        context: RequestContext,
     ): Promise<KeymaLeafResult> {
+        const where = await this.runFilterHooks(context, schema, op.where ?? {}, "list");
+        let projection = this.buildAdapterProjection(schema, op.project);
+        projection = await this.runProjectionHooks(context, schema, projection, "list");
         const query: ListQuery = {
-            where: op.where ?? {},
+            where,
             sort: op.options?.sort ?? {},
-            projection: this.buildAdapterProjection(schema, op.project),
+            projection,
         };
         if (op.options?.skip !== undefined) query.skip = op.options.skip;
         if (op.options?.limit !== undefined) query.limit = op.options.limit;
         const records = await this.opts.adapter.list(schema, query);
-        return { ok: true, data: records };
+        const out = await this.runResultHooks(context, schema, records, "list");
+        return { ok: true, data: out };
     }
 
     private async handleRead(
         schema: SchemaMetadata,
         op: Extract<KeymaOperation, { op: "read" }>,
+        context: RequestContext,
     ): Promise<KeymaLeafResult> {
-        const projection = this.buildAdapterProjection(schema, op.project);
-        const record = await this.opts.adapter.read(schema, op.where, projection);
+        const where = await this.runFilterHooks(context, schema, op.where, "read");
+        let projection = this.buildAdapterProjection(schema, op.project);
+        projection = await this.runProjectionHooks(context, schema, projection, "read");
+        const record = await this.opts.adapter.read(schema, where, projection);
         if (record === null) {
             return fail("Not found", "NOT_FOUND");
         }
-        return { ok: true, data: record };
+        const out = await this.runResultHooks(context, schema, [record], "read");
+        return { ok: true, data: out[0] ?? record };
     }
 
     private async handleCreate(
         schema: SchemaMetadata,
         op: Extract<KeymaOperation, { op: "create" }>,
+        context: RequestContext,
     ): Promise<KeymaLeafResult> {
-        const data = { ...op.data };
+        let data = { ...op.data };
         await format(schema, data, "save", this.opts.formatters);
         const writableSchema: SchemaMetadata = {
             ...schema,
@@ -170,28 +246,100 @@ export class KeymaServer {
         if (errors.length > 0) {
             return failValidation(errors);
         }
-        const projection = this.buildAdapterProjection(schema, op.project);
+        data = await this.runWriteHooks(context, schema, data, "create");
+        let projection = this.buildAdapterProjection(schema, op.project);
+        projection = await this.runProjectionHooks(context, schema, projection, "create");
         const created = await this.opts.adapter.create(schema, data, projection);
-        return { ok: true, data: created };
+        const out = await this.runResultHooks(context, schema, [created], "create");
+        return { ok: true, data: out[0] ?? created };
     }
 
     private async handleUpdate(
         schema: SchemaMetadata,
         op: Extract<KeymaOperation, { op: "update" }>,
+        context: RequestContext,
     ): Promise<KeymaLeafResult> {
-        const data = { ...op.data };
+        let data = { ...op.data };
         await format(schema, data, "save", this.opts.formatters);
-        const projection = this.buildAdapterProjection(schema, op.project);
-        const updated = await this.opts.adapter.update(schema, op.where, data, projection);
-        return { ok: true, data: updated };
+        data = await this.runWriteHooks(context, schema, data, "update");
+        const where = await this.runFilterHooks(context, schema, op.where, "update");
+        let projection = this.buildAdapterProjection(schema, op.project);
+        projection = await this.runProjectionHooks(context, schema, projection, "update");
+        const updated = await this.opts.adapter.update(schema, where, data, projection);
+        const out = await this.runResultHooks(context, schema, [updated], "update");
+        return { ok: true, data: out[0] ?? updated };
     }
 
     private async handleDelete(
         schema: SchemaMetadata,
         op: Extract<KeymaOperation, { op: "delete" }>,
+        context: RequestContext,
     ): Promise<KeymaLeafResult> {
-        await this.opts.adapter.delete(schema, op.where);
+        const where = await this.runFilterHooks(context, schema, op.where, "delete");
+        await this.opts.adapter.delete(schema, where);
         return { ok: true, data: null };
+    }
+
+    // ── Hook folds ───────────────────────────────────────────────────────────
+
+    private async runFilterHooks(
+        context: RequestContext,
+        schema: SchemaMetadata,
+        where: Record<string, unknown>,
+        action: AclAction,
+    ): Promise<Record<string, unknown>> {
+        let acc = where;
+        for (const p of this.plugins) {
+            if (p.transformFilter === undefined) continue;
+            const next = await p.transformFilter(context, schema, acc, action);
+            if (next !== undefined) acc = next;
+        }
+        return acc;
+    }
+
+    private async runProjectionHooks(
+        context: RequestContext,
+        schema: SchemaMetadata,
+        projection: AdapterProjection,
+        action: AclAction,
+    ): Promise<AdapterProjection> {
+        let acc = projection;
+        for (const p of this.plugins) {
+            if (p.transformProjection === undefined) continue;
+            const next = await p.transformProjection(context, schema, acc, action);
+            if (next !== undefined) acc = next;
+        }
+        return acc;
+    }
+
+    private async runWriteHooks(
+        context: RequestContext,
+        schema: SchemaMetadata,
+        data: Record<string, unknown>,
+        action: "create" | "update",
+    ): Promise<Record<string, unknown>> {
+        let acc = data;
+        for (const p of this.plugins) {
+            if (p.checkWrite === undefined) continue;
+            const next = await p.checkWrite(context, schema, acc, action);
+            if (next !== undefined) acc = next;
+        }
+        return acc;
+    }
+
+    private async runResultHooks(
+        context: RequestContext,
+        schema: SchemaMetadata,
+        records: Record<string, unknown>[],
+        action: AclAction,
+    ): Promise<Record<string, unknown>[]> {
+        let acc = records;
+        for (const p of this.plugins) {
+            if (p.transformResult === undefined) continue;
+            const next = await p.transformResult(context, schema, acc, action);
+            if (next !== undefined) acc = next;
+        }
+        return acc;
     }
 
     // ── Projection builder ───────────────────────────────────────────────────
@@ -275,4 +423,28 @@ function collectEdgeNames(spec: TraversalSpec): Set<string> {
 
 function failValidation(errors: ValidationError[]): KeymaLeafResult {
     return { ok: false, error: "Validation failed", code: "VALIDATION_FAILED", errors };
+}
+
+function isPlainRecord(v: unknown): v is Record<string, unknown> {
+    return typeof v === "object" && v !== null && !Array.isArray(v) && !("nodes" in v && "edges" in v);
+}
+
+function pluginErrorToResult(err: unknown): KeymaLeafResult {
+    if (err instanceof KeymaDenied) {
+        const out: KeymaLeafResult = { ok: false, error: err.message, code: err.code };
+        if (err.plugin !== undefined) out.plugin = err.plugin;
+        return out;
+    }
+    if (err instanceof KeymaFieldForbidden) {
+        const out: KeymaLeafResult = {
+            ok: false,
+            error: err.message,
+            code: err.code,
+            fields: err.fields,
+        };
+        if (err.plugin !== undefined) out.plugin = err.plugin;
+        return out;
+    }
+    const message = err instanceof Error ? err.message : String(err);
+    return { ok: false, error: message, code: "PLUGIN_ERROR" };
 }
