@@ -1,0 +1,23 @@
+import { compile } from "@keyma/compiler-frontend-ts";
+import type { KeymaFrontend, ResolvedConfig } from "@keyma/compiler";
+import { resolveSources } from "./sources.js";
+
+/**
+ * Adapts `@keyma/compiler-frontend-ts`'s synchronous `compile()` to the async
+ * `KeymaFrontend` plugin shape expected by the driver. Source patterns in the
+ * resolved config are globbed relative to `cwd`.
+ */
+export function createTsFrontend(cwd: string): KeymaFrontend {
+    return {
+        name: "@keyma/compiler-frontend-ts",
+        sourceExtensions: [".ts"],
+        async compile(config: ResolvedConfig) {
+            const files = await resolveSources(config.source, cwd);
+            return compile({
+                files,
+                customValidators: config.customValidators,
+                customFormatters: config.customFormatters,
+            });
+        },
+    };
+}

@@ -1,0 +1,293 @@
+import { describe, it, before, after, beforeEach } from "node:test";
+import assert from "node:assert/strict";
+import type { AdapterTraversalContext, SchemaMetadata } from "@keyma/runtime-js";
+import { MongoAdapter } from "../src/index.js";
+import {
+    AUTHORSHIP_SCHEMA,
+    FRIENDSHIP_SCHEMA,
+    OIDS,
+    ORG_SCHEMA,
+    POST_SCHEMA,
+    TAG_SCHEMA,
+    TAGGING_SCHEMA,
+    USER_SCHEMA,
+} from "./fixtures.js";
+import { clean, startMongo, stopMongo, type TestHandle } from "./setup.js";
+
+function makeCtx(
+    start: SchemaMetadata,
+    terminal: SchemaMetadata,
+    edges: SchemaMetadata[],
+    nodes: SchemaMetadata[],
+): AdapterTraversalContext {
+    return {
+        startSchema: start,
+        terminalSchema: terminal,
+        edges: new Map(edges.map((e) => [e.name, e])),
+        nodes: new Map(nodes.map((n) => [n.name, n])),
+    };
+}
+
+describe("MongoAdapter — traverse", () => {
+    let h: TestHandle;
+    let adapter: MongoAdapter;
+
+    before(async () => {
+        h = await startMongo();
+    });
+    after(async () => {
+        await stopMongo(h);
+    });
+
+    beforeEach(async () => {
+        await clean(h);
+        adapter = new MongoAdapter(h.db);
+        for (const s of [
+            ORG_SCHEMA,
+            USER_SCHEMA,
+            POST_SCHEMA,
+            TAG_SCHEMA,
+            FRIENDSHIP_SCHEMA,
+            AUTHORSHIP_SCHEMA,
+            TAGGING_SCHEMA,
+        ]) {
+            await adapter.ensureSchema(s);
+        }
+    });
+
+    async function seedAuthorshipGraph(): Promise<void> {
+        await adapter.create(USER_SCHEMA, { id: OIDS.alice, email: "alice@x.com", name: "alice" });
+        await adapter.create(USER_SCHEMA, { id: OIDS.bob,   email: "bob@x.com",   name: "bob" });
+        await adapter.create(POST_SCHEMA, { id: OIDS.p1, title: "p1" });
+        await adapter.create(POST_SCHEMA, { id: OIDS.p2, title: "p2" });
+        await adapter.create(POST_SCHEMA, { id: OIDS.p3, title: "p3" });
+        await adapter.create(TAG_SCHEMA,  { id: OIDS.tech, label: "tech" });
+        await adapter.create(TAG_SCHEMA,  { id: OIDS.news, label: "news" });
+        // alice→p1, alice→p2, bob→p3
+        await adapter.create(AUTHORSHIP_SCHEMA, { id: OIDS.a1, author: OIDS.alice, post: OIDS.p1 });
+        await adapter.create(AUTHORSHIP_SCHEMA, { id: OIDS.a2, author: OIDS.alice, post: OIDS.p2 });
+        await adapter.create(AUTHORSHIP_SCHEMA, { id: OIDS.a3, author: OIDS.bob,   post: OIDS.p3 });
+        // p1→tech, p2→news, p3→tech
+        await adapter.create(TAGGING_SCHEMA, { id: OIDS.t1, post: OIDS.p1, tag: OIDS.tech });
+        await adapter.create(TAGGING_SCHEMA, { id: OIDS.t2, post: OIDS.p2, tag: OIDS.news });
+        await adapter.create(TAGGING_SCHEMA, { id: OIDS.t3, post: OIDS.p3, tag: OIDS.tech });
+    }
+
+    it("heterogeneous chain User → wrote → Post → tagged → Tag returns tags", async () => {
+        await seedAuthorshipGraph();
+        const ctx = makeCtx(
+            USER_SCHEMA,
+            TAG_SCHEMA,
+            [AUTHORSHIP_SCHEMA, TAGGING_SCHEMA],
+            [USER_SCHEMA, POST_SCHEMA, TAG_SCHEMA],
+        );
+        const result = await adapter.traverse(ctx, {
+            start: { schema: "user", where: { id: OIDS.alice } },
+            steps: [
+                { via: "authorship", direction: "out" },
+                { via: "tagging", direction: "out" },
+            ],
+            emit: "nodes",
+        });
+        const tagIds = (result as Record<string, unknown>[])
+            .map((r) => r["id"])
+            .sort();
+        assert.deepEqual(tagIds, [OIDS.tech, OIDS.news].sort());
+    });
+
+    it("emit: edges returns the last-hop edge", async () => {
+        await seedAuthorshipGraph();
+        const ctx = makeCtx(
+            USER_SCHEMA,
+            TAG_SCHEMA,
+            [AUTHORSHIP_SCHEMA, TAGGING_SCHEMA],
+            [USER_SCHEMA, POST_SCHEMA, TAG_SCHEMA],
+        );
+        const result = await adapter.traverse(ctx, {
+            start: { schema: "user", where: { id: OIDS.alice } },
+            steps: [
+                { via: "authorship", direction: "out" },
+                { via: "tagging", direction: "out" },
+            ],
+            emit: "edges",
+        });
+        const rows = result as Record<string, unknown>[];
+        assert.equal(rows.length, 2);
+        const ids = rows.map((r) => r["id"]).sort();
+        assert.deepEqual(ids, [OIDS.t1, OIDS.t2].sort());
+    });
+
+    it("emit: paths returns { nodes, edges } per path", async () => {
+        await seedAuthorshipGraph();
+        const ctx = makeCtx(
+            USER_SCHEMA,
+            TAG_SCHEMA,
+            [AUTHORSHIP_SCHEMA, TAGGING_SCHEMA],
+            [USER_SCHEMA, POST_SCHEMA, TAG_SCHEMA],
+        );
+        const result = await adapter.traverse(ctx, {
+            start: { schema: "user", where: { id: OIDS.alice } },
+            steps: [
+                { via: "authorship", direction: "out" },
+                { via: "tagging", direction: "out" },
+            ],
+            emit: "paths",
+        });
+        const paths = result as { nodes: Record<string, unknown>[]; edges: Record<string, unknown>[] }[];
+        assert.equal(paths.length, 2);
+        for (const p of paths) {
+            assert.equal(p.nodes.length, 3);
+            assert.equal(p.edges.length, 2);
+        }
+    });
+
+    it("direction: in traverses backwards (Tag → tagged-by → Post → wrote-by → User)", async () => {
+        await seedAuthorshipGraph();
+        const ctx = makeCtx(
+            TAG_SCHEMA,
+            USER_SCHEMA,
+            [TAGGING_SCHEMA, AUTHORSHIP_SCHEMA],
+            [USER_SCHEMA, POST_SCHEMA, TAG_SCHEMA],
+        );
+        const result = await adapter.traverse(ctx, {
+            start: { schema: "tag", where: { id: OIDS.tech } },
+            steps: [
+                { via: "tagging", direction: "in" },
+                { via: "authorship", direction: "in" },
+            ],
+            emit: "nodes",
+        });
+        const userIds = (result as Record<string, unknown>[])
+            .map((r) => r["id"])
+            .sort();
+        assert.deepEqual(userIds, [OIDS.alice, OIDS.bob].sort());
+    });
+
+    it("step.edgeWhere filters edges", async () => {
+        await seedAuthorshipGraph();
+        const ctx = makeCtx(
+            USER_SCHEMA,
+            POST_SCHEMA,
+            [AUTHORSHIP_SCHEMA],
+            [USER_SCHEMA, POST_SCHEMA],
+        );
+        const result = await adapter.traverse(ctx, {
+            start: { schema: "user", where: { id: OIDS.alice } },
+            steps: [
+                { via: "authorship", direction: "out", edgeWhere: { post: OIDS.p1 } },
+            ],
+            emit: "nodes",
+        });
+        const ids = (result as Record<string, unknown>[]).map((r) => r["id"]);
+        assert.deepEqual(ids, [OIDS.p1]);
+    });
+
+    async function seedFriendGraph(): Promise<void> {
+        for (const id of [OIDS.a, OIDS.b, OIDS.c, OIDS.d, OIDS.e]) {
+            await adapter.create(USER_SCHEMA, { id, email: `${id}@x.com`, name: id });
+        }
+        // a-b-c-d-e chain
+        await adapter.create(FRIENDSHIP_SCHEMA, { id: OIDS.f1, userA: OIDS.a, userB: OIDS.b });
+        await adapter.create(FRIENDSHIP_SCHEMA, { id: OIDS.f2, userA: OIDS.b, userB: OIDS.c });
+        await adapter.create(FRIENDSHIP_SCHEMA, { id: OIDS.f3, userA: OIDS.c, userB: OIDS.d });
+        await adapter.create(FRIENDSHIP_SCHEMA, { id: OIDS.f4, userA: OIDS.d, userB: OIDS.e });
+    }
+
+    it("homogeneous repeat: depth.max returns users up to N hops", async () => {
+        await seedFriendGraph();
+        const ctx = makeCtx(
+            USER_SCHEMA,
+            USER_SCHEMA,
+            [FRIENDSHIP_SCHEMA],
+            [USER_SCHEMA],
+        );
+        const result = await adapter.traverse(ctx, {
+            start: { schema: "user", where: { id: OIDS.a } },
+            repeat: { via: "friendship", direction: "out" },
+            depth: { max: 3 },
+            emit: "nodes",
+        });
+        const ids = (result as Record<string, unknown>[]).map((r) => r["id"]).sort();
+        assert.deepEqual(ids, [OIDS.b, OIDS.c, OIDS.d].sort());
+    });
+
+    it("repeat with depth.min skips direct connections", async () => {
+        await seedFriendGraph();
+        const ctx = makeCtx(
+            USER_SCHEMA,
+            USER_SCHEMA,
+            [FRIENDSHIP_SCHEMA],
+            [USER_SCHEMA],
+        );
+        const result = await adapter.traverse(ctx, {
+            start: { schema: "user", where: { id: OIDS.a } },
+            repeat: { via: "friendship", direction: "out" },
+            depth: { min: 2, max: 4 },
+            emit: "nodes",
+        });
+        const ids = (result as Record<string, unknown>[]).map((r) => r["id"]).sort();
+        assert.deepEqual(ids, [OIDS.c, OIDS.d, OIDS.e].sort());
+    });
+
+    it("repeat with emit: edges returns traversed edges", async () => {
+        await seedFriendGraph();
+        const ctx = makeCtx(
+            USER_SCHEMA,
+            USER_SCHEMA,
+            [FRIENDSHIP_SCHEMA],
+            [USER_SCHEMA],
+        );
+        const result = await adapter.traverse(ctx, {
+            start: { schema: "user", where: { id: OIDS.a } },
+            repeat: { via: "friendship", direction: "out" },
+            depth: { max: 2 },
+            emit: "edges",
+        });
+        const ids = (result as Record<string, unknown>[]).map((r) => r["id"]).sort();
+        assert.deepEqual(ids, [OIDS.f1, OIDS.f2].sort());
+    });
+
+    it("repeat with emit: paths returns ordered paths via unrolled fallback", async () => {
+        await seedFriendGraph();
+        const ctx = makeCtx(
+            USER_SCHEMA,
+            USER_SCHEMA,
+            [FRIENDSHIP_SCHEMA],
+            [USER_SCHEMA],
+        );
+        const result = await adapter.traverse(ctx, {
+            start: { schema: "user", where: { id: OIDS.a } },
+            repeat: { via: "friendship", direction: "out" },
+            depth: { min: 1, max: 3 },
+            emit: "paths",
+        });
+        const paths = result as { nodes: Record<string, unknown>[]; edges: Record<string, unknown>[] }[];
+        assert.equal(paths.length, 3);
+        const sorted = paths.map((p) => p.nodes.map((n) => n["id"]).join("-")).sort();
+        const expected = [
+            [OIDS.a, OIDS.b].join("-"),
+            [OIDS.a, OIDS.b, OIDS.c].join("-"),
+            [OIDS.a, OIDS.b, OIDS.c, OIDS.d].join("-"),
+        ].sort();
+        assert.deepEqual(sorted, expected);
+    });
+
+    it("terminal spec.where filters terminal nodes", async () => {
+        await seedFriendGraph();
+        const ctx = makeCtx(
+            USER_SCHEMA,
+            USER_SCHEMA,
+            [FRIENDSHIP_SCHEMA],
+            [USER_SCHEMA],
+        );
+        const result = await adapter.traverse(ctx, {
+            start: { schema: "user", where: { id: OIDS.a } },
+            repeat: { via: "friendship", direction: "out" },
+            depth: { max: 3 },
+            where: { id: { $in: [OIDS.c, OIDS.d] } },
+            emit: "nodes",
+        });
+        const ids = (result as Record<string, unknown>[]).map((r) => r["id"]).sort();
+        assert.deepEqual(ids, [OIDS.c, OIDS.d].sort());
+    });
+});

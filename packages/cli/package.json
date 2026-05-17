@@ -1,0 +1,33 @@
+{
+    "name": "@keyma/cli",
+    "version": "0.1.0",
+    "description": "Command-line interface for Keyma — project scaffolding and build orchestration",
+    "type": "module",
+    "main": "./dist/src/index.js",
+    "types": "./dist/src/index.d.ts",
+    "bin": {
+        "keyma": "./dist/src/bin.js"
+    },
+    "exports": {
+        ".": {
+            "import": "./dist/src/index.js",
+            "types": "./dist/src/index.d.ts"
+        }
+    },
+    "scripts": {
+        "build": "tsc && chmod +x dist/src/bin.js",
+        "test": "tsc && chmod +x dist/src/bin.js && node --test dist/test/*.test.js"
+    },
+    "dependencies": {
+        "@keyma/compiler": "*",
+        "@keyma/compiler-backend-js": "*",
+        "@keyma/compiler-frontend-ts": "*",
+        "@keyma/ir": "*",
+        "typescript": "*"
+    },
+    "devDependencies": {
+        "@keyma/dsl": "*",
+        "@types/node": "*",
+        "typescript": "*"
+    }
+}

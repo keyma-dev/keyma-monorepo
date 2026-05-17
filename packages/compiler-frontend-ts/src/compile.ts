@@ -1,0 +1,303 @@
+import path from "node:path";
+import { fileURLToPath } from "node:url";
+import ts from "typescript";
+import type { KeymaIR, IRDiagnostic } from "@keyma/ir";
+import { createProgram, DEFAULT_COMPILER_OPTIONS, type VirtualFiles } from "./program.js";
+import { discoverSchemas } from "./discover.js";
+import { extractSchema } from "./extract-schema.js";
+import { flattenAll } from "./flatten.js";
+import {
+    mkError,
+    KEYMA001,
+    KEYMA031,
+    KEYMA060,
+    KEYMA061,
+    KEYMA062,
+    KEYMA064,
+    KEYMA070,
+} from "./diagnostics.js";
+
+export type FrontendConfig = {
+    /** Absolute paths to user schema TypeScript source files. */
+    files: readonly string[];
+    /** TypeScript compiler options (defaults to strict + experimentalDecorators). */
+    compilerOptions?: ts.CompilerOptions;
+    /** Module name of the Keyma DSL. Defaults to "@keyma/dsl". */
+    dslModuleName?: string;
+    /** Registered custom validator names. */
+    customValidators?: readonly string[];
+    /** Registered custom formatter names. */
+    customFormatters?: readonly string[];
+    /** Compiler version string embedded in the IR document. */
+    compilerVersion?: string;
+    /** IR schema version string. Defaults to "1.0.0". */
+    irVersion?: string;
+};
+
+export type CompileResult = {
+    ir: KeymaIR;
+    diagnostics: IRDiagnostic[];
+};
+
+/** Compile TypeScript source files to Keyma IR. */
+export function compile(config: FrontendConfig): CompileResult {
+    const options = { ...DEFAULT_COMPILER_OPTIONS, ...(config.compilerOptions ?? {}) };
+    const program = createProgram(config.files, options);
+    return compileProgram(program, config);
+}
+
+/**
+ * Compile virtual in-memory TypeScript sources to Keyma IR.
+ * Virtual files are served from memory; module resolution (e.g. @keyma/dsl)
+ * uses the real file system starting from `baseDir`.
+ */
+export function compileVirtual(
+    virtualSources: Record<string, string>,
+    config: Omit<FrontendConfig, "files"> & { baseDir?: string }
+): CompileResult {
+    const baseDir = config.baseDir ?? defaultBaseDir();
+    const virtualFiles = new Map<string, string>();
+    const rootFileNames: string[] = [];
+
+    for (const [relativeName, content] of Object.entries(virtualSources)) {
+        const absPath = path.resolve(baseDir, relativeName);
+        virtualFiles.set(absPath, content);
+        rootFileNames.push(absPath);
+    }
+
+    const options = { ...DEFAULT_COMPILER_OPTIONS, ...(config.compilerOptions ?? {}) };
+    const program = createProgram(rootFileNames, options, virtualFiles as VirtualFiles);
+    return compileProgram(program, { ...config, files: rootFileNames });
+}
+
+function compileProgram(program: ts.Program, config: FrontendConfig): CompileResult {
+    const checker = program.getTypeChecker();
+    const dslModuleName = config.dslModuleName ?? "@keyma/dsl";
+    const diagnostics: IRDiagnostic[] = [];
+
+    const discoverCtx = { checker, dslModuleName, diagnostics };
+
+    // Pass 1: discover all @Schema classes
+    const discovered = discoverSchemas(program, discoverCtx);
+
+    const schemaClassNames = new Set(discovered.map((d) => d.className));
+    const extractCtx = {
+        checker,
+        dslModuleName,
+        schemaClassNames,
+        customValidators: new Set(config.customValidators ?? []),
+        customFormatters: new Set(config.customFormatters ?? []),
+        diagnostics,
+    };
+
+    // Pass 2: extract fields for each schema (own fields only)
+    const rawSchemas = discovered.map((d) => extractSchema(d, extractCtx));
+
+    const schemasBySourceName = new Map(rawSchemas.map((s) => [s.sourceName, s]));
+
+    // Pass 3: flatten inheritance
+    const flattenCtx = { schemas: schemasBySourceName, diagnostics };
+    const schemas = flattenAll(rawSchemas, flattenCtx);
+
+    // Post-processing: duplicate name check
+    checkDuplicateNames(schemas, diagnostics);
+
+    // Post-processing: public schema leaks private schema
+    checkVisibilityLeaks(schemas, diagnostics);
+
+    // Post-processing: edge schema structural checks (from/to fields/indexes/refs)
+    checkEdgeSchemas(schemas, diagnostics);
+
+    // Post-processing: every Reference<T> target schema must declare an ID field
+    checkReferenceTargetsHaveId(schemas, diagnostics);
+
+    const ir: KeymaIR = {
+        irVersion: config.irVersion ?? "1.0.0",
+        compilerVersion: config.compilerVersion ?? "0.1.0",
+        schemas,
+        diagnostics,
+    };
+
+    return { ir, diagnostics };
+}
+
+function checkDuplicateNames(schemas: import("@keyma/ir").IRSchema[], diagnostics: IRDiagnostic[]): void {
+    const seen = new Map<string, string>(); // name → sourceName
+    for (const schema of schemas) {
+        const existing = seen.get(schema.name);
+        if (existing !== undefined) {
+            diagnostics.push(
+                mkError(KEYMA001, `Duplicate schema name "${schema.name}" (used by both "${existing}" and "${schema.sourceName}")`, schema.source)
+            );
+        } else {
+            seen.set(schema.name, schema.sourceName);
+        }
+    }
+}
+
+function checkVisibilityLeaks(schemas: import("@keyma/ir").IRSchema[], diagnostics: IRDiagnostic[]): void {
+    const privateSchemas = new Set(schemas.filter((s) => s.visibility === "private").map((s) => s.sourceName));
+
+    for (const schema of schemas) {
+        if (schema.visibility !== "public") continue;
+        for (const field of schema.fields) {
+            if (field.visibility === "private") continue;
+            const t = field.type;
+            if ((t.kind === "reference" || t.kind === "embedded") && privateSchemas.has(t.schema)) {
+                diagnostics.push(
+                    mkError(
+                        KEYMA031,
+                        `Public schema "${schema.sourceName}" exposes private schema "${t.schema}" via field "${field.name}"`,
+                        field.source
+                    )
+                );
+            }
+        }
+    }
+}
+
+function checkEdgeSchemas(schemas: import("@keyma/ir").IRSchema[], diagnostics: IRDiagnostic[]): void {
+    const bySourceName = new Map(schemas.map((s) => [s.sourceName, s]));
+    const edgeSourceNames = new Set(schemas.filter((s) => s.edge !== undefined).map((s) => s.sourceName));
+
+    // Edge schemas must not be used as referenced node types by other schemas.
+    for (const schema of schemas) {
+        if (schema.edge !== undefined) continue;  // checked separately below
+        for (const field of schema.fields) {
+            const inner = unwrap(field.type);
+            if ((inner.kind === "reference" || inner.kind === "embedded") && edgeSourceNames.has(inner.schema)) {
+                diagnostics.push(
+                    mkError(
+                        KEYMA064,
+                        `Schema "${schema.sourceName}" references edge schema "${inner.schema}" via field "${field.name}" — edges are not addressable as nodes`,
+                        field.source,
+                    ),
+                );
+            }
+        }
+    }
+
+    // Per-edge structural checks
+    for (const schema of schemas) {
+        const edge = schema.edge;
+        if (edge === undefined) continue;
+
+        const fromTarget = bySourceName.get(edge.from);
+        const toTarget = bySourceName.get(edge.to);
+
+        if (fromTarget === undefined) {
+            diagnostics.push(
+                mkError(
+                    KEYMA060,
+                    `@Edge "from" on "${schema.sourceName}" references unknown schema "${edge.from}"`,
+                    schema.source,
+                ),
+            );
+        } else if (fromTarget.edge !== undefined) {
+            diagnostics.push(
+                mkError(
+                    KEYMA060,
+                    `@Edge "from" on "${schema.sourceName}" points at edge schema "${edge.from}" — must be a node schema`,
+                    schema.source,
+                ),
+            );
+        }
+        if (toTarget === undefined) {
+            diagnostics.push(
+                mkError(
+                    KEYMA060,
+                    `@Edge "to" on "${schema.sourceName}" references unknown schema "${edge.to}"`,
+                    schema.source,
+                ),
+            );
+        } else if (toTarget.edge !== undefined) {
+            diagnostics.push(
+                mkError(
+                    KEYMA060,
+                    `@Edge "to" on "${schema.sourceName}" points at edge schema "${edge.to}" — must be a node schema`,
+                    schema.source,
+                ),
+            );
+        }
+
+        // Verify fromField / toField exist on the edge schema, are reference fields
+        // pointing at the named target schema, and are indexed.
+        checkEdgeEndpointField(schema, edge.fromField, edge.from, fromTarget !== undefined, "from", diagnostics);
+        checkEdgeEndpointField(schema, edge.toField, edge.to, toTarget !== undefined, "to", diagnostics);
+    }
+}
+
+function checkEdgeEndpointField(
+    edgeSchema: import("@keyma/ir").IRSchema,
+    fieldName: string,
+    expectedSchemaName: string,
+    expectedSchemaResolved: boolean,
+    role: "from" | "to",
+    diagnostics: IRDiagnostic[],
+): void {
+    const field = edgeSchema.fields.find((f) => f.name === fieldName);
+    if (field === undefined) {
+        diagnostics.push(
+            mkError(
+                KEYMA061,
+                `Edge schema "${edgeSchema.sourceName}" is missing "${fieldName}" field (required for @Edge ${role})`,
+                edgeSchema.source,
+            ),
+        );
+        return;
+    }
+    const inner = unwrap(field.type);
+    if (inner.kind !== "reference" || (expectedSchemaResolved && inner.schema !== expectedSchemaName)) {
+        diagnostics.push(
+            mkError(
+                KEYMA061,
+                `Edge schema "${edgeSchema.sourceName}" field "${fieldName}" must be Reference<${expectedSchemaName}>`,
+                field.source,
+            ),
+        );
+        return;
+    }
+    if (field.indexes.length === 0) {
+        diagnostics.push(
+            mkError(
+                KEYMA062,
+                `Edge schema "${edgeSchema.sourceName}" field "${fieldName}" must be @Indexed for traversal to be feasible`,
+                field.source,
+            ),
+        );
+    }
+}
+
+function checkReferenceTargetsHaveId(schemas: import("@keyma/ir").IRSchema[], diagnostics: IRDiagnostic[]): void {
+    const bySourceName = new Map(schemas.map((s) => [s.sourceName, s]));
+
+    for (const schema of schemas) {
+        for (const field of schema.fields) {
+            const inner = unwrap(field.type);
+            if (inner.kind !== "reference") continue;
+            const target = bySourceName.get(inner.schema);
+            if (target === undefined) continue;
+            const hasId = target.fields.some((f) => f.type.kind === "id");
+            if (!hasId) {
+                diagnostics.push(
+                    mkError(
+                        KEYMA070,
+                        `Field "${field.name}" on schema "${schema.sourceName}" is Reference<${inner.schema}>, but "${inner.schema}" has no field of type ID — Reference<T> requires T to declare an "id: ID" field`,
+                        field.source,
+                    ),
+                );
+            }
+        }
+    }
+}
+
+function unwrap(type: import("@keyma/ir").IRType): import("@keyma/ir").IRType {
+    if (type.kind === "nullable" || type.kind === "array") return unwrap(type.of);
+    return type;
+}
+
+/** Get a stable base directory for virtual files (within the compiler-frontend-ts package src). */
+function defaultBaseDir(): string {
+    const thisFile = fileURLToPath(import.meta.url);
+    return path.dirname(thisFile);
+}

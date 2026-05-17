@@ -1,0 +1,91 @@
+{
+  "version": { "kind": "literal", "value": "v1" },
+  "baseRate": { "kind": "literal", "value": 0 },
+  "isActive": { "kind": "literal", "value": true },
+  "greeting": { "kind": "literal", "value": "hello" },
+  "displayTitle": { "kind": "field", "name": "title" },
+  "summary": {
+    "kind": "template",
+    "parts": [
+      { "kind": "field", "name": "title" },
+      { "kind": "literal", "value": ": $" },
+      { "kind": "field", "name": "price" }
+    ]
+  },
+  "priceWithTax": {
+    "kind": "binary",
+    "op": "*",
+    "left": { "kind": "field", "name": "price" },
+    "right": {
+      "kind": "binary",
+      "op": "+",
+      "left": { "kind": "literal", "value": 1 },
+      "right": { "kind": "field", "name": "taxRate" }
+    }
+  },
+  "isExpensive": {
+    "kind": "binary",
+    "op": ">",
+    "left": { "kind": "field", "name": "price" },
+    "right": { "kind": "literal", "value": 100 }
+  },
+  "negatedPrice": {
+    "kind": "unary",
+    "op": "-",
+    "operand": { "kind": "field", "name": "price" }
+  },
+  "isCheap": {
+    "kind": "unary",
+    "op": "!",
+    "operand": { "kind": "field", "name": "isExpensive" }
+  },
+  "label": {
+    "kind": "conditional",
+    "condition": { "kind": "field", "name": "isExpensive" },
+    "whenTrue": { "kind": "literal", "value": "premium" },
+    "whenFalse": { "kind": "literal", "value": "budget" }
+  },
+  "displayCategory": {
+    "kind": "binary",
+    "op": "??",
+    "left": { "kind": "field", "name": "category" },
+    "right": { "kind": "literal", "value": "uncategorized" }
+  },
+  "isValidPrice": {
+    "kind": "binary",
+    "op": "&&",
+    "left": {
+      "kind": "binary",
+      "op": ">",
+      "left": { "kind": "field", "name": "price" },
+      "right": { "kind": "literal", "value": 0 }
+    },
+    "right": {
+      "kind": "binary",
+      "op": ">=",
+      "left": { "kind": "field", "name": "taxRate" },
+      "right": { "kind": "literal", "value": 0 }
+    }
+  },
+  "hasDiscount": {
+    "kind": "binary",
+    "op": "||",
+    "left": {
+      "kind": "binary",
+      "op": "<",
+      "left": { "kind": "field", "name": "price" },
+      "right": { "kind": "literal", "value": 50 }
+    },
+    "right": {
+      "kind": "binary",
+      "op": "==",
+      "left": { "kind": "field", "name": "taxRate" },
+      "right": { "kind": "literal", "value": 0 }
+    }
+  },
+  "tagCount": {
+    "kind": "member",
+    "object": { "kind": "field", "name": "tags" },
+    "member": "length"
+  }
+}

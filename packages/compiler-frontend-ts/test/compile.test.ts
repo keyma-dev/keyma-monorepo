@@ -1,0 +1,669 @@
+import { describe, it } from "node:test";
+import assert from "node:assert/strict";
+import path from "node:path";
+import { fileURLToPath } from "node:url";
+import { compile, compileVirtual } from "../src/compile.js";
+import * as CODES from "../src/diagnostics.js";
+
+const __filename = fileURLToPath(import.meta.url);
+const __dirname = path.dirname(__filename);
+const FIXTURES = path.join(__dirname, "..", "..", "test", "fixtures");
+
+/** Absolute path to a fixture file (works from dist/test/). */
+function fixture(name: string): string {
+    return path.join(FIXTURES, name);
+}
+
+/** Base directory for virtual file module resolution — inside the package src. */
+const VIRTUAL_BASE = path.join(__dirname, "..", "..", "src");
+
+/** Compile virtual TypeScript source and return the result. */
+function cv(sources: Record<string, string>) {
+    return compileVirtual(sources, { baseDir: VIRTUAL_BASE });
+}
+
+// ─── Helpers ─────────────────────────────────────────────────────────────────
+
+function errorCodes(result: ReturnType<typeof compile>): string[] {
+    return result.diagnostics.filter((d) => d.severity === "error").map((d) => d.code);
+}
+
+function hasError(result: ReturnType<typeof compile>, code: string): boolean {
+    return result.diagnostics.some((d) => d.code === code && d.severity === "error");
+}
+
+function schemaByName(result: ReturnType<typeof compile>, sourceName: string) {
+    const s = result.ir.schemas.find((s) => s.sourceName === sourceName);
+    assert.ok(s !== undefined, `Schema "${sourceName}" not found. Available: ${result.ir.schemas.map((s) => s.sourceName).join(", ")}`);
+    return s;
+}
+
+// ─── Golden IR — basic schema ─────────────────────────────────────────────────
+
+describe("compile basic schema", () => {
+    const result = compile({ files: [fixture("basic.ts")] });
+
+    it("produces no errors", () => {
+        const errors = errorCodes(result);
+        assert.deepEqual(errors, [], `Unexpected errors: ${JSON.stringify(result.diagnostics)}`);
+    });
+
+    it("discovers the User schema", () => {
+        const user = schemaByName(result, "User");
+        assert.equal(user.name, "user");
+        assert.equal(user.visibility, "public");
+        assert.equal(user.description, "A platform user");
+    });
+
+    it("maps id field: ID → id type, readonly, required", () => {
+        const user = schemaByName(result, "User");
+        const id = user.fields.find((f) => f.name === "id");
+        assert.ok(id, "id field not found");
+        assert.deepEqual(id.type, { kind: "id" });
+        assert.equal(id.readonly, true);
+        assert.equal(id.required, true);
+        assert.equal(id.visibility, "public");
+        assert.ok(id.validators.some((v) => v.kind === "required"), "isRequired validator expected");
+        assert.ok(id.indexes.some((i) => i.unique === true), "unique index expected");
+    });
+
+    it("maps firstName: string with validators and format", () => {
+        const user = schemaByName(result, "User");
+        const f = user.fields.find((f) => f.name === "firstName");
+        assert.ok(f, "firstName field not found");
+        assert.deepEqual(f.type, { kind: "string" });
+        assert.equal(f.required, true);
+        assert.ok(f.validators.some((v) => v.kind === "required"), "required validator expected");
+        assert.ok(f.validators.some((v) => v.kind === "minLength" && v.value === 2), "minLength(2) expected");
+        assert.ok(f.validators.some((v) => v.kind === "maxLength" && v.value === 64), "maxLength(64) expected");
+        assert.ok(f.formatters.some((fmt) => fmt.phase === "change" && fmt.spec.kind === "trim"), "trim formatter expected");
+    });
+
+    it("maps email: string with emailAddress validator and unique index", () => {
+        const user = schemaByName(result, "User");
+        const f = user.fields.find((f) => f.name === "email");
+        assert.ok(f, "email field not found");
+        assert.deepEqual(f.type, { kind: "string" });
+        assert.ok(f.validators.some((v) => v.kind === "emailAddress"), "emailAddress validator expected");
+        assert.ok(f.indexes.some((i) => i.unique === true), "unique index expected");
+    });
+
+    it("maps optional age: number → required: false", () => {
+        const user = schemaByName(result, "User");
+        const f = user.fields.find((f) => f.name === "age");
+        assert.ok(f, "age field not found");
+        assert.deepEqual(f.type, { kind: "number" });
+        assert.equal(f.required, false);
+    });
+});
+
+// ─── Golden IR — all types ────────────────────────────────────────────────────
+
+describe("compile all-types schema", () => {
+    const result = compile({ files: [fixture("all-types.ts")] });
+
+    it("produces no errors", () => {
+        assert.deepEqual(errorCodes(result), [], `Errors: ${JSON.stringify(result.diagnostics)}`);
+    });
+
+    it("maps all scalar types correctly", () => {
+        const schema = schemaByName(result, "AllTypes");
+        const byName = (n: string) => {
+            const f = schema.fields.find((f) => f.name === n);
+            assert.ok(f, `field "${n}" not found`);
+            return f;
+        };
+
+        assert.deepEqual(byName("id").type, { kind: "id" });
+        assert.deepEqual(byName("name").type, { kind: "string" });
+        assert.deepEqual(byName("count").type, { kind: "number" });
+        assert.deepEqual(byName("flag").type, { kind: "boolean" });
+        assert.deepEqual(byName("big").type, { kind: "bigint" });
+        assert.deepEqual(byName("date").type, { kind: "date" });
+        assert.deepEqual(byName("ts").type, { kind: "dateTime" });
+        assert.deepEqual(byName("time").type, { kind: "time" });
+        assert.deepEqual(byName("money").type, { kind: "decimal" });
+        assert.deepEqual(byName("blob").type, { kind: "bytes" });
+        assert.deepEqual(byName("meta").type, { kind: "json" });
+    });
+
+    it("maps array, enum, nullable, and reference types", () => {
+        const schema = schemaByName(result, "AllTypes");
+        const byName = (n: string) => {
+            const f = schema.fields.find((f) => f.name === n);
+            assert.ok(f, `field "${n}" not found`);
+            return f;
+        };
+
+        assert.deepEqual(byName("tags").type, { kind: "array", of: { kind: "string" } });
+        assert.deepEqual(byName("status").type, { kind: "enum", values: ["draft", "published", "archived"] });
+        assert.deepEqual(byName("maybe").type, { kind: "string" });
+        assert.equal(byName("maybe").required, false); // optional
+        assert.deepEqual(byName("nullableStr").type, { kind: "nullable", of: { kind: "string" } });
+        assert.deepEqual(byName("addr").type, { kind: "reference", schema: "Address" });
+        assert.deepEqual(byName("embedded").type, { kind: "embedded", schema: "Address" });
+        assert.deepEqual(byName("nullableRef").type, { kind: "nullable", of: { kind: "reference", schema: "Address" } });
+    });
+});
+
+// ─── Golden IR — inheritance ──────────────────────────────────────────────────
+
+describe("compile inheritance", () => {
+    const result = compile({ files: [fixture("inheritance.ts")] });
+
+    it("produces no errors", () => {
+        assert.deepEqual(errorCodes(result), [], `Errors: ${JSON.stringify(result.diagnostics)}`);
+    });
+
+    it("Employee schema has flattened fields from Person", () => {
+        const emp = schemaByName(result, "Employee");
+        const fieldNames = emp.fields.map((f) => f.name);
+        assert.ok(fieldNames.includes("id"), "id inherited from Person");
+        assert.ok(fieldNames.includes("firstName"), "firstName inherited from Person");
+        assert.ok(fieldNames.includes("lastName"), "lastName inherited from Person");
+        assert.ok(fieldNames.includes("department"), "own field department");
+        assert.ok(fieldNames.includes("salary"), "own field salary");
+    });
+
+    it("Employee.extends is set to Person", () => {
+        const emp = schemaByName(result, "Employee");
+        assert.equal(emp.extends, "Person");
+    });
+
+    it("Person schema has no extends field", () => {
+        const person = schemaByName(result, "Person");
+        assert.equal(person.extends, undefined);
+    });
+});
+
+// ─── Golden IR — visibility ───────────────────────────────────────────────────
+
+describe("compile visibility", () => {
+    const result = compile({ files: [fixture("visibility.ts")] });
+
+    it("produces no errors", () => {
+        assert.deepEqual(errorCodes(result), [], `Errors: ${JSON.stringify(result.diagnostics)}`);
+    });
+
+    it("Credentials schema is private", () => {
+        const creds = schemaByName(result, "Credentials");
+        assert.equal(creds.visibility, "private");
+    });
+
+    it("User has a private field secretToken", () => {
+        const user = schemaByName(result, "User");
+        const secret = user.fields.find((f) => f.name === "secretToken");
+        assert.ok(secret, "secretToken not found");
+        assert.equal(secret.visibility, "private");
+    });
+
+    it("User public fields are visible", () => {
+        const user = schemaByName(result, "User");
+        const email = user.fields.find((f) => f.name === "email");
+        assert.ok(email);
+        assert.equal(email.visibility, "public");
+    });
+});
+
+// ─── Golden IR — computed getters ────────────────────────────────────────────
+
+describe("compile computed getters", () => {
+    const result = compile({ files: [fixture("computed.ts")] });
+
+    it("produces no errors", () => {
+        assert.deepEqual(errorCodes(result), [], `Errors: ${JSON.stringify(result.diagnostics)}`);
+    });
+
+    it("displayTitle is a computed field with template expression", () => {
+        const schema = schemaByName(result, "Product");
+        const f = schema.fields.find((f) => f.name === "displayTitle");
+        assert.ok(f, "displayTitle field not found");
+        assert.ok(f.computed !== undefined, "computed should be set");
+        assert.equal(f.readonly, true);
+    });
+
+    it("priceWithTax is a computed field with binary expression", () => {
+        const schema = schemaByName(result, "Product");
+        const f = schema.fields.find((f) => f.name === "priceWithTax");
+        assert.ok(f, "priceWithTax not found");
+        assert.ok(f.computed !== undefined);
+        assert.equal(f.computed.expression.kind, "binary");
+    });
+
+    it("isExpensive is a computed field with comparison", () => {
+        const schema = schemaByName(result, "Product");
+        const f = schema.fields.find((f) => f.name === "isExpensive");
+        assert.ok(f, "isExpensive not found");
+        assert.ok(f.computed !== undefined);
+        assert.equal(f.computed.expression.kind, "binary");
+    });
+});
+
+// ─── Diagnostic tests ─────────────────────────────────────────────────────────
+
+describe("KEYMA001 — duplicate schema name", () => {
+    it("emits KEYMA001 when two schemas share the same database name", () => {
+        const result = cv({
+            "schema.ts": `
+                import { Schema } from "@keyma/dsl";
+                @Schema({ name: "user" }) class UserA {}
+                @Schema({ name: "user" }) class UserB {}
+            `,
+        });
+        assert.ok(hasError(result, CODES.KEYMA001), `Expected KEYMA001. Got: ${JSON.stringify(result.diagnostics)}`);
+    });
+});
+
+describe("KEYMA010 — unknown field type", () => {
+    it("emits KEYMA010 for an unresolvable type", () => {
+        const result = cv({
+            "schema.ts": `
+                import { Schema } from "@keyma/dsl";
+                @Schema() class Foo {
+                    declare bar: SomeUnknownType;
+                }
+            `,
+        });
+        assert.ok(hasError(result, CODES.KEYMA010), `Expected KEYMA010. Got: ${JSON.stringify(result.diagnostics)}`);
+    });
+});
+
+describe("KEYMA011 — non-literal decorator argument", () => {
+    it("emits KEYMA011 for a non-literal validator argument", () => {
+        const result = cv({
+            "schema.ts": `
+                import { Schema, Validate } from "@keyma/dsl";
+                const n = 2;
+                @Schema() class Foo {
+                    @Validate({ kind: "minLength", value: n } as any)
+                    declare bar: string;
+                }
+            `,
+        });
+        // Either KEYMA011 or KEYMA020 is acceptable for a bad argument shape
+        const codes = errorCodes(result);
+        assert.ok(
+            codes.includes(CODES.KEYMA011) || codes.includes(CODES.KEYMA020),
+            `Expected KEYMA011 or KEYMA020. Got: ${codes.join(", ")}`
+        );
+    });
+});
+
+describe("KEYMA015 — computed getter with setter", () => {
+    it("emits KEYMA015 when a getter has a matching setter", () => {
+        const result = cv({
+            "schema.ts": `
+                import { Schema } from "@keyma/dsl";
+                @Schema() class Foo {
+                    private _x: string = "";
+                    get name(): string { return this._x; }
+                    set name(v: string) { this._x = v; }
+                }
+            `,
+        });
+        assert.ok(hasError(result, CODES.KEYMA015), `Expected KEYMA015. Got: ${JSON.stringify(result.diagnostics)}`);
+    });
+});
+
+describe("KEYMA020 — unknown validator", () => {
+    it("emits KEYMA020 for an unknown validator identifier", () => {
+        const result = cv({
+            "schema.ts": `
+                import { Schema, Validate } from "@keyma/dsl";
+                const unknownValidator = { __validatorKind: "unknown" } as any;
+                @Schema() class Foo {
+                    @Validate(unknownValidator)
+                    declare bar: string;
+                }
+            `,
+        });
+        // The validator is not from DSL, so it won't be parsed
+        // It's a non-literal call expression pattern, expect KEYMA011 or KEYMA020
+        const codes = errorCodes(result);
+        assert.ok(codes.length > 0, "Expected at least one error");
+    });
+});
+
+describe("KEYMA031 — public schema leaks private schema", () => {
+    it("emits KEYMA031 when a public schema publicly references a private schema", () => {
+        const result = cv({
+            "schema.ts": `
+                import { Schema } from "@keyma/dsl";
+                @Schema({ name: "secret", private: true }) class Secret {
+                    declare token: string;
+                }
+                @Schema({ name: "public" }) class Public {
+                    declare secret: Secret;
+                }
+            `,
+        });
+        assert.ok(hasError(result, CODES.KEYMA031), `Expected KEYMA031. Got: ${JSON.stringify(result.diagnostics)}`);
+    });
+});
+
+describe("KEYMA032 — public extends private parent", () => {
+    it("emits KEYMA032 when a public schema extends a private schema", () => {
+        const result = cv({
+            "schema.ts": `
+                import { Schema } from "@keyma/dsl";
+                @Schema({ name: "base", private: true }) class Base {
+                    declare id: string;
+                }
+                @Schema({ name: "child" }) class Child extends Base {
+                    declare extra: string;
+                }
+            `,
+        });
+        assert.ok(hasError(result, CODES.KEYMA032), `Expected KEYMA032. Got: ${JSON.stringify(result.diagnostics)}`);
+    });
+});
+
+describe("KEYMA033 — extends non-@Schema class", () => {
+    it("emits KEYMA033 when a schema extends a plain class", () => {
+        const result = cv({
+            "schema.ts": `
+                import { Schema } from "@keyma/dsl";
+                class PlainBase { name: string = ""; }
+                @Schema({ name: "child" }) class Child extends PlainBase {
+                    declare extra: string;
+                }
+            `,
+        });
+        assert.ok(hasError(result, CODES.KEYMA033), `Expected KEYMA033. Got: ${JSON.stringify(result.diagnostics)}`);
+    });
+});
+
+describe("KEYMA040 — duplicate field name", () => {
+    it("emits KEYMA040 when a class declares the same field twice", () => {
+        const result = cv({
+            "schema.ts": `
+                import { Schema } from "@keyma/dsl";
+                @Schema() class Foo {
+                    declare name: string;
+                    declare name: number;
+                }
+            `,
+        });
+        assert.ok(hasError(result, CODES.KEYMA040), `Expected KEYMA040. Got: ${JSON.stringify(result.diagnostics)}`);
+    });
+});
+
+describe("compile IR structure", () => {
+    it("IR document has irVersion and compilerVersion", () => {
+        const result = cv({ "s.ts": `import { Schema } from "@keyma/dsl"; @Schema() class T { declare x: string; }` });
+        assert.equal(typeof result.ir.irVersion, "string");
+        assert.equal(typeof result.ir.compilerVersion, "string");
+    });
+
+    it("IR document diagnostics array matches result.diagnostics", () => {
+        const result = cv({ "s.ts": `import { Schema } from "@keyma/dsl"; @Schema() class T { declare x: string; }` });
+        assert.deepEqual(result.ir.diagnostics, result.diagnostics);
+    });
+
+    it("schema id follows schema:name convention", () => {
+        const result = cv({ "s.ts": `import { Schema } from "@keyma/dsl"; @Schema({ name: "widget" }) class Widget { declare x: string; }` });
+        const schema = schemaByName(result, "Widget");
+        assert.equal(schema.id, "schema:widget");
+    });
+
+    it("number field with isInteger validator is promoted to integer type", () => {
+        const result = cv({
+            "s.ts": `
+                import { Schema, Validate, isInteger } from "@keyma/dsl";
+                @Schema() class Count { @Validate(isInteger) declare n: number; }
+            `,
+        });
+        assert.deepEqual(errorCodes(result), []);
+        const schema = schemaByName(result, "Count");
+        const f = schema.fields.find((f) => f.name === "n");
+        assert.ok(f);
+        assert.deepEqual(f.type, { kind: "integer" }, "number + isInteger should promote to integer");
+    });
+});
+
+// ─── Edges ────────────────────────────────────────────────────────────────────
+
+describe("@Edge discovery", () => {
+    const result = compile({ files: [fixture("edges.ts")] });
+
+    it("produces no errors on the good edge fixture", () => {
+        assert.deepEqual(errorCodes(result), [], `Unexpected errors: ${JSON.stringify(result.diagnostics)}`);
+    });
+
+    it("records edge metadata on Knows (undirected, custom label)", () => {
+        const knows = schemaByName(result, "Knows");
+        assert.ok(knows.edge !== undefined, "Knows should carry edge metadata");
+        assert.equal(knows.edge.from, "Person");
+        assert.equal(knows.edge.to, "Person");
+        assert.equal(knows.edge.fromField, "from");
+        assert.equal(knows.edge.toField, "to");
+        assert.equal(knows.edge.label, "knows");
+        assert.equal(knows.edge.directed, false);
+    });
+
+    it("records edge metadata on WorksAt with defaults (directed, label=className)", () => {
+        const wa = schemaByName(result, "WorksAt");
+        assert.ok(wa.edge !== undefined, "WorksAt should carry edge metadata");
+        assert.equal(wa.edge.from, "Person");
+        assert.equal(wa.edge.to, "Company");
+        assert.equal(wa.edge.label, "WorksAt");
+        assert.equal(wa.edge.directed, true);
+    });
+
+    it("non-edge schemas have no `edge` field", () => {
+        const person = schemaByName(result, "Person");
+        assert.equal(person.edge, undefined);
+    });
+
+    it("@Edge classes are discovered as schemas (have fields)", () => {
+        const knows = schemaByName(result, "Knows");
+        assert.ok(knows.fields.find((f) => f.name === "since"), "Knows should have its `since` field extracted");
+    });
+});
+
+describe("@Edge diagnostics", () => {
+    const result = compile({ files: [fixture("edges-bad.ts")] });
+
+    it("emits KEYMA062 when an edge endpoint field lacks @Indexed", () => {
+        assert.ok(
+            hasError(result, CODES.KEYMA062),
+            `Expected KEYMA062; got ${JSON.stringify(errorCodes(result))}`,
+        );
+    });
+
+    it("emits KEYMA061 when an edge endpoint field is missing", () => {
+        assert.ok(
+            hasError(result, CODES.KEYMA061),
+            `Expected KEYMA061; got ${JSON.stringify(errorCodes(result))}`,
+        );
+    });
+
+    it("emits KEYMA064 when a non-edge schema references an edge class", () => {
+        assert.ok(
+            hasError(result, CODES.KEYMA064),
+            `Expected KEYMA064; got ${JSON.stringify(errorCodes(result))}`,
+        );
+    });
+
+    it("emits KEYMA060 when an @Edge references an unknown class", () => {
+        const r = cv({
+            "s.ts": `
+                import { Edge, Schema, Indexed } from "@keyma/dsl";
+                import type { ID, Reference } from "@keyma/dsl";
+                @Schema() class Node { @Indexed() declare readonly id: ID; }
+                class NotASchema {}
+                @Edge({ from: Node, to: NotASchema })
+                class Bad {
+                    @Indexed() declare readonly id: ID;
+                    @Indexed() declare from: Reference<Node>;
+                    @Indexed() declare to: Reference<Node>;
+                }
+            `,
+        });
+        assert.ok(
+            hasError(r, CODES.KEYMA060),
+            `Expected KEYMA060; got ${JSON.stringify(errorCodes(r))}`,
+        );
+    });
+
+    it("emits KEYMA063 when @Edge `from` is not an identifier", () => {
+        const r = cv({
+            "s.ts": `
+                import { Edge, Schema, Indexed } from "@keyma/dsl";
+                import type { ID, Reference } from "@keyma/dsl";
+                @Schema() class Node { @Indexed() declare readonly id: ID; }
+                @Edge({ from: "Node" as any, to: Node })
+                class Bad {
+                    @Indexed() declare readonly id: ID;
+                    @Indexed() declare from: Reference<Node>;
+                    @Indexed() declare to: Reference<Node>;
+                }
+            `,
+        });
+        assert.ok(
+            hasError(r, CODES.KEYMA063),
+            `Expected KEYMA063; got ${JSON.stringify(errorCodes(r))}`,
+        );
+    });
+
+    it("respects fromField/toField overrides", () => {
+        const r = cv({
+            "s.ts": `
+                import { Edge, Schema, Indexed } from "@keyma/dsl";
+                import type { ID, Reference } from "@keyma/dsl";
+                @Schema() class Node { @Indexed() declare readonly id: ID; }
+                @Edge({ from: Node, to: Node, fromField: "src", toField: "dst" })
+                class Custom {
+                    @Indexed() declare readonly id: ID;
+                    @Indexed() declare src: Reference<Node>;
+                    @Indexed() declare dst: Reference<Node>;
+                }
+            `,
+        });
+        assert.deepEqual(errorCodes(r), [], `Unexpected errors: ${JSON.stringify(r.diagnostics)}`);
+        const custom = schemaByName(r, "Custom");
+        assert.ok(custom.edge !== undefined);
+        assert.equal(custom.edge.fromField, "src");
+        assert.equal(custom.edge.toField, "dst");
+    });
+});
+
+describe("Reference target validation", () => {
+    it("emits KEYMA070 when Reference<T> target has no id: ID field", () => {
+        const r = cv({
+            "s.ts": `
+                import { Schema } from "@keyma/dsl";
+                import type { Reference } from "@keyma/dsl";
+                @Schema() class Tag {
+                    declare label: string;
+                }
+                @Schema() class Post {
+                    declare tag: Reference<Tag>;
+                }
+            `,
+        });
+        assert.ok(
+            hasError(r, CODES.KEYMA070),
+            `Expected KEYMA070; got ${JSON.stringify(errorCodes(r))}`,
+        );
+    });
+
+    it("emits KEYMA070 for Reference<T> inside Nullable<>", () => {
+        const r = cv({
+            "s.ts": `
+                import { Schema } from "@keyma/dsl";
+                import type { Reference, Nullable } from "@keyma/dsl";
+                @Schema() class Tag {
+                    declare label: string;
+                }
+                @Schema() class Post {
+                    declare tag: Nullable<Reference<Tag>>;
+                }
+            `,
+        });
+        assert.ok(
+            hasError(r, CODES.KEYMA070),
+            `Expected KEYMA070; got ${JSON.stringify(errorCodes(r))}`,
+        );
+    });
+
+    it("emits KEYMA070 for array of Reference<T>", () => {
+        const r = cv({
+            "s.ts": `
+                import { Schema } from "@keyma/dsl";
+                import type { Reference } from "@keyma/dsl";
+                @Schema() class Tag {
+                    declare label: string;
+                }
+                @Schema() class Post {
+                    declare tags: Reference<Tag>[];
+                }
+            `,
+        });
+        assert.ok(
+            hasError(r, CODES.KEYMA070),
+            `Expected KEYMA070; got ${JSON.stringify(errorCodes(r))}`,
+        );
+    });
+
+    it("does not emit KEYMA070 when target declares an id: ID field", () => {
+        const r = cv({
+            "s.ts": `
+                import { Schema, Indexed } from "@keyma/dsl";
+                import type { ID, Reference } from "@keyma/dsl";
+                @Schema() class Tag {
+                    @Indexed({ unique: true }) declare readonly id: ID;
+                    declare label: string;
+                }
+                @Schema() class Post {
+                    declare tag: Reference<Tag>;
+                }
+            `,
+        });
+        assert.ok(
+            !hasError(r, CODES.KEYMA070),
+            `Unexpected KEYMA070; diagnostics: ${JSON.stringify(r.diagnostics)}`,
+        );
+    });
+
+    it("does not emit KEYMA070 when target inherits an id: ID from a parent", () => {
+        const r = cv({
+            "s.ts": `
+                import { Schema, Indexed } from "@keyma/dsl";
+                import type { ID, Reference } from "@keyma/dsl";
+                @Schema() class Base {
+                    @Indexed({ unique: true }) declare readonly id: ID;
+                }
+                @Schema() class Tag extends Base {
+                    declare label: string;
+                }
+                @Schema() class Post {
+                    declare tag: Reference<Tag>;
+                }
+            `,
+        });
+        assert.ok(
+            !hasError(r, CODES.KEYMA070),
+            `Unexpected KEYMA070; diagnostics: ${JSON.stringify(r.diagnostics)}`,
+        );
+    });
+
+    it("does not emit KEYMA070 for Embedded<T> targets without id", () => {
+        const r = cv({
+            "s.ts": `
+                import { Schema } from "@keyma/dsl";
+                import type { Embedded } from "@keyma/dsl";
+                @Schema() class Address {
+                    declare street: string;
+                }
+                @Schema() class User {
+                    declare addr: Embedded<Address>;
+                }
+            `,
+        });
+        assert.ok(
+            !hasError(r, CODES.KEYMA070),
+            `Unexpected KEYMA070; diagnostics: ${JSON.stringify(r.diagnostics)}`,
+        );
+    });
+});

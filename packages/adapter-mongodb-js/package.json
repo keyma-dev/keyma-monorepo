@@ -1,0 +1,23 @@
+{
+    "name": "@keyma/adapter-mongodb-js",
+    "version": "0.1.0",
+    "type": "module",
+    "exports": {
+        ".": "./dist/src/index.js"
+    },
+    "scripts": {
+        "build": "tsc",
+        "test": "tsc && node --test --test-concurrency=1 --test-timeout=300000 dist/test/*.test.js"
+    },
+    "peerDependencies": {
+        "@keyma/runtime-js": "*",
+        "mongodb": "^7.0.0"
+    },
+    "devDependencies": {
+        "@keyma/runtime-js": "*",
+        "@types/node": "*",
+        "mongodb": "^7.0.0",
+        "mongodb-memory-server": "^11.0.0",
+        "typescript": "*"
+    }
+}
