@@ -2,33 +2,42 @@
 
 A declarative schema compiler for full-stack applications.
 
-You define data models, validation rules, formatting behavior, database indexes, computed fields, and relationships in TypeScript. Keyma then compiles those schemas into small, dependency-light target libraries for runtimes such as JavaScript and C++.
+You define data models, validation rules, formatting behavior, indexes, computed fields, relationships, and **edges** in TypeScript. Keyma compiles those schemas into small, dependency-light target libraries for runtimes such as JavaScript and C++.
+
+Keyma is **database-agnostic** and **transport-agnostic** by design:
+
+* **Database-agnostic** — the same schemas run against graph, document, and relational databases. The runtime talks to your data through a `KeymaDatabaseAdapter`. Bring an adapter (a MongoDB adapter, `@keyma/adapter-mongodb-js`, ships in the monorepo; others are pluggable) and the generated code doesn't change.
+* **Transport-agnostic** — the client serializes queries to a portable, language-neutral request document and hands it to a `Transport` function you supply. HTTP, WebSocket, gRPC, in-process, message bus — Keyma doesn't care. An in-process `createDirectTransport` is provided for SSR and tests.
+* **Graph queries, on any backend** — schemas can declare `@Edge` classes with typed `from`/`to` node references. `Keyma.traverse(...)` builds typed, multi-hop graph queries (heterogeneous chains, homogeneous repeats with depth bounds, edge predicates) that compile to native traversals on graph databases and to emulated joins/lookups on document and relational stores. The query surface is identical regardless of backend.
 
 The generated schema libraries do **not** depend on `reflect-metadata`, `tslib`, TypeScript decorator emit helpers, or any other runtime reflection mechanism. They are paired with tiny target runtimes such as `@keyma/runtime-js` or `@keyma/runtime-cpp`.
 
 ## Introduction
 
-**Keyma** lets you express data models, relationships, and form input requirements once, in a unified declarative way, and use them everywhere.
+**Keyma** lets you express data models, relationships, edges, and form input requirements once, in a unified declarative way, and use them everywhere.
 
-* **Declarative**: Define your data models and relationships using clear, concise decorators.
-* **Compiled**: TypeScript is the authoring language. Keyma parses your source via the TypeScript compiler API, builds a language-neutral intermediate representation (IR), and emits target-specific code.
-* **Full Stack**: Write once and consume your schemas on both the client and server. Keyma produces two distinct generated libraries: one for backend (with private fields and server-only schemas) and one for frontend (with only public surface area).
-* **Multi-Language**: The compiler has a frontend/backend architecture. The built-in frontend reads TypeScript. Backends can target any language. A built-in JavaScript backend is provided. C++ and others can be added.
-* **Lightweight Output**: Generated code is plain — no decorators, no reflect-metadata, no tslib. Only a small runtime library is required at consumption time.
-* **Scaffolding**: A simple CLI generates projects, schema files, and build outputs.
+* **Declarative** — define data models, relationships, and graph edges using clear, concise decorators.
+* **Compiled** — TypeScript is the authoring language. Keyma parses your source via the TypeScript compiler API, builds a language-neutral intermediate representation (IR), and emits target-specific code.
+* **Full stack** — write once and consume your schemas on both client and server. Keyma produces two distinct generated libraries: one for backend (with private fields and server-only schemas) and one for frontend (with only public surface area).
+* **Multi-language** — the compiler has a frontend/backend architecture. The built-in frontend reads TypeScript. Backends can target any language. A built-in JavaScript backend is provided. C++ and others can be added.
+* **Database-agnostic** — one schema, many storage models. Adapters bridge the runtime to graph, document, or relational databases. Computed fields and edge traversals are lowered appropriately for each.
+* **Transport-agnostic** — the generated client emits portable query documents. You provide the transport.
+* **Lightweight output** — generated code is plain — no decorators, no reflect-metadata, no tslib. Only a small runtime library is required at consumption time.
+* **Scaffolding** — a simple CLI generates projects, schema files, and build outputs.
 
-Whether you are building a simple CRUD app or a complex, relational system, **Keyma** bridges the gap between data modeling and application logic — across languages.
+Whether you are building a simple CRUD app, a richly relational system, or a graph-native application, **Keyma** bridges the gap between data modeling and application logic — across languages, across databases, across transports.
 
 ---
 
 ## Architecture Overview
 
-
 - TypeScript schema source files
 - TypeScript compiler frontend (uses the TypeScript compiler API)
-- Keyma language-neutral IR (.keyma/schema.ir.json)
+- Keyma language-neutral IR (`.keyma/schema.ir.json`)
 - Code generation backends (JS, C++, ...)
-- Generated schema library + small runtime (@keyma/runtime-js, @keyma/runtime-cpp, ...)
+- Generated schema library + small runtime (`@keyma/runtime-js`, `@keyma/runtime-cpp`, ...)
+- Database adapter of your choice (`@keyma/adapter-mongodb-js`, ...)
+- Transport of your choice (HTTP, WebSocket, in-process, ...)
 
 Decorators in the schema source are **compile-time annotations**, not runtime behavior. The Keyma compiler reads them from the AST. They are never executed and never emitted into the compiled output.
 
@@ -37,8 +46,9 @@ Decorators in the schema source are **compile-time annotations**, not runtime be
 ## Installation
 
 ```shell
-npm i -g @keyma/keyma
+npm i -g @keyma/cli
 ```
+
 ## Usage
 
 First, generate a new project using the CLI.
@@ -47,7 +57,6 @@ First, generate a new project using the CLI.
 keyma new my-project
 cd my-project
 ```
-
 
 This will generate a new Keyma project and change the command directory to the project directory. Now let's create a data model.
 
@@ -67,7 +76,6 @@ export class User {
     readonly id: ID;
 }
 ```
-
 
 Let's add some fields with validation to our User model:
 
@@ -91,7 +99,6 @@ export class User {
     email: string;
 }
 ```
-
 
 We'll want to store users in a database, so we'll declare how it's indexed. We can also add internal fields:
 
@@ -127,7 +134,6 @@ export class User {
 }
 ```
 
-
 The getter-only property `fullName` is treated as a **computed field**. Because it is `@Indexed()`, the compiler will:
 
 * materialize its value on every write (the backend stores it as a real column/document field),
@@ -144,36 +150,35 @@ import { isRequired, minLength, maxLength, isEmailAddress } from "@keyma/dsl";
 import { trim, normalizeEmail } from "@keyma/dsl";
 
 @Schema({
-	name: "user",
+    name: "user",
 })
 export class User {
-	readonly id: ID;
+    readonly id: ID;
 
-	@Validate(isRequired, minLength(2), maxLength(32))
-	@Format("change", trim)
-	firstName: string;
+    @Validate(isRequired, minLength(2), maxLength(32))
+    @Format("change", trim)
+    firstName: string;
 
-	@Validate(isRequired, minLength(2), maxLength(32))
-	@Format("change", trim)
-	lastName: string;
+    @Validate(isRequired, minLength(2), maxLength(32))
+    @Format("change", trim)
+    lastName: string;
 
-	@Validate(isRequired, isEmailAddress)
-	@Indexed({unique: true})
-	@Format("change", normalizeEmail)
-	email: string;
+    @Validate(isRequired, isEmailAddress)
+    @Indexed({ unique: true })
+    @Format("change", normalizeEmail)
+    email: string;
 
-	@Indexed()
-	get fullName() {
-		return `${this.firstName} ${this.lastName}`;
-	}
+    @Indexed()
+    get fullName() {
+        return `${this.firstName} ${this.lastName}`;
+    }
 
-	@Ephemeral() // not stored in the database, but can go over the wire
+    @Ephemeral() // not stored in the database, but can go over the wire
     computedAtRuntime: string;
 
-	private secretMessage: string;
+    private secretMessage: string;
 }
 ```
-
 
 References to other schemas use `Reference<T>` (stored ID, fetched separately) or `Embedded<T>` (inline sub-document). A bare class type also means reference, but `Reference<T>` makes the intent explicit. Schemas can be marked `private` to make them entirely server-only:
 
@@ -200,13 +205,73 @@ export class UserCredentials {
 }
 ```
 
+## Edges and graph traversals
+
+Beyond plain references, Keyma supports first-class **edge schemas**: classes decorated with `@Edge({ from, to })` declare a typed connection between two node schemas. Edges have their own fields, validators, and indexes, but they additionally participate in `Keyma.traverse(...)` graph queries.
+
+```typescript
+import { Schema, Edge, ID, Reference, Indexed } from "@keyma/dsl";
+
+@Schema({ name: "person" })
+export class Person {
+    readonly id: ID;
+    name: string;
+}
+
+@Schema({ name: "company" })
+export class Company {
+    readonly id: ID;
+    name: string;
+}
+
+@Edge({ name: "knows", from: Person, to: Person, directed: false })
+export class Knows {
+    readonly id: ID;
+    from: Reference<Person>;
+    to: Reference<Person>;
+
+    @Indexed()
+    since: string;
+}
+
+@Edge({ name: "works_at", from: Person, to: Company })
+export class WorksAt {
+    readonly id: ID;
+    from: Reference<Person>;
+    to: Reference<Company>;
+    role: string;
+}
+```
+
+You can then issue a typed, multi-hop traversal from any client. The same query runs on a graph database (native traversal), a document database (adapter-emulated lookups), or a relational database (adapter-emulated joins):
+
+```typescript
+// Companies of the people I know (heterogeneous chain).
+const colleagues = Keyma.traverse(Company, {
+    start: { schema: Person, where: { id: Keyma.input("me") } },
+    steps: [
+        { via: Knows,   direction: "out" },
+        { via: WorksAt, direction: "out" },
+    ] as const,
+    emit: "nodes",
+});
+
+// People within 1..3 hops of me through `Knows` (homogeneous repeat).
+const network = Keyma.traverse(Person, {
+    start: { schema: Person, where: { id: Keyma.input("me") } },
+    repeat: { via: Knows, direction: "out" },
+    depth: { min: 1, max: 3 },
+    emit: "nodes",
+});
+```
+
+`Keyma.traverse` is fully type-checked: chain steps must agree on edge endpoints, and the terminal class determines the leaf type of the response.
 
 ## Compiling
 
 ```shell
 keyma build
 ```
-
 
 By default, this produces:
 
@@ -222,7 +287,6 @@ dist/
 .keyma/
   schema.ir.json
 ```
-
 
 The generated JavaScript is plain ES modules. It contains:
 
@@ -245,10 +309,9 @@ export default {
 };
 ```
 
-
 ## Server-side implementation
 
-The server-side library is consumed with the `@keyma/runtime-js` runtime and a database adapter (for example, `@keyma/adapter-mongodb-js`):
+The server-side library is consumed with the `@keyma/runtime-js` runtime and a database adapter. The adapter is the seam that makes Keyma database-agnostic — swap MongoDB for a graph or relational adapter and the schema and query code are unchanged:
 
 ```typescript
 import { KeymaServer } from "@keyma/runtime-js/server";
@@ -257,39 +320,60 @@ import { schemas } from "./generated/server";
 
 const server = new KeymaServer({
     schemas,
-    adapter: new MongoAdapter({ url: "mongodb://localhost:27017", db: "myapp" })
-    });
+    adapter: new MongoAdapter({ url: "mongodb://localhost:27017", db: "myapp" }),
+});
 
-await server.sync(); // creates collections and indexes
+await server.sync(); // creates collections, indexes, and edge collections
 ```
 
+To implement your own adapter for a different database, conform to the `KeymaDatabaseAdapter` interface exported from `@keyma/runtime-js`.
+
+## Transports
+
+The client side talks to the server through a `Transport` — a function `(request) => Promise<response>`. Keyma never assumes HTTP. Provide whatever fits your environment:
+
+```typescript
+import { createDirectTransport } from "@keyma/runtime-js";
+
+// In-process (e.g. SSR, tests): hand requests directly to a KeymaServer.
+const transport = createDirectTransport(server);
+
+// Or supply your own HTTP/WebSocket/gRPC/message-bus transport:
+const transport: Transport = async (request) => {
+    const res = await fetch("/api/keyma", {
+        method: "POST",
+        headers: { "content-type": "application/json" },
+        body: JSON.stringify(request),
+    });
+    return res.json();
+};
+```
 
 ## Querying data
 
-Once the backend exposes the query endpoint, the client can build typed, declarative queries:
+The client builds typed, declarative queries against the generated schemas. Queries serialize to a portable, language-neutral request document and are dispatched through your transport — so any Keyma client runtime, in any language, can issue them against any compatible server.
 
 ```typescript
-
 // Build a query template
 const query = Keyma.query({
     users: Keyma.list(User, /* where: */{
-		email: Keyma.input('emailSearch'), // placeholder for request time substitution
-        active: true, // static value, sent with request but cannot be changed at request time
-	}, /* projection: */{
-		id: 1,
+        email: Keyma.input("emailSearch"), // placeholder for request-time substitution
+        active: true,                      // static value, fixed at template time
+    }, /* projection: */{
+        id: 1,
         email: 1,
         firstName: 1,
-        lastName: 1
+        lastName: 1,
     }),
     user: Keyma.read(User, /* where: */{
-        id: Keyma.input('userId')
+        id: Keyma.input("userId"),
     }, /* projection: */{
-	    id: 1,
-		email: 1,
-		firstName: 1,
-		lastName: 1,
-        createdOn: 1
-    })
+        id: 1,
+        email: 1,
+        firstName: 1,
+        lastName: 1,
+        createdOn: 1,
+    }),
 });
 
 async function listUsers(skip: number, limit: number, inputs: typeof query.inputs) {
@@ -297,26 +381,23 @@ async function listUsers(skip: number, limit: number, inputs: typeof query.input
         users: {
             skip,
             limit,
-            sort : {
-                createdOn: -1
-            }
+            sort: { createdOn: -1 },
         },
-        user: {} // empty options for this leaf, can be omitted
-    }, {inputs, transport});
+        user: {}, // empty options for this leaf, can be omitted
+    }, { inputs, transport });
 
     return response;
 }
 ```
 
-
-The query API serializes to a portable, language-neutral query document — not executable code — so it can be issued from any Keyma client runtime.
+The same `Keyma.query` document can mix CRUD operations and graph traversals in a single batch, returning a typed, projected response shape.
 
 ## Why a compiler, not runtime decorators?
 
 Traditional decorator-based TypeScript schema libraries depend on `reflect-metadata`, decorator emit helpers, and `tslib`. They cannot:
 
 * reliably detect `private` fields,
-* Emit type metadata for generics
+* emit type metadata for generics,
 * generate code for non-JavaScript runtimes,
 * fully separate client and server output,
 * statically validate computed expressions for portability,
