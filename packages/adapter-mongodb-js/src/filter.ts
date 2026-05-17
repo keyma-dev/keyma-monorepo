@@ -12,6 +12,8 @@ const QUERY_OPS = new Set([
     "$nin",
 ]);
 
+const LOGICAL_OPS = new Set(["$and", "$or", "$nor"]);
+
 function findFieldType(schema: SchemaMetadata, name: string): FieldType | undefined {
     return schema.fields.find((f) => f.name === name)?.type;
 }
@@ -40,7 +42,12 @@ function translateValue(value: unknown, type: FieldType | undefined, schemas: Sc
 /** Translate a Keyma `where` clause into a MongoDB filter. Renames `id` → `_id`
  *  and converts literal values into their BSON representation per schema field
  *  type (BigInt → Binary, Decimal → Decimal128, etc). Passes MongoDB-style
- *  comparison operators ($eq/$ne/$gt/$gte/$lt/$lte/$in/$nin) through. */
+ *  comparison operators ($eq/$ne/$gt/$gte/$lt/$lte/$in/$nin) through.
+ *
+ *  Top-level logical operators `$and` / `$or` / `$nor` are also accepted; each
+ *  carries an array of sub-filter objects that are recursively translated
+ *  against the same schema. These typically come from server plugins (e.g.
+ *  `@keyma/plugin-acl-js`) merging the client's filter with policy clauses. */
 export function translateWhere(
     where: Record<string, unknown>,
     schema: SchemaMetadata,
@@ -48,6 +55,18 @@ export function translateWhere(
 ): Record<string, unknown> {
     const out: Record<string, unknown> = {};
     for (const [key, value] of Object.entries(where)) {
+        if (LOGICAL_OPS.has(key)) {
+            if (!Array.isArray(value)) {
+                throw new Error(`${key} expects an array of sub-filters`);
+            }
+            out[key] = value.map((sub) => {
+                if (sub === null || typeof sub !== "object" || Array.isArray(sub)) {
+                    throw new Error(`${key} sub-filter must be an object`);
+                }
+                return translateWhere(sub as Record<string, unknown>, schema, schemas);
+            });
+            continue;
+        }
         const dbKey = key === "id" ? "_id" : key;
         const type = findFieldType(schema, key);
         out[dbKey] = translateValue(value, type, schemas);

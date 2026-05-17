@@ -62,6 +62,20 @@ export type AdapterTraversalContext = {
     nodes: ReadonlyMap<string, SchemaMetadata>;
 };
 
+/** Database adapter consumed by `KeymaServer`. All filter objects (`where`,
+ *  whether on `read` / `list` / `update` / `delete` or inside a `TraversalSpec`)
+ *  follow the same shape:
+ *
+ *  - Top-level keys are field names of the operation's schema (with `id` as a
+ *    reserved alias adapters may rewrite to their native primary-key column).
+ *  - Field values are either literals (compared with equality) or operator
+ *    objects using `$eq` / `$ne` / `$gt` / `$gte` / `$lt` / `$lte` / `$in` /
+ *    `$nin`.
+ *  - Top-level keys `$and` / `$or` / `$nor` are logical combinators carrying
+ *    an array of sub-filter objects of the same shape, recursively combined
+ *    against the same schema. Server plugins (e.g. `@keyma/plugin-acl-js`)
+ *    use these to merge the client's filter with policy clauses; adapters
+ *    must handle them. They are not exposed on the client-side query builder. */
 export interface KeymaDatabaseAdapter {
     ensureSchema(schema: SchemaMetadata): Promise<void>;
     create(
