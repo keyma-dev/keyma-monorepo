@@ -1,6 +1,4 @@
 import {
-    KeymaDenied,
-    KeymaFieldForbidden,
     type AclAction,
     type AdapterProjection,
     type KeymaDatabaseAdapter,
@@ -9,6 +7,7 @@ import {
     type RequestContext,
     type SchemaMetadata,
 } from "@keyma/runtime-js";
+import { AclDenied, AclFieldForbidden, ACL_PLUGIN_NAME } from "./errors.js";
 import type { AclPluginOptions, AclRule } from "./types.js";
 import {
     ACL_ROLE_ASSIGNMENT_SCHEMA_NAME,
@@ -36,7 +35,7 @@ import {
     trimProjection,
 } from "./field-check.js";
 
-const PLUGIN_NAME = "@keyma/plugin-acl-js";
+const PLUGIN_NAME = ACL_PLUGIN_NAME;
 
 // Storage schemas the plugin manages — never gated by ACL. The plugin reads
 // these via its own adapter; writes go through normal KeymaServer (which the
@@ -78,10 +77,7 @@ export function createAclPlugin(options: AclPluginOptions = {}): KeymaServerPlug
             );
             const { allows } = partition(applicable);
             if (allows.length === 0) {
-                throw new KeymaDenied(
-                    `No ACL rule grants traverse on ${op.schema}`,
-                    PLUGIN_NAME,
-                );
+                throw new AclDenied(`No ACL rule grants traverse on ${op.schema}`);
             }
         },
 
@@ -95,10 +91,7 @@ export function createAclPlugin(options: AclPluginOptions = {}): KeymaServerPlug
             const { allows, denies } = partition(rules);
 
             if (allows.length === 0) {
-                throw new KeymaDenied(
-                    `No ACL rule grants ${action} on ${schema.name}`,
-                    PLUGIN_NAME,
-                );
+                throw new AclDenied(`No ACL rule grants ${action} on ${schema.name}`);
             }
 
             const allowFilters: Record<string, unknown>[] = [];
@@ -114,9 +107,8 @@ export function createAclPlugin(options: AclPluginOptions = {}): KeymaServerPlug
                 for (const f of fieldsReferenced(sub)) extraFields.add(f);
             }
             if (allowFilters.length === 0) {
-                throw new KeymaDenied(
+                throw new AclDenied(
                     `No applicable ACL rule resolves for ${action} on ${schema.name}`,
-                    PLUGIN_NAME,
                 );
             }
 
@@ -124,10 +116,7 @@ export function createAclPlugin(options: AclPluginOptions = {}): KeymaServerPlug
             for (const r of denies) {
                 if (r.where === undefined) {
                     // Unconditional deny → throw immediately.
-                    throw new KeymaDenied(
-                        `Deny rule blocks ${action} on ${schema.name}`,
-                        PLUGIN_NAME,
-                    );
+                    throw new AclDenied(`Deny rule blocks ${action} on ${schema.name}`);
                 }
                 const sub = substituteFilter(r.where, ctx);
                 if (sub === undefined) continue;
@@ -190,10 +179,7 @@ export function createAclPlugin(options: AclPluginOptions = {}): KeymaServerPlug
             );
             const { allows } = partition(rules);
             if (allows.length === 0) {
-                throw new KeymaDenied(
-                    `No ACL rule grants ${action} on ${schema.name}`,
-                    PLUGIN_NAME,
-                );
+                throw new AclDenied(`No ACL rule grants ${action} on ${schema.name}`);
             }
             const allowed = allowedWriteFields(rules);
             if (allowed === undefined) return undefined;
@@ -209,7 +195,7 @@ export function createAclPlugin(options: AclPluginOptions = {}): KeymaServerPlug
                 }
                 return out;
             }
-            throw new KeymaFieldForbidden(forbidden, PLUGIN_NAME);
+            throw new AclFieldForbidden(forbidden);
         },
 
         transformResult(ctx, schema, records) {

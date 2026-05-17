@@ -16,19 +16,19 @@ import type {
     KeymaRequest,
     KeymaBatchResponse,
     KeymaLeafResult,
+    KeymaLeafFailure,
     ProjectionSpec,
     TraversalSpec,
 } from "./protocol.js";
 import { validate, type ValidatorRegistry } from "./validate.js";
 import { format, type FormatterRegistry } from "./format.js";
 import {
-    KeymaDenied,
-    KeymaFieldForbidden,
     type AclAction,
     type KeymaServerPlugin,
     type PluginServerHandle,
     type RequestContext,
 } from "./plugin.js";
+import { KeymaError, KeymaRuntimeError } from "./errors.js";
 
 type ServerOptions = {
     schemas: SchemaMetadata[];
@@ -84,13 +84,15 @@ export class KeymaServer {
         op: KeymaOperation,
         context: RequestContext,
     ): Promise<KeymaLeafResult> {
-        const schema = this.schemaMap.get(op.schema);
-        if (schema === undefined) {
-            return fail(`Unknown schema: ${op.schema}`, "SCHEMA_NOT_FOUND");
-        }
-
         let result: KeymaLeafResult;
         try {
+            const schema = this.schemaMap.get(op.schema);
+            if (schema === undefined) {
+                throw new KeymaRuntimeError(
+                    "SCHEMA_NOT_FOUND",
+                    `Unknown schema: ${op.schema}`,
+                );
+            }
             for (const p of this.plugins) {
                 if (p.beforeOperation !== undefined) await p.beforeOperation(context, op);
             }
@@ -115,7 +117,7 @@ export class KeymaServer {
                     break;
             }
         } catch (err) {
-            result = pluginErrorToResult(err);
+            result = errorToResult(err);
         }
 
         for (const p of this.plugins) {
@@ -135,14 +137,17 @@ export class KeymaServer {
         context: RequestContext,
     ): Promise<KeymaLeafResult> {
         if (this.opts.adapter.traverse === undefined) {
-            return fail(
-                "Database adapter does not support traverse operations",
+            throw new KeymaRuntimeError(
                 "UNSUPPORTED",
+                "Database adapter does not support traverse operations",
             );
         }
         const startSchema = this.schemaMap.get(op.spec.start.schema);
         if (startSchema === undefined) {
-            return fail(`Unknown start schema: ${op.spec.start.schema}`, "SCHEMA_NOT_FOUND");
+            throw new KeymaRuntimeError(
+                "SCHEMA_NOT_FOUND",
+                `Unknown start schema: ${op.spec.start.schema}`,
+            );
         }
 
         const edges = new Map<string, SchemaMetadata>();
@@ -151,10 +156,16 @@ export class KeymaServer {
         for (const name of referencedEdgeNames) {
             const s = this.schemaMap.get(name);
             if (s === undefined) {
-                return fail(`Unknown edge schema: ${name}`, "SCHEMA_NOT_FOUND");
+                throw new KeymaRuntimeError(
+                    "SCHEMA_NOT_FOUND",
+                    `Unknown edge schema: ${name}`,
+                );
             }
             if (s.edge === undefined) {
-                return fail(`Schema "${name}" is not an edge schema`, "NOT_AN_EDGE");
+                throw new KeymaRuntimeError(
+                    "NOT_AN_EDGE",
+                    `Schema "${name}" is not an edge schema`,
+                );
             }
             edges.set(name, s);
             for (const endpoint of [s.edge.from, s.edge.to]) {
@@ -225,7 +236,7 @@ export class KeymaServer {
         projection = await this.runProjectionHooks(context, schema, projection, "read");
         const record = await this.opts.adapter.read(schema, where, projection);
         if (record === null) {
-            return fail("Not found", "NOT_FOUND");
+            throw new KeymaRuntimeError("NOT_FOUND", "Not found");
         }
         const out = await this.runResultHooks(context, schema, [record], "read");
         return { ok: true, data: out[0] ?? record };
@@ -244,7 +255,7 @@ export class KeymaServer {
         };
         const errors = await validate(writableSchema, data, this.opts.validators);
         if (errors.length > 0) {
-            return failValidation(errors);
+            throw new ValidationFailedError(errors);
         }
         data = await this.runWriteHooks(context, schema, data, "create");
         let projection = this.buildAdapterProjection(schema, op.project);
@@ -408,10 +419,6 @@ function coreType(type: FieldType): FieldType {
     return type;
 }
 
-function fail(error: string, code: string): KeymaLeafResult {
-    return { ok: false, error, code };
-}
-
 function collectEdgeNames(spec: TraversalSpec): Set<string> {
     const names = new Set<string>();
     if (spec.steps !== undefined) {
@@ -421,30 +428,31 @@ function collectEdgeNames(spec: TraversalSpec): Set<string> {
     return names;
 }
 
-function failValidation(errors: ValidationError[]): KeymaLeafResult {
-    return { ok: false, error: "Validation failed", code: "VALIDATION_FAILED", errors };
-}
-
 function isPlainRecord(v: unknown): v is Record<string, unknown> {
     return typeof v === "object" && v !== null && !Array.isArray(v) && !("nodes" in v && "edges" in v);
 }
 
-function pluginErrorToResult(err: unknown): KeymaLeafResult {
-    if (err instanceof KeymaDenied) {
-        const out: KeymaLeafResult = { ok: false, error: err.message, code: err.code };
-        if (err.plugin !== undefined) out.plugin = err.plugin;
-        return out;
+class ValidationFailedError extends KeymaRuntimeError {
+    constructor(public readonly errors: ValidationError[]) {
+        super("VALIDATION_FAILED", "Validation failed");
     }
-    if (err instanceof KeymaFieldForbidden) {
-        const out: KeymaLeafResult = {
+    override toFailureExtras(): Record<string, unknown> {
+        return { errors: this.errors };
+    }
+}
+
+function errorToResult(err: unknown): KeymaLeafFailure {
+    if (err instanceof KeymaError) {
+        const out: KeymaLeafFailure = {
             ok: false,
             error: err.message,
             code: err.code,
-            fields: err.fields,
+            source: err.source,
         };
-        if (err.plugin !== undefined) out.plugin = err.plugin;
+        if (err.origin) out.origin = err.origin;
+        Object.assign(out, err.toFailureExtras());
         return out;
     }
     const message = err instanceof Error ? err.message : String(err);
-    return { ok: false, error: message, code: "PLUGIN_ERROR" };
+    return { ok: false, error: message, code: "INTERNAL_ERROR", source: "runtime" };
 }

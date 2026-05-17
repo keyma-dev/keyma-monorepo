@@ -1,4 +1,4 @@
-# Keyma
+# Keyma (Pre-alpha)
 
 A declarative schema compiler for full-stack applications.
 

@@ -10,6 +10,7 @@ import { toRecord, type SchemaMap } from "./record.js";
 import { type CollectionNameFn } from "./projection.js";
 import { buildStepsPipeline } from "./traverse-steps.js";
 import { buildPathsFallback, buildRepeatPipeline } from "./traverse-repeat.js";
+import { MongoAdapterInvalidQuery } from "./errors.js";
 
 export async function runTraverse(
     db: Db,
@@ -34,7 +35,7 @@ export async function runTraverse(
     }
 
     if (spec.repeat === undefined) {
-        throw new Error("TraversalSpec requires either steps or repeat");
+        throw new MongoAdapterInvalidQuery("TraversalSpec requires either steps or repeat");
     }
 
     if (spec.emit === "paths") {

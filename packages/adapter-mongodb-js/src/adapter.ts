@@ -21,6 +21,7 @@ import {
 } from "./projection.js";
 import { fromRecord, toRecord, type SchemaMap } from "./record.js";
 import { runTraverse } from "./traverse.js";
+import { MongoAdapterInternal } from "./errors.js";
 
 export interface MongoAdapterOptions {
     /** Override how a schema maps to its MongoDB collection name. Defaults to
@@ -86,7 +87,7 @@ export class MongoAdapter implements KeymaDatabaseAdapter {
         const doc = fromRecord(withId, schema, this.cachedSchemas());
         await this.db.collection(this.collectionName(schema)).insertOne(doc);
         const result = await this.fetchOne(schema, { _id: doc["_id"] }, projection);
-        if (result === null) throw new Error("Created record not found post-insert");
+        if (result === null) throw new MongoAdapterInternal("Created record not found post-insert");
         return result;
     }
 
@@ -161,14 +162,14 @@ export class MongoAdapter implements KeymaDatabaseAdapter {
                 { returnDocument: "after" },
             );
         if (result === null) {
-            throw new Error("Update target not found");
+            throw new MongoAdapterInternal("Update target not found");
         }
         const fetched = await this.fetchOne(
             schema,
             { _id: (result as Record<string, unknown>)["_id"] },
             projection,
         );
-        if (fetched === null) throw new Error("Updated record not found post-update");
+        if (fetched === null) throw new MongoAdapterInternal("Updated record not found post-update");
         return fetched;
     }
 

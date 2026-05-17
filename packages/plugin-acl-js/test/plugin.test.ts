@@ -510,8 +510,9 @@ describe("ACL plugin — field-level perms", () => {
         );
         const a = resp.results["a"] as KeymaLeafFailure;
         assert.equal(a.code, "FIELD_FORBIDDEN");
-        assert.ok(a.fields?.includes("author"));
-        assert.ok(a.fields?.includes("flagged"));
+        const fields = a["fields"] as string[] | undefined;
+        assert.ok(fields?.includes("author"));
+        assert.ok(fields?.includes("flagged"));
     });
 
     it("predicate-only field is pulled in then stripped from result", async () => {
@@ -592,7 +593,7 @@ describe("ACL plugin — write enforcement", () => {
 
         // Alice tries to update bob's post — adapter sees the merged filter
         // (id=p2 AND author=alice) which matches nothing; in-memory adapter
-        // throws, surfaced as PLUGIN_ERROR. A real adapter would no-op or
+        // throws, surfaced as INTERNAL_ERROR. A real adapter would no-op or
         // return rowcount=0. This is documented behavior.
     });
 

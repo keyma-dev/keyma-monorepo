@@ -20,7 +20,7 @@ export interface KeymaServerPlugin {
     /** Called once after the server is constructed. */
     init?(server: PluginServerHandle): Promise<void> | void;
 
-    /** Observe or early-reject the operation. Throw KeymaDenied to abort. */
+    /** Observe or early-reject the operation. Throw a KeymaPluginError to abort. */
     beforeOperation?(
         ctx: RequestContext,
         op: KeymaOperation,
@@ -48,8 +48,8 @@ export interface KeymaServerPlugin {
         action: AclAction,
     ): Promise<AdapterProjection | undefined> | AdapterProjection | undefined;
 
-    /** Validate/strip a write payload for create/update. Throw KeymaDenied or
-     *  KeymaFieldForbidden for hard reject. Return data (possibly mutated) or void. */
+    /** Validate/strip a write payload for create/update. Throw a KeymaPluginError
+     *  for hard reject. Return data (possibly mutated) or void. */
     checkWrite?(
         ctx: RequestContext,
         schema: SchemaMetadata,
@@ -86,26 +86,4 @@ export interface PluginServerHandle {
     readonly schemas: readonly SchemaMetadata[];
     readonly adapter: KeymaDatabaseAdapter;
     schema(name: string): SchemaMetadata | undefined;
-}
-
-export class KeymaDenied extends Error {
-    readonly code = "FORBIDDEN" as const;
-    constructor(
-        message: string,
-        public readonly plugin?: string,
-    ) {
-        super(message);
-        this.name = "KeymaDenied";
-    }
-}
-
-export class KeymaFieldForbidden extends Error {
-    readonly code = "FIELD_FORBIDDEN" as const;
-    constructor(
-        public readonly fields: string[],
-        public readonly plugin?: string,
-    ) {
-        super(`Forbidden fields: ${fields.join(", ")}`);
-        this.name = "KeymaFieldForbidden";
-    }
 }

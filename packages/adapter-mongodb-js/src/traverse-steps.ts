@@ -13,6 +13,7 @@ import {
     type CollectionNameFn,
 } from "./projection.js";
 import type { SchemaMap } from "./record.js";
+import { MongoAdapterInvalidQuery } from "./errors.js";
 
 type Resolved = {
     edge: SchemaMetadata;
@@ -39,7 +40,7 @@ function resolveStep(
 ): Resolved {
     const edge = ctx.edges.get(step.via);
     if (edge === undefined || edge.edge === undefined) {
-        throw new Error(`Edge schema "${step.via}" not registered`);
+        throw new MongoAdapterInvalidQuery(`Edge schema "${step.via}" not registered`);
     }
     const meta = edge.edge;
     const dir: TraversalDirection = step.direction;
@@ -77,7 +78,7 @@ function resolveStep(
     }
     const nextNode = nodeBySourceName(ctx, nextSourceName);
     if (nextNode === undefined) {
-        throw new Error(`Node schema "${nextSourceName}" not registered`);
+        throw new MongoAdapterInvalidQuery(`Node schema "${nextSourceName}" not registered`);
     }
     return { edge, nextNode, localIdPath, edgeMatchExpr, edgeNextFieldExpr };
 }
@@ -91,7 +92,7 @@ export function buildStepsPipeline(
 ): { stages: Record<string, unknown>[]; resultSchema: SchemaMetadata } {
     const steps = spec.steps ?? [];
     if (steps.length === 0) {
-        throw new Error("steps pipeline requires at least one step");
+        throw new MongoAdapterInvalidQuery("steps pipeline requires at least one step");
     }
     const stages: Record<string, unknown>[] = [];
     stages.push({

@@ -1,4 +1,5 @@
 export { createAclPlugin } from "./plugin.js";
+export { AclDenied, AclFieldForbidden, ACL_PLUGIN_NAME } from "./errors.js";
 export {
     aclSchemas,
     ACL_RULE_SCHEMA,

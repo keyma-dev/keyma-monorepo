@@ -1,5 +1,6 @@
 import type { FieldType, SchemaMetadata } from "@keyma/runtime-js";
 import { valueToBson, type SchemaMap } from "./record.js";
+import { MongoAdapterInvalidQuery } from "./errors.js";
 
 const QUERY_OPS = new Set([
     "$eq",
@@ -57,11 +58,11 @@ export function translateWhere(
     for (const [key, value] of Object.entries(where)) {
         if (LOGICAL_OPS.has(key)) {
             if (!Array.isArray(value)) {
-                throw new Error(`${key} expects an array of sub-filters`);
+                throw new MongoAdapterInvalidQuery(`${key} expects an array of sub-filters`);
             }
             out[key] = value.map((sub) => {
                 if (sub === null || typeof sub !== "object" || Array.isArray(sub)) {
-                    throw new Error(`${key} sub-filter must be an object`);
+                    throw new MongoAdapterInvalidQuery(`${key} sub-filter must be an object`);
                 }
                 return translateWhere(sub as Record<string, unknown>, schema, schemas);
             });

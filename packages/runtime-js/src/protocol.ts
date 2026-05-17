@@ -1,4 +1,5 @@
 import type { ValidationError } from "./types.js";
+import type { ErrorSource } from "./errors.js";
 
 export type ProjectionSpec = { [key: string]: 1 | ProjectionSpec };
 
@@ -86,11 +87,13 @@ export type KeymaLeafFailure = {
     ok: false;
     error: string;
     code: string;
+    source: ErrorSource;
+    /** Package name of the originator (plugin or adapter). Omitted for runtime errors. */
+    origin?: string;
+    /** Structured field errors. Present iff code === "VALIDATION_FAILED". */
     errors?: ValidationError[];
-    /** Set when the failure originates in a plugin (FORBIDDEN, FIELD_FORBIDDEN, PLUGIN_ERROR). */
-    plugin?: string;
-    /** Set on FIELD_FORBIDDEN to identify the rejected fields. */
-    fields?: string[];
+    /** Free-form extras supplied by the throwing layer (e.g. {fields: [...]} for FIELD_FORBIDDEN). */
+    [key: string]: unknown;
 };
 export type KeymaLeafResult<T = unknown> = KeymaLeafSuccess<T> | KeymaLeafFailure;
 

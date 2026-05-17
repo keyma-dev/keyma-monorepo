@@ -119,6 +119,6 @@ export function combineNor(
 /** A filter that matches no document. Used when ACL evaluation produces no
  *  allowed rows but we don't want to leak via FORBIDDEN — equivalent to
  *  "list with no permission" silently returns []. Not currently used by the
- *  plugin's default path (we throw KeymaDenied) but exposed for callers that
+ *  plugin's default path (we throw AclDenied) but exposed for callers that
  *  want soft-deny behavior. */
 export const MATCHES_NONE: Record<string, unknown> = { _aclMatchesNone: true };

@@ -1,7 +1,8 @@
 import { describe, it } from "node:test";
 import assert from "node:assert/strict";
 import { KeymaServer } from "../src/server.js";
-import { KeymaDenied, KeymaFieldForbidden, type KeymaServerPlugin } from "../src/plugin.js";
+import { type KeymaServerPlugin } from "../src/plugin.js";
+import { KeymaPluginError } from "../src/errors.js";
 import type {
     KeymaDatabaseAdapter,
     ListQuery,
@@ -220,11 +221,11 @@ describe("KeymaServer — plugin surface", () => {
         assert.equal(log[1], `p2 saw {"x":0,"p1":1}`);
     });
 
-    it("KeymaDenied from beforeOperation becomes FORBIDDEN", async () => {
+    it("KeymaPluginError(FORBIDDEN) from beforeOperation surfaces with source/origin", async () => {
         const plugin: KeymaServerPlugin = {
             name: "deny-all",
             beforeOperation() {
-                throw new KeymaDenied("nope", "deny-all");
+                throw new KeymaPluginError("FORBIDDEN", "nope", "deny-all");
             },
         };
         const { server } = makeServer([plugin]);
@@ -234,15 +235,21 @@ describe("KeymaServer — plugin surface", () => {
         const a = resp.results["a"] as KeymaLeafFailure;
         assert.equal(a.ok, false);
         assert.equal(a.code, "FORBIDDEN");
-        assert.equal(a.plugin, "deny-all");
+        assert.equal(a.source, "plugin");
+        assert.equal(a["origin"], "deny-all");
     });
 
-    it("KeymaFieldForbidden from checkWrite becomes FIELD_FORBIDDEN with field list", async () => {
+    it("KeymaPluginError(FIELD_FORBIDDEN) from checkWrite carries field extras", async () => {
         const plugin: KeymaServerPlugin = {
             name: "no-secret",
             checkWrite(_ctx, _schema, data) {
                 if ("secret" in data) {
-                    throw new KeymaFieldForbidden(["secret"], "no-secret");
+                    throw new KeymaPluginError(
+                        "FIELD_FORBIDDEN",
+                        "Forbidden fields: secret",
+                        "no-secret",
+                        { fields: ["secret"] },
+                    );
                 }
             },
         };
@@ -258,10 +265,11 @@ describe("KeymaServer — plugin surface", () => {
         });
         const a = resp.results["a"] as KeymaLeafFailure;
         assert.equal(a.code, "FIELD_FORBIDDEN");
-        assert.deepEqual(a.fields, ["secret"]);
+        assert.equal(a.source, "plugin");
+        assert.deepEqual(a["fields"], ["secret"]);
     });
 
-    it("other plugin errors become PLUGIN_ERROR (not poisoning the batch)", async () => {
+    it("non-Keyma exceptions become INTERNAL_ERROR (not poisoning the batch)", async () => {
         const plugin: KeymaServerPlugin = {
             name: "boom",
             beforeOperation(_ctx, op) {
@@ -281,7 +289,8 @@ describe("KeymaServer — plugin surface", () => {
         });
         const bad = resp.results["bad"] as KeymaLeafFailure;
         const good = resp.results["good"] as KeymaLeafSuccess<unknown>;
-        assert.equal(bad.code, "PLUGIN_ERROR");
+        assert.equal(bad.code, "INTERNAL_ERROR");
+        assert.equal(bad.source, "runtime");
         assert.equal(bad.error, "kaboom");
         assert.equal(good.ok, true);
     });

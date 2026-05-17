@@ -12,6 +12,7 @@ import {
 } from "./projection.js";
 import type { SchemaMap } from "./record.js";
 import { buildStepsPipeline } from "./traverse-steps.js";
+import { MongoAdapterInvalidQuery } from "./errors.js";
 
 function endpointSchema(
     ctx: AdapterTraversalContext,
@@ -59,11 +60,11 @@ export function buildRepeatPipeline(
 ): { stages: Record<string, unknown>[]; resultSchema: SchemaMetadata } {
     const repeat = spec.repeat;
     if (repeat === undefined) {
-        throw new Error("repeat pipeline requires spec.repeat");
+        throw new MongoAdapterInvalidQuery("repeat pipeline requires spec.repeat");
     }
     const edgeSchema = ctx.edges.get(repeat.via);
     if (edgeSchema === undefined || edgeSchema.edge === undefined) {
-        throw new Error(`Edge schema "${repeat.via}" not registered`);
+        throw new MongoAdapterInvalidQuery(`Edge schema "${repeat.via}" not registered`);
     }
     const meta = edgeSchema.edge;
     const depthMax = spec.depth?.max ?? 1;
