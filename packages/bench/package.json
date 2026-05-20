@@ -1,0 +1,19 @@
+{
+    "name": "@keyma/bench",
+    "version": "0.1.0",
+    "type": "module",
+    "exports": {
+        ".": "./dist/src/index.js"
+    },
+    "scripts": {
+        "build": "tsc"
+    },
+    "peerDependencies": {
+        "@keyma/runtime-js": "*"
+    },
+    "devDependencies": {
+        "@keyma/runtime-js": "*",
+        "@types/node": "*",
+        "typescript": "*"
+    }
+}
