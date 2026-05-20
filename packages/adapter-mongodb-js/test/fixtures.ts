@@ -109,8 +109,8 @@ export const FRIENDSHIP_SCHEMA: SchemaMetadata = {
     sourceName: "Friendship",
     fields: [
         { name: "id", type: { kind: "id" }, readonly: true },
-        { name: "userA", type: { kind: "reference", schema: "user" } },
-        { name: "userB", type: { kind: "reference", schema: "user" } },
+        { name: "userA", type: { kind: "reference", schema: "user" }, indexes: [{}] },
+        { name: "userB", type: { kind: "reference", schema: "user" }, indexes: [{}] },
         { name: "since", type: { kind: "string" }, required: false },
     ],
     edge: {
@@ -130,6 +130,9 @@ export const POST_SCHEMA: SchemaMetadata = {
         { name: "id", type: { kind: "id" }, readonly: true },
         { name: "title", type: { kind: "string" } },
     ],
+    indexes: [
+        { fields: [{ name: "title", direction: 1 }] },
+    ],
 };
 
 export const TAG_SCHEMA: SchemaMetadata = {
@@ -146,8 +149,8 @@ export const AUTHORSHIP_SCHEMA: SchemaMetadata = {
     sourceName: "Authorship",
     fields: [
         { name: "id", type: { kind: "id" }, readonly: true },
-        { name: "author", type: { kind: "reference", schema: "user" } },
-        { name: "post", type: { kind: "reference", schema: "post" } },
+        { name: "author", type: { kind: "reference", schema: "user" }, indexes: [{}] },
+        { name: "post", type: { kind: "reference", schema: "post" }, indexes: [{}] },
     ],
     edge: {
         from: "User",
@@ -157,6 +160,7 @@ export const AUTHORSHIP_SCHEMA: SchemaMetadata = {
         label: "wrote",
         directed: true,
     },
+
 };
 
 export const TAGGING_SCHEMA: SchemaMetadata = {
@@ -164,8 +168,8 @@ export const TAGGING_SCHEMA: SchemaMetadata = {
     sourceName: "Tagging",
     fields: [
         { name: "id", type: { kind: "id" }, readonly: true },
-        { name: "post", type: { kind: "reference", schema: "post" } },
-        { name: "tag", type: { kind: "reference", schema: "tag" } },
+        { name: "post", type: { kind: "reference", schema: "post" }, indexes: [{}] },
+        { name: "tag", type: { kind: "reference", schema: "tag" }, indexes: [{}] },
     ],
     edge: {
         from: "Post",

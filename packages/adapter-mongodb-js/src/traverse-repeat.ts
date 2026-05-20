@@ -72,6 +72,12 @@ export function buildRepeatPipeline(
     const depthMin = spec.depth?.min ?? 1;
     const edgeColl = collectionName(edgeSchema);
 
+    // TODO: `repeat.nodeWhere` is intentionally not honored here — $graphLookup
+    // has no built-in mechanism to filter intermediate nodes mid-traversal.
+    // Step mode (buildStepsPipeline) supports nodeWhere; the typed surface in
+    // query.ts does not expose nodeWhere on `repeat` so users can't reach this
+    // path from the public API.
+
     const stages: Record<string, unknown>[] = [];
     stages.push({
         $match: translateWhere(spec.start.where, ctx.startSchema, schemas),

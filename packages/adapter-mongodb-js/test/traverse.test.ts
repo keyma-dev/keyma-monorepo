@@ -182,6 +182,110 @@ describe("MongoAdapter — traverse", () => {
         assert.deepEqual(ids, [OIDS.p1]);
     });
 
+    it("step.nodeWhere filters intermediate connected nodes", async () => {
+        await seedAuthorshipGraph();
+        // alice → p1 → tech ; alice → p2 → news
+        // Constrain the intermediate Post to title "p1" — only the tech tag
+        // should remain.
+        const ctx = makeCtx(
+            USER_SCHEMA,
+            TAG_SCHEMA,
+            [AUTHORSHIP_SCHEMA, TAGGING_SCHEMA],
+            [USER_SCHEMA, POST_SCHEMA, TAG_SCHEMA],
+        );
+        const result = await adapter.traverse(ctx, {
+            start: { schema: "user", where: { id: OIDS.alice } },
+            steps: [
+                { via: "authorship", direction: "out", nodeWhere: { title: "p1" } },
+                { via: "tagging", direction: "out" },
+            ],
+            emit: "nodes",
+        });
+        const ids = (result as Record<string, unknown>[]).map((r) => r["id"]);
+        assert.deepEqual(ids, [OIDS.tech]);
+    });
+
+    it("step.nodeWhere prunes the chain early when no intermediate matches", async () => {
+        await seedAuthorshipGraph();
+        const ctx = makeCtx(
+            USER_SCHEMA,
+            TAG_SCHEMA,
+            [AUTHORSHIP_SCHEMA, TAGGING_SCHEMA],
+            [USER_SCHEMA, POST_SCHEMA, TAG_SCHEMA],
+        );
+        const result = await adapter.traverse(ctx, {
+            start: { schema: "user", where: { id: OIDS.alice } },
+            steps: [
+                { via: "authorship", direction: "out", nodeWhere: { title: "no-such-post" } },
+                { via: "tagging", direction: "out" },
+            ],
+            emit: "nodes",
+        });
+        assert.deepEqual(result, []);
+    });
+
+    it("step.nodeWhere on the terminal step filters terminal nodes", async () => {
+        await seedAuthorshipGraph();
+        const ctx = makeCtx(
+            USER_SCHEMA,
+            TAG_SCHEMA,
+            [AUTHORSHIP_SCHEMA, TAGGING_SCHEMA],
+            [USER_SCHEMA, POST_SCHEMA, TAG_SCHEMA],
+        );
+        const result = await adapter.traverse(ctx, {
+            start: { schema: "user", where: { id: OIDS.alice } },
+            steps: [
+                { via: "authorship", direction: "out" },
+                { via: "tagging", direction: "out", nodeWhere: { label: "news" } },
+            ],
+            emit: "nodes",
+        });
+        const ids = (result as Record<string, unknown>[]).map((r) => r["id"]);
+        assert.deepEqual(ids, [OIDS.news]);
+    });
+
+    it("step.nodeWhere combines with step.edgeWhere on the same step", async () => {
+        await seedAuthorshipGraph();
+        // edgeWhere narrows the authorship edge to p1 only, nodeWhere then
+        // requires the post title to match "p1" — both must hold.
+        const ctx = makeCtx(
+            USER_SCHEMA,
+            POST_SCHEMA,
+            [AUTHORSHIP_SCHEMA],
+            [USER_SCHEMA, POST_SCHEMA],
+        );
+        const matching = await adapter.traverse(ctx, {
+            start: { schema: "user", where: { id: OIDS.alice } },
+            steps: [
+                {
+                    via: "authorship",
+                    direction: "out",
+                    edgeWhere: { post: OIDS.p1 },
+                    nodeWhere: { title: "p1" },
+                },
+            ],
+            emit: "nodes",
+        });
+        assert.deepEqual(
+            (matching as Record<string, unknown>[]).map((r) => r["id"]),
+            [OIDS.p1],
+        );
+        // Conflicting edgeWhere/nodeWhere should yield no results.
+        const conflicting = await adapter.traverse(ctx, {
+            start: { schema: "user", where: { id: OIDS.alice } },
+            steps: [
+                {
+                    via: "authorship",
+                    direction: "out",
+                    edgeWhere: { post: OIDS.p1 },
+                    nodeWhere: { title: "p2" },
+                },
+            ],
+            emit: "nodes",
+        });
+        assert.deepEqual(conflicting, []);
+    });
+
     async function seedFriendGraph(): Promise<void> {
         for (const id of [OIDS.a, OIDS.b, OIDS.c, OIDS.d, OIDS.e]) {
             await adapter.create(USER_SCHEMA, { id, email: `${id}@x.com`, name: id });

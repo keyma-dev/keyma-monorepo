@@ -1,7 +1,7 @@
 import { describe, it, before, after, beforeEach } from "node:test";
 import assert from "node:assert/strict";
 import { MongoAdapter } from "../src/index.js";
-import { OIDS, USER_SCHEMA } from "./fixtures.js";
+import { AUTHORSHIP_SCHEMA, OIDS, USER_SCHEMA } from "./fixtures.js";
 import { clean, startMongo, stopMongo, type TestHandle } from "./setup.js";
 
 describe("MongoAdapter — indexes", () => {
@@ -46,6 +46,19 @@ describe("MongoAdapter — indexes", () => {
         assert.ok(compound, "compound name+age index should exist");
         assert.equal(compound!.key["name"], 1);
         assert.equal(compound!.key["age"], -1);
+    });
+
+    it("creates indexes on edge endpoint fields", async () => {
+        await adapter.ensureSchema(AUTHORSHIP_SCHEMA);
+        const indexes = await h.db.collection("authorship").indexes();
+        assert.ok(
+            indexes.find((i) => i.key && i.key["author"] === 1),
+            "index on author should exist",
+        );
+        assert.ok(
+            indexes.find((i) => i.key && i.key["post"] === 1),
+            "index on post should exist",
+        );
     });
 
     it("ensureSchema is idempotent", async () => {

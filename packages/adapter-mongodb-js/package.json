@@ -7,13 +7,15 @@
     },
     "scripts": {
         "build": "tsc",
-        "test": "tsc && node --test --test-concurrency=1 --test-timeout=300000 dist/test/*.test.js"
+        "test": "tsc && node --test --test-concurrency=1 --test-timeout=300000 dist/test/*.test.js",
+        "bench": "tsc && node dist/bench/run.js"
     },
     "peerDependencies": {
         "@keyma/runtime-js": "*",
         "mongodb": "^7.0.0"
     },
     "devDependencies": {
+        "@keyma/bench": "*",
         "@keyma/runtime-js": "*",
         "@types/node": "*",
         "mongodb": "^7.0.0",

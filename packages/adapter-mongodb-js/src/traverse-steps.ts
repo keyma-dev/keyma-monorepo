@@ -137,11 +137,19 @@ export function buildStepsPipeline(
                   (step.direction === "out"
                       ? r.edge.edge!.toField
                       : r.edge.edge!.fromField);
+        const nodePipeline: Record<string, unknown>[] = [
+            { $match: { $expr: { $eq: ["$_id", "$$nextId"] } } },
+        ];
+        if (step.nodeWhere !== undefined) {
+            nodePipeline.push({
+                $match: translateWhere(step.nodeWhere, r.nextNode, schemas),
+            });
+        }
         stages.push({
             $lookup: {
                 from: collectionName(r.nextNode),
-                localField: nextLocalField,
-                foreignField: "_id",
+                let: { nextId: "$" + nextLocalField },
+                pipeline: nodePipeline,
                 as: "_n" + i,
             },
         });
