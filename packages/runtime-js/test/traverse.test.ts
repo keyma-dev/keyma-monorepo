@@ -73,6 +73,50 @@ describe("Keyma.traverse — leaf shape", () => {
     });
 });
 
+describe("Keyma.query — traverse request options", () => {
+    it("threads skip/limit/sort from .request() into spec.options on the wire", async () => {
+        const captured: unknown[] = [];
+        const transport = async (req: unknown) => { captured.push(req); return { results: {} }; };
+
+        const q = Keyma.query({
+            friends: Keyma.traverse(Person, {
+                start: { schema: Person, where: { id: "p1" } },
+                repeat: { via: Knows, direction: "out" },
+                depth: { max: 3 },
+                emit: "nodes",
+            }),
+        });
+
+        await q.request(
+            { friends: { skip: 5, limit: 10, sort: { name: 1 } } },
+            { inputs: {}, transport },
+        );
+
+        const req = captured[0] as { operations: Record<string, { spec: TraversalSpec }> };
+        const op = req.operations["friends"]!;
+        assert.deepEqual(op.spec.options, { skip: 5, limit: 10, sort: { name: 1 } });
+    });
+
+    it("omits spec.options when no leaf options are supplied", async () => {
+        const captured: unknown[] = [];
+        const transport = async (req: unknown) => { captured.push(req); return { results: {} }; };
+
+        const q = Keyma.query({
+            friends: Keyma.traverse(Person, {
+                start: { schema: Person, where: { id: "p1" } },
+                repeat: { via: Knows, direction: "out" },
+                depth: { max: 2 },
+                emit: "nodes",
+            }),
+        });
+        await q.request({}, { inputs: {}, transport });
+
+        const req = captured[0] as { operations: Record<string, { spec: TraversalSpec }> };
+        const op = req.operations["friends"]!;
+        assert.equal(op.spec.options, undefined);
+    });
+});
+
 describe("Keyma.query — traverse substitution", () => {
     it("substitutes inputs into the wire request", async () => {
         const captured: unknown[] = [];

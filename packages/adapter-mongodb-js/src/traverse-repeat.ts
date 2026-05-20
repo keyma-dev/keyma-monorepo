@@ -13,6 +13,7 @@ import {
 import type { SchemaMap } from "./record.js";
 import { buildStepsPipeline } from "./traverse-steps.js";
 import { MongoAdapterInvalidQuery } from "./errors.js";
+import { applyListOptions } from "./list-options.js";
 
 function endpointSchema(
     ctx: AdapterTraversalContext,
@@ -141,6 +142,7 @@ export function buildRepeatPipeline(
     const emit = spec.emit;
     if (emit === "edges") {
         stages.push({ $replaceRoot: { newRoot: "$_edges" } });
+        applyListOptions(stages, spec.options);
         return { stages, resultSchema: edgeSchema };
     }
 
@@ -171,6 +173,7 @@ export function buildRepeatPipeline(
         if (spec.where !== undefined) {
             stages.push({ $match: translateWhere(spec.where, terminalSchema, schemas) });
         }
+        applyListOptions(stages, spec.options);
         if (projection?.populate !== undefined) {
             stages.push(
                 ...buildLookupStages(

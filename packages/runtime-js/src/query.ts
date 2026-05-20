@@ -165,6 +165,8 @@ type TypedListOptions<R> = {
 
 type LeafOptions<L> = L extends ListLeaf<unknown, unknown, unknown>
     ? TypedListOptions<LeafRecord<L>>
+    : L extends TraverseLeaf<unknown, unknown, unknown>
+    ? TypedListOptions<LeafRecord<L>>
     : Record<never, never>;
 
 export type RequestLeafOptions<Tmpl extends Record<string, AnyLeaf>> = {
@@ -322,11 +324,20 @@ function buildOperation(
             };
         }
         case "traverse": {
-            const op: KeymaOperation = {
-                op: "traverse",
-                schema: schemaName,
-                spec: substituteSpec(leaf.spec, leafInputs),
+            const { skip, limit, sort } = leafOptions as {
+                skip?: number;
+                limit?: number;
+                sort?: Record<string, 1 | -1>;
             };
+            const spec = substituteSpec(leaf.spec, leafInputs);
+            if (skip !== undefined || limit !== undefined || sort !== undefined) {
+                const options: ListOptions = {};
+                if (skip !== undefined) options.skip = skip;
+                if (limit !== undefined) options.limit = limit;
+                if (sort !== undefined) options.sort = sort;
+                spec.options = options;
+            }
+            const op: KeymaOperation = { op: "traverse", schema: schemaName, spec };
             if (leaf.project !== undefined) op.project = leaf.project;
             return op;
         }

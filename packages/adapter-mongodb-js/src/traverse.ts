@@ -11,6 +11,7 @@ import { type CollectionNameFn } from "./projection.js";
 import { buildStepsPipeline } from "./traverse-steps.js";
 import { buildPathsFallback, buildRepeatPipeline } from "./traverse-repeat.js";
 import { MongoAdapterInvalidQuery } from "./errors.js";
+import { applyListOptions } from "./list-options.js";
 
 export async function runTraverse(
     db: Db,
@@ -39,11 +40,22 @@ export async function runTraverse(
     }
 
     if (spec.emit === "paths") {
-        // Unrolled fallback: run one pipeline per depth and merge.
+        // Unrolled fallback: build one pipeline per depth and combine with
+        // $unionWith so sort/skip/limit apply globally across all depths.
         const min = spec.depth?.min ?? 1;
         const max = spec.depth?.max ?? 1;
-        const rows: Record<string, unknown>[] = [];
-        for (let d = min; d <= max; d++) {
+        if (min > max) {
+            return shapeResults([], spec, ctx, ctx.terminalSchema, schemas);
+        }
+        const { stages: baseStages } = buildPathsFallback(
+            spec,
+            ctx,
+            schemas,
+            collectionName,
+            min,
+        );
+        const unionStages: Record<string, unknown>[] = [...baseStages];
+        for (let d = min + 1; d <= max; d++) {
             const { stages } = buildPathsFallback(
                 spec,
                 ctx,
@@ -51,9 +63,24 @@ export async function runTraverse(
                 collectionName,
                 d,
             );
-            const batch = await startColl.aggregate(stages).toArray();
-            for (const r of batch) rows.push(r as Record<string, unknown>);
+            unionStages.push({
+                $unionWith: {
+                    coll: collectionName(ctx.startSchema),
+                    pipeline: stages,
+                },
+            });
         }
+        if (spec.options !== undefined) {
+            // Lift the terminal node (last element of the path's `nodes` array)
+            // into a synthetic `_terminal` field so we can sort by its keys
+            // across depths, then drop it.
+            unionStages.push({
+                $set: { _terminal: { $arrayElemAt: ["$nodes", -1] } },
+            });
+            applyListOptions(unionStages, spec.options, { sortPrefix: "_terminal." });
+            unionStages.push({ $unset: "_terminal" });
+        }
+        const rows = await startColl.aggregate(unionStages).toArray();
         return shapeResults(rows, spec, ctx, ctx.terminalSchema, schemas);
     }
 

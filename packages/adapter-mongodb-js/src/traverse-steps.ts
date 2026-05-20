@@ -14,6 +14,7 @@ import {
 } from "./projection.js";
 import type { SchemaMap } from "./record.js";
 import { MongoAdapterInvalidQuery } from "./errors.js";
+import { applyListOptions } from "./list-options.js";
 
 type Resolved = {
     edge: SchemaMetadata;
@@ -158,11 +159,15 @@ export function buildStepsPipeline(
         stages.push({
             $project: { _id: 0, nodes: nodeRefs, edges: edgeRefs },
         });
+        applyListOptions(stages, spec.options, {
+            sortPrefix: "nodes." + (lastIdx + 1) + ".",
+        });
         return { stages, resultSchema: terminalSchema };
     }
 
     if (emit === "edges") {
         stages.push({ $replaceRoot: { newRoot: "$_e" + lastIdx } });
+        applyListOptions(stages, spec.options);
         return { stages, resultSchema: stepResolutions[lastIdx]!.edge };
     }
 
@@ -171,6 +176,7 @@ export function buildStepsPipeline(
     if (spec.where !== undefined) {
         stages.push({ $match: translateWhere(spec.where, terminalSchema, schemas) });
     }
+    applyListOptions(stages, spec.options);
     if (projection?.populate !== undefined) {
         stages.push(
             ...buildLookupStages(terminalSchema, projection.populate, schemas, collectionName),

@@ -36,6 +36,8 @@ export type TraversalSpec = {
     where?: Record<string, unknown>;
     /** Output shape. Defaults to "nodes". */
     emit: TraversalEmit;
+    /** Pagination/ordering applied to the emitted result set. */
+    options?: ListOptions;
 };
 
 export type KeymaOperation =

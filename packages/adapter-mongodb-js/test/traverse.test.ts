@@ -272,6 +272,160 @@ describe("MongoAdapter — traverse", () => {
         assert.deepEqual(sorted, expected);
     });
 
+    // ─── Pagination (skip / limit / sort) ───────────────────────────────────
+
+    it("steps mode + emit: nodes — sort + limit returns a deterministic slice", async () => {
+        await seedAuthorshipGraph();
+        const ctx = makeCtx(
+            USER_SCHEMA,
+            POST_SCHEMA,
+            [AUTHORSHIP_SCHEMA],
+            [USER_SCHEMA, POST_SCHEMA],
+        );
+        // alice wrote p1 ("p1") and p2 ("p2"). Sort by title desc, limit 1 → p2.
+        const result = await adapter.traverse(ctx, {
+            start: { schema: "user", where: { id: OIDS.alice } },
+            steps: [{ via: "authorship", direction: "out" }],
+            emit: "nodes",
+            options: { sort: { title: -1 }, limit: 1 },
+        });
+        const ids = (result as Record<string, unknown>[]).map((r) => r["id"]);
+        assert.deepEqual(ids, [OIDS.p2]);
+    });
+
+    it("steps mode + emit: nodes — skip+limit is stable across calls (default _id sort)", async () => {
+        await seedAuthorshipGraph();
+        const ctx = makeCtx(
+            USER_SCHEMA,
+            POST_SCHEMA,
+            [AUTHORSHIP_SCHEMA],
+            [USER_SCHEMA, POST_SCHEMA],
+        );
+        const spec = {
+            start: { schema: "user", where: { id: OIDS.alice } },
+            steps: [{ via: "authorship", direction: "out" as const }],
+            emit: "nodes" as const,
+            options: { skip: 1, limit: 1 },
+        };
+        const r1 = (await adapter.traverse(ctx, spec)) as Record<string, unknown>[];
+        const r2 = (await adapter.traverse(ctx, spec)) as Record<string, unknown>[];
+        assert.equal(r1.length, 1);
+        assert.deepEqual(
+            r1.map((r) => r["id"]),
+            r2.map((r) => r["id"]),
+        );
+    });
+
+    it("repeat mode + emit: nodes — sort + limit slices reachable set", async () => {
+        await seedFriendGraph();
+        const ctx = makeCtx(
+            USER_SCHEMA,
+            USER_SCHEMA,
+            [FRIENDSHIP_SCHEMA],
+            [USER_SCHEMA],
+        );
+        // From a, reachable up to depth 3: b, c, d. `seedFriendGraph` stores
+        // each user's id as the `name` field, so sorting by name desc orders
+        // them by their hex OID — d (oid 17), c (oid 16), b (oid 15). Limit 2.
+        const result = await adapter.traverse(ctx, {
+            start: { schema: "user", where: { id: OIDS.a } },
+            repeat: { via: "friendship", direction: "out" },
+            depth: { max: 3 },
+            emit: "nodes",
+            options: { sort: { name: -1 }, limit: 2 },
+        });
+        const ids = (result as Record<string, unknown>[]).map((r) => r["id"]);
+        assert.deepEqual(ids, [OIDS.d, OIDS.c]);
+    });
+
+    it("repeat mode + emit: nodes — _id tiebreaker yields stable order across ties", async () => {
+        // Star graph from a → b/c/d/e, where b and c share name "twin" but
+        // differ by _id. With sort { name: 1 }, "twin" entries should come
+        // before "z*" entries; within the twin pair, _id ascending decides.
+        await adapter.create(USER_SCHEMA, { id: OIDS.a, email: "a@x.com", name: "a" });
+        await adapter.create(USER_SCHEMA, { id: OIDS.b, email: "b@x.com", name: "twin" });
+        await adapter.create(USER_SCHEMA, { id: OIDS.c, email: "c@x.com", name: "twin" });
+        await adapter.create(USER_SCHEMA, { id: OIDS.d, email: "d@x.com", name: "zoe" });
+        await adapter.create(FRIENDSHIP_SCHEMA, { id: OIDS.f1, userA: OIDS.a, userB: OIDS.b });
+        await adapter.create(FRIENDSHIP_SCHEMA, { id: OIDS.f2, userA: OIDS.a, userB: OIDS.c });
+        await adapter.create(FRIENDSHIP_SCHEMA, { id: OIDS.f3, userA: OIDS.a, userB: OIDS.d });
+
+        const ctx = makeCtx(
+            USER_SCHEMA,
+            USER_SCHEMA,
+            [FRIENDSHIP_SCHEMA],
+            [USER_SCHEMA],
+        );
+        const result = await adapter.traverse(ctx, {
+            start: { schema: "user", where: { id: OIDS.a } },
+            repeat: { via: "friendship", direction: "out" },
+            depth: { max: 1 },
+            emit: "nodes",
+            options: { sort: { name: 1 } },
+        });
+        const rows = result as Record<string, unknown>[];
+        // _id ascending for OIDS.b vs OIDS.c — b is mkoid(21), c is mkoid(22).
+        assert.deepEqual(
+            rows.map((r) => r["id"]),
+            [OIDS.b, OIDS.c, OIDS.d],
+        );
+    });
+
+    it("repeat mode + emit: paths — sort by terminal field works across depths", async () => {
+        await seedFriendGraph();
+        const ctx = makeCtx(
+            USER_SCHEMA,
+            USER_SCHEMA,
+            [FRIENDSHIP_SCHEMA],
+            [USER_SCHEMA],
+        );
+        // Depths 1..3 from a yield paths whose terminal nodes are b, c, d.
+        // `name` equals the OID hex; sorted desc and limit 2 → d (oid 17),
+        // c (oid 16).
+        const result = await adapter.traverse(ctx, {
+            start: { schema: "user", where: { id: OIDS.a } },
+            repeat: { via: "friendship", direction: "out" },
+            depth: { min: 1, max: 3 },
+            emit: "paths",
+            options: { sort: { name: -1 }, limit: 2 },
+        });
+        const paths = result as { nodes: Record<string, unknown>[]; edges: Record<string, unknown>[] }[];
+        assert.equal(paths.length, 2);
+        const terminals = paths.map((p) => p.nodes[p.nodes.length - 1]!["id"]);
+        assert.deepEqual(terminals, [OIDS.d, OIDS.c]);
+        // Paths returned should not have an artifact _terminal field.
+        for (const p of paths) {
+            for (const n of p.nodes) {
+                assert.equal(("_terminal" in n), false);
+            }
+        }
+    });
+
+    it("steps mode + emit: paths — sort by terminal index slot + tiebreaker", async () => {
+        await seedAuthorshipGraph();
+        const ctx = makeCtx(
+            USER_SCHEMA,
+            TAG_SCHEMA,
+            [AUTHORSHIP_SCHEMA, TAGGING_SCHEMA],
+            [USER_SCHEMA, POST_SCHEMA, TAG_SCHEMA],
+        );
+        // alice → p1 → tech, alice → p2 → news. Sort by terminal tag label asc,
+        // limit 1 → news. Asc because "news" < "tech".
+        const result = await adapter.traverse(ctx, {
+            start: { schema: "user", where: { id: OIDS.alice } },
+            steps: [
+                { via: "authorship", direction: "out" },
+                { via: "tagging", direction: "out" },
+            ],
+            emit: "paths",
+            options: { sort: { label: 1 }, limit: 1 },
+        });
+        const paths = result as { nodes: Record<string, unknown>[] }[];
+        assert.equal(paths.length, 1);
+        const terminal = paths[0]!.nodes[paths[0]!.nodes.length - 1]!;
+        assert.equal(terminal["label"], "news");
+    });
+
     it("terminal spec.where filters terminal nodes", async () => {
         await seedFriendGraph();
         const ctx = makeCtx(
