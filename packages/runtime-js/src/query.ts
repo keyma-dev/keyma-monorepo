@@ -369,6 +369,7 @@ function substituteSpec(
 function substituteStep(step: TraversalStep, leafInputs: Record<string, unknown>): TraversalStep {
     const out: TraversalStep = { via: step.via, direction: step.direction };
     if (step.edgeWhere !== undefined) out.edgeWhere = substitute(step.edgeWhere, leafInputs);
+    if (step.nodeWhere !== undefined) out.nodeWhere = substitute(step.nodeWhere, leafInputs);
     return out;
 }
 
@@ -536,6 +537,33 @@ export type TerminalNode<Start, Steps extends readonly StepInput[]> =
             : never
         : Start;
 
+/** Walks a step chain and produces a closed-shape tuple where each step's
+ *  `nodeWhere` is typed against the record type of the node that step reaches.
+ *  Used directly as the contextual type for `args.steps` so excess-property
+ *  checks fire per element. */
+type TypedSteps<Cur, Steps extends readonly StepInput[]> =
+    Steps extends readonly []
+        ? readonly []
+        : Steps extends readonly [infer Head, ...infer Tail]
+            ? Head extends { via: infer V; direction: infer D }
+                ? V extends EdgeBrand<unknown, unknown>
+                    ? D extends TraversalDirection
+                        ? Tail extends readonly StepInput[]
+                            ? readonly [
+                                  {
+                                      via: V;
+                                      direction: D;
+                                      edgeWhere?: Record<string, unknown>;
+                                      nodeWhere?: WhereArg<OtherEnd<V, Cur, D>>;
+                                  },
+                                  ...TypedSteps<OtherEnd<V, Cur, D>, Tail>,
+                              ]
+                            : never
+                        : never
+                    : never
+                : never
+            : never;
+
 type StartArg<S extends SchemaClass> = {
     schema: S;
     where: WhereArg<RecordOf<S>>;
@@ -547,7 +575,7 @@ type TraverseArgsHeterogeneous<
     Steps extends readonly StepInput[],
 > = {
     start: StartArg<StartSchema>;
-    steps: Steps;
+    steps: Steps & TypedSteps<RecordOf<StartSchema>, Steps>;
     where?: WhereArg<RecordOf<Result>>;
     emit?: TraversalEmit;
     repeat?: never;
@@ -588,11 +616,17 @@ function traverse<
     args: TraverseArgsHomogeneous<NodeSchema, Via>,
 ): TraverseLeaf<RecordOf<NodeSchema>, {}, RecordOf<NodeSchema>>;
 function traverse(cls: SchemaClass, args: unknown): TraverseLeaf<unknown, {}, unknown> {
+    type RawStep = {
+        via: SchemaClass;
+        direction: TraversalDirection;
+        edgeWhere?: Record<string, unknown>;
+        nodeWhere?: Record<string, unknown>;
+    };
     const a = args as {
         start: { schema: SchemaClass; where: Record<string, unknown> };
         emit?: TraversalEmit;
-        steps?: Array<{ via: SchemaClass; direction: TraversalDirection; edgeWhere?: Record<string, unknown> }>;
-        repeat?: { via: SchemaClass; direction: TraversalDirection; edgeWhere?: Record<string, unknown> };
+        steps?: RawStep[];
+        repeat?: RawStep;
         depth?: { min?: number; max: number };
         where?: Record<string, unknown>;
     };
@@ -604,12 +638,14 @@ function traverse(cls: SchemaClass, args: unknown): TraverseLeaf<unknown, {}, un
         spec.steps = a.steps.map((s) => {
             const step: TraversalStep = { via: s.via.schema.name, direction: s.direction };
             if (s.edgeWhere !== undefined) step.edgeWhere = s.edgeWhere;
+            if (s.nodeWhere !== undefined) step.nodeWhere = s.nodeWhere;
             return step;
         });
     }
     if (a.repeat !== undefined) {
         const r: TraversalStep = { via: a.repeat.via.schema.name, direction: a.repeat.direction };
         if (a.repeat.edgeWhere !== undefined) r.edgeWhere = a.repeat.edgeWhere;
+        if (a.repeat.nodeWhere !== undefined) r.nodeWhere = a.repeat.nodeWhere;
         spec.repeat = r;
     }
     if (a.depth !== undefined) spec.depth = a.depth;

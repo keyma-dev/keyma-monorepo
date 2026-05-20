@@ -71,6 +71,19 @@ describe("Keyma.traverse — leaf shape", () => {
         const since = leaf.spec.steps?.[0]?.edgeWhere?.["since"];
         assert.ok(since instanceof Input);
     });
+
+    it("stores nodeWhere on steps in the leaf spec", () => {
+        const leaf = Keyma.traverse(Company, {
+            start: { schema: Person, where: { id: "p1" } },
+            steps: [
+                { via: Knows, direction: "out", nodeWhere: { name: "Alice" } },
+                { via: WorksAt, direction: "out", nodeWhere: { name: "Acme" } },
+            ] as const,
+            emit: "nodes",
+        });
+        assert.deepEqual(leaf.spec.steps?.[0]?.nodeWhere, { name: "Alice" });
+        assert.deepEqual(leaf.spec.steps?.[1]?.nodeWhere, { name: "Acme" });
+    });
 });
 
 describe("Keyma.query — traverse request options", () => {
@@ -144,6 +157,32 @@ describe("Keyma.query — traverse substitution", () => {
         assert.equal((op as unknown as { op: string }).op, "traverse");
         assert.deepEqual(op.spec.start.where, { id: "p-123" });
         assert.equal(op.spec.steps?.length, 2);
+    });
+
+    it("substitutes Input placeholders inside step.nodeWhere", async () => {
+        const captured: unknown[] = [];
+        const transport = async (req: unknown) => { captured.push(req); return { results: {} }; };
+
+        const q = Keyma.query({
+            companies: Keyma.traverse(Company, {
+                start: { schema: Person, where: { id: "p1" } },
+                steps: [
+                    { via: Knows, direction: "out", nodeWhere: { name: Keyma.input("midName") } },
+                    { via: WorksAt, direction: "out", nodeWhere: { name: Keyma.input("coName") } },
+                ] as const,
+                emit: "nodes",
+            }),
+        });
+
+        await q.request({}, {
+            inputs: { companies: { midName: "Alice", coName: "Acme" } as never },
+            transport,
+        });
+
+        const req = captured[0] as { operations: Record<string, { spec: TraversalSpec }> };
+        const op = req.operations["companies"]!;
+        assert.deepEqual(op.spec.steps?.[0]?.nodeWhere, { name: "Alice" });
+        assert.deepEqual(op.spec.steps?.[1]?.nodeWhere, { name: "Acme" });
     });
 });
 
@@ -344,6 +383,47 @@ describe("Keyma.traverse — type narrowing", () => {
         //     emit: "nodes",
         // });
         assert.ok(true);
+    });
+
+    it("nodeWhere is typed against the connected node at each step", () => {
+        // Positive: nodeWhere on Knows-out is typed against PersonRecord,
+        // nodeWhere on WorksAt-out is typed against CompanyRecord. The fact
+        // that this call type-checks is itself a type-level test.
+        const leaf = Keyma.traverse(Company, {
+            start: { schema: Person, where: { id: "p1" } },
+            steps: [
+                { via: Knows, direction: "out", nodeWhere: { name: "Alice" } },
+                { via: WorksAt, direction: "out", nodeWhere: { name: "Acme" } },
+            ] as const,
+            emit: "nodes",
+        });
+        assert.equal(leaf.schemaClass, Company);
+
+        // Extract the contextual nodeWhere type each step expects. The
+        // intersection in TraverseArgsHeterogeneous.steps doesn't always
+        // trigger EPC on inline literals — but extracting the typed shape
+        // via Parameters<typeof Keyma.traverse<...>> and assigning to it
+        // gives us a reliable surface for negative-case assertions.
+        type Args = Parameters<typeof Keyma.traverse<
+            typeof Person,
+            readonly [
+                { via: typeof Knows; direction: "out" },
+                { via: typeof WorksAt; direction: "out" },
+            ],
+            typeof Company
+        >>[1];
+        type Step0NodeWhere = NonNullable<Args["steps"][0]["nodeWhere"]>;
+        type Step1NodeWhere = NonNullable<Args["steps"][1]["nodeWhere"]>;
+
+        // Positive assignments (these must compile).
+        const _personFilter: Step0NodeWhere = { name: "Alice" };
+        const _companyFilter: Step1NodeWhere = { name: "Acme" };
+        void _personFilter; void _companyFilter;
+
+        // Negative: wrong value type — name is string on CompanyRecord.
+        // @ts-expect-error — number is not assignable to string
+        const _wrongType: Step1NodeWhere = { name: 42 };
+        void _wrongType;
     });
 });
 

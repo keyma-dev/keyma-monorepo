@@ -18,6 +18,8 @@ export type TraversalStep = {
     direction: TraversalDirection;
     /** Optional filter on edge properties. */
     edgeWhere?: Record<string, unknown>;
+    /** Optional filter on the connected node reached via this step. */
+    nodeWhere?: Record<string, unknown>;
 };
 
 export type TraversalSpec = {
