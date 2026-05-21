@@ -1,6 +1,6 @@
 import { describe, it } from "node:test";
 import assert from "node:assert/strict";
-import { Binary, Decimal128, ObjectId, Long } from "mongodb";
+import { Decimal128, ObjectId, Long } from "mongodb";
 import { translateWhere } from "../src/filter.js";
 import { type SchemaMap } from "../src/record.js";
 import { OIDS, ORG_SCHEMA, USER_SCHEMA } from "./fixtures.js";
