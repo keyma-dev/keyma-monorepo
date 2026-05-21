@@ -5,6 +5,9 @@ node_modules/
 dist/
 *.tsbuildinfo
 
+# Benchmark output
+bench-results/
+
 # Logs
 *.log
 npm-debug.log*
