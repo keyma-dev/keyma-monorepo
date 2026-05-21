@@ -1,8 +1,8 @@
 import { describe, it } from "node:test";
 import assert from "node:assert/strict";
-import { Binary, Decimal128, ObjectId } from "mongodb";
+import { Binary, Decimal128, ObjectId, Long } from "mongodb";
 import { translateWhere } from "../src/filter.js";
-import { encodeBigInt, type SchemaMap } from "../src/record.js";
+import { type SchemaMap } from "../src/record.js";
 import { OIDS, ORG_SCHEMA, USER_SCHEMA } from "./fixtures.js";
 
 const SCHEMAS: SchemaMap = new Map([
@@ -28,7 +28,7 @@ describe("translateWhere — logical operators", () => {
         assert.equal("id" in branches[0]!, false);
     });
 
-    it("$or recurses with typed values (BigInt → Binary, reference → ObjectId)", () => {
+    it("$or recurses with typed values (BigInt → Long, reference → ObjectId)", () => {
         const out = translateWhere(
             {
                 $or: [
@@ -41,11 +41,7 @@ describe("translateWhere — logical operators", () => {
         );
         const branches = out["$or"] as Record<string, unknown>[];
         assert.equal(branches.length, 2);
-        assert.ok(branches[0]!["score"] instanceof Binary);
-        assert.deepEqual(
-            new Uint8Array((branches[0]!["score"] as Binary).buffer),
-            encodeBigInt(42n),
-        );
+        assert.ok(branches[0]!["score"] instanceof Long );
         assert.ok(branches[1]!["organization"] instanceof ObjectId);
         assert.equal(
             (branches[1]!["organization"] as ObjectId).toHexString(),

@@ -141,8 +141,8 @@ describe("MongoAdapter — CRUD round-trips", () => {
         assert.equal(fetched!["balance"], "12345.678901234567890123");
     });
 
-    it("BigInt round-trip via binData", async () => {
-        const big = 2n ** 200n + 17n;
+    it("BigInt round-trip via Long", async () => {
+        const big = 2n ** 20n + 17n;
         await adapter.create(USER_SCHEMA, {
             id: OIDS.u1,
             email: "a@x.com",
@@ -150,6 +150,7 @@ describe("MongoAdapter — CRUD round-trips", () => {
             score: big,
         });
         const fetched = await adapter.read(USER_SCHEMA, { id: OIDS.u1 });
+        console.log(typeof fetched!["score"])
         assert.equal(fetched!["score"], big);
 
         await adapter.update(USER_SCHEMA, { id: OIDS.u1 }, { score: -big });

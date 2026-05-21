@@ -1,30 +1,8 @@
-import { Binary, Decimal128, ObjectId } from "mongodb";
+import { Binary, Decimal128, Long, ObjectId } from "mongodb";
 import type { FieldType, SchemaMetadata } from "@keyma/runtime-js";
 
 export type SchemaMap = ReadonlyMap<string, SchemaMetadata>;
 
-export function encodeBigInt(value: bigint): Uint8Array {
-    if (value === 0n) return new Uint8Array([0x00, 0x00]);
-    const negative = value < 0n;
-    let magnitude = negative ? -value : value;
-    const bytes: number[] = [];
-    while (magnitude > 0n) {
-        bytes.push(Number(magnitude & 0xffn));
-        magnitude >>= 8n;
-    }
-    bytes.reverse();
-    return new Uint8Array([negative ? 0x01 : 0x00, ...bytes]);
-}
-
-export function decodeBigInt(bytes: Uint8Array): bigint {
-    if (bytes.length === 0) return 0n;
-    const sign = bytes[0] ?? 0;
-    let magnitude = 0n;
-    for (let i = 1; i < bytes.length; i++) {
-        magnitude = (magnitude << 8n) | BigInt(bytes[i] ?? 0);
-    }
-    return sign === 0x01 ? -magnitude : magnitude;
-}
 
 export function toBson(value: unknown, type: FieldType, schemas: SchemaMap): unknown {
     if (value === null || value === undefined) return value;
@@ -47,7 +25,7 @@ export function toBson(value: unknown, type: FieldType, schemas: SchemaMap): unk
             return value;
         case "bigint":
             if (typeof value !== "bigint") return value;
-            return new Binary(encodeBigInt(value));
+            return Long.fromBigInt(value);
         case "decimal":
             if (value instanceof Decimal128) return value;
             return Decimal128.fromString(String(value));
@@ -103,8 +81,8 @@ export function fromBson(value: unknown, type: FieldType, schemas: SchemaMap): u
             return toRecord(value as Record<string, unknown>, sub, schemas);
         }
         case "bigint":
-            if (value instanceof Binary) return decodeBigInt(value.buffer);
-            return value;
+            if (value instanceof Long) return value.toBigInt();
+            return BigInt(value as any);
         case "decimal":
             if (value instanceof Decimal128) return value.toString();
             return value;
