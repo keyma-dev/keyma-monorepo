@@ -1,0 +1,27 @@
+{
+    "name": "@keyma/adapter-sqlite-js",
+    "version": "0.1.0",
+    "type": "module",
+    "exports": {
+        ".": "./dist/src/index.js"
+    },
+    "scripts": {
+        "build": "tsc",
+        "test": "tsc && node --test --test-concurrency=1 --test-timeout=60000 dist/test/*.test.js",
+        "bench": "tsc && node dist/bench/run.js"
+    },
+    "peerDependencies": {
+        "@keyma/runtime-js": "*",
+        "better-sqlite3": "^11.0.0",
+        "kysely": "^0.29.0"
+    },
+    "devDependencies": {
+        "@keyma/bench": "*",
+        "@keyma/runtime-js": "*",
+        "@types/better-sqlite3": "^7.6.0",
+        "@types/node": "*",
+        "better-sqlite3": "^11.0.0",
+        "kysely": "^0.29.0",
+        "typescript": "*"
+    }
+}
