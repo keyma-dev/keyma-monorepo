@@ -1,4 +1,4 @@
-import type { AclAction } from "@keyma/runtime-js";
+import type { KeymaAction } from "@keyma/runtime-js";
 
 export type AclSubject =
     | { kind: "anon" }
@@ -14,7 +14,7 @@ export type AclRule = {
     subject: AclSubject;
     /** "*" matches any schema. */
     schema: string;
-    actions: readonly AclAction[];
+    actions: readonly KeymaAction[];
     /** Filter merged into the operation's `where`. May use "$self" and
      *  "$ctx.path.to.value" placeholders. Restricted to top-level fields of the
      *  operating schema in v1 — joins/populated paths are not evaluated. */
@@ -31,8 +31,10 @@ export type AclRule = {
 };
 
 export type AclPluginOptions = {
-    /** Optional override. Defaults to the host server's adapter. */
-    adapter?: import("@keyma/runtime-js").KeymaDatabaseAdapter;
+    /** Database adapter used for both ACL storage (rules, roles, role
+     *  assignments) and rule loading at request time. Must be the same
+     *  adapter instance the host passes to its `KeymaServer`. */
+    adapter: import("@keyma/runtime-js").KeymaDatabaseAdapter;
     /** Silent-strip disallowed write fields instead of throwing FIELD_FORBIDDEN. */
     stripWrites?: boolean;
     /** If true, ACL-stripped reads return null with a structured FORBIDDEN

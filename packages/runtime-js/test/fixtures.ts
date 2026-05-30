@@ -234,3 +234,27 @@ export const Knows = brandSchema(
 export const WorksAt = brandSchema(
     WorksAtCtor as new (v?: Partial<WorksAtRecord>) => WorksAtRecord, WORKS_AT_SCHEMA,
 ) as SchemaClass<WorksAtRecord> & EdgeBrand<PersonRecord, CompanyRecord>;
+
+// ─── Private schemas (for visibility tests) ──────────────────────────────────
+
+export const SECRET_SCHEMA: SchemaMetadata = {
+    name: "secret",
+    sourceName: "Secret",
+    visibility: "private",
+    fields: [
+        { name: "id", type: { kind: "id" }, readonly: true, validators: [{ kind: "required" }] },
+        { name: "value", type: { kind: "string" }, validators: [{ kind: "required" }] },
+    ],
+};
+
+export const PRIVATE_EDGE_SCHEMA: SchemaMetadata = {
+    name: "privateEdge",
+    sourceName: "PrivateEdge",
+    visibility: "private",
+    fields: [
+        { name: "id", type: { kind: "id" }, readonly: true },
+        { name: "from", type: { kind: "reference", schema: "Person" } },
+        { name: "to", type: { kind: "reference", schema: "Person" } },
+    ],
+    edge: { from: "Person", fromField: "from", to: "Person", toField: "to", label: "privateEdge", directed: false },
+};

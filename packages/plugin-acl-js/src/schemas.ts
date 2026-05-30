@@ -8,6 +8,7 @@ import type { SchemaMetadata } from "@keyma/runtime-js";
 // values via `decodeRule()` (see rule-loader.ts).
 
 export const ACL_RULE_SCHEMA_NAME = "keymaAclRule";
+export const ACL_ROLE_SCHEMA_NAME = "keymaAclRole";
 export const ACL_ROLE_ASSIGNMENT_SCHEMA_NAME = "keymaAclRoleAssignment";
 
 export const ACL_RULE_SCHEMA: SchemaMetadata = {
@@ -53,6 +54,16 @@ export const ACL_RULE_SCHEMA: SchemaMetadata = {
     ],
 };
 
+export const ACL_ROLE_SCHEMA: SchemaMetadata = {
+    name: ACL_ROLE_SCHEMA_NAME,
+    sourceName: "KeymaAclRole",
+    fields: [
+        { name: "id", type: { kind: "id" }, readonly: true, validators: [{ kind: "required" }] },
+        { name: "name", type: { kind: "string" }, validators: [{ kind: "required" }] },
+    ],
+    indexes: [{ fields: [{ name: "name", direction: 1 }], unique: true }],
+};
+
 export const ACL_ROLE_ASSIGNMENT_SCHEMA: SchemaMetadata = {
     name: ACL_ROLE_ASSIGNMENT_SCHEMA_NAME,
     sourceName: "KeymaAclRoleAssignment",
@@ -67,9 +78,11 @@ export const ACL_ROLE_ASSIGNMENT_SCHEMA: SchemaMetadata = {
     ],
 };
 
-/** Schemas the host must include in `new KeymaServer({ schemas })` for the
- *  plugin to function. */
+/** Internal list of all ACL storage schemas. The plugin registers these with
+ *  the adapter during `init()` — the host must NOT register them on its own
+ *  `KeymaServer` (rule, role, and role-assignment storage is private). */
 export const aclSchemas: readonly SchemaMetadata[] = [
     ACL_RULE_SCHEMA,
+    ACL_ROLE_SCHEMA,
     ACL_ROLE_ASSIGNMENT_SCHEMA,
 ];

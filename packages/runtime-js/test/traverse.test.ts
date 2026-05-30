@@ -5,6 +5,7 @@ import { KeymaServer } from "../src/server.js";
 import {
     Person, Company, Knows, WorksAt,
     PERSON_SCHEMA, COMPANY_SCHEMA, KNOWS_SCHEMA, WORKS_AT_SCHEMA,
+    PRIVATE_EDGE_SCHEMA, SECRET_SCHEMA,
     type PersonRecord, type CompanyRecord,
 } from "./fixtures.js";
 import type {
@@ -291,6 +292,81 @@ describe("KeymaServer — traverse dispatch", () => {
         const r = resp.results["t"]!;
         assert.equal(r.ok, false);
         if (!r.ok) assert.equal(r.code, "SCHEMA_NOT_FOUND");
+    });
+
+    it("rejects traverse whose start schema is private with SCHEMA_NOT_FOUND", async () => {
+        const server = new KeymaServer({
+            schemas: [PERSON_SCHEMA, COMPANY_SCHEMA, KNOWS_SCHEMA, WORKS_AT_SCHEMA, SECRET_SCHEMA],
+            adapter: makeFakeAdapter({ traverse: async () => [] }),
+        });
+        const resp = await server.handle({
+            operations: {
+                t: {
+                    op: "traverse",
+                    schema: "company",
+                    spec: {
+                        start: { schema: "secret", where: {} },
+                        steps: [{ via: "knows", direction: "out" }],
+                        emit: "nodes",
+                    },
+                },
+            },
+        });
+        const r = resp.results["t"]!;
+        assert.equal(r.ok, false);
+        if (!r.ok) assert.equal(r.code, "SCHEMA_NOT_FOUND");
+    });
+
+    it("rejects traverse whose edge schema is private with SCHEMA_NOT_FOUND", async () => {
+        const server = new KeymaServer({
+            schemas: [PERSON_SCHEMA, COMPANY_SCHEMA, KNOWS_SCHEMA, PRIVATE_EDGE_SCHEMA],
+            adapter: makeFakeAdapter({ traverse: async () => [] }),
+        });
+        const resp = await server.handle({
+            operations: {
+                t: {
+                    op: "traverse",
+                    schema: "person",
+                    spec: {
+                        start: { schema: "person", where: { id: "p1" } },
+                        steps: [{ via: "privateEdge", direction: "out" }],
+                        emit: "nodes",
+                    },
+                },
+            },
+        });
+        const r = resp.results["t"]!;
+        assert.equal(r.ok, false);
+        if (!r.ok) assert.equal(r.code, "SCHEMA_NOT_FOUND");
+    });
+
+    it("system identity bypasses visibility guard on traverse", async () => {
+        let called = false;
+        const server = new KeymaServer({
+            schemas: [PERSON_SCHEMA, COMPANY_SCHEMA, KNOWS_SCHEMA, PRIVATE_EDGE_SCHEMA],
+            adapter: makeFakeAdapter({
+                traverse: async () => { called = true; return []; },
+            }),
+        });
+        const resp = await server.handle(
+            {
+                operations: {
+                    t: {
+                        op: "traverse",
+                        schema: "person",
+                        spec: {
+                            start: { schema: "person", where: { id: "p1" } },
+                            steps: [{ via: "privateEdge", direction: "out" }],
+                            emit: "nodes",
+                        },
+                    },
+                },
+            },
+            { identity: { isSystem: true } },
+        );
+        const r = resp.results["t"]!;
+        assert.equal(r.ok, true);
+        assert.equal(called, true);
     });
 
     it("returns NOT_AN_EDGE when a step references a non-edge schema", async () => {

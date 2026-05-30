@@ -97,7 +97,7 @@ export type {
     KeymaServerPlugin,
     PluginServerHandle,
     RequestContext,
-    AclAction,
+    KeymaAction,
 } from "./plugin.js";
 
 export {

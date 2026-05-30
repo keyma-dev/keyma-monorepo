@@ -66,6 +66,8 @@ export type EdgeMetadata = {
 export type SchemaMetadata = {
     name: string;
     sourceName: string;
+    /** Omitted ≡ "public". Private schemas are emitted only into server bundles. */
+    visibility?: "public" | "private";
     fields: FieldMetadata[];
     indexes?: SchemaIndex[];
     refs?: ReadonlyMap<string, SchemaClass>;

@@ -20,3 +20,31 @@ export class AclFieldForbidden extends KeymaPluginError {
         this.name = "AclFieldForbidden";
     }
 }
+
+export class KeymaAclUnknownRole extends KeymaPluginError {
+    constructor(public readonly role: string) {
+        super(
+            "UNKNOWN_ROLE",
+            `Unknown role: "${role}". Declare it with admin.addRole("${role}") first.`,
+            ACL_PLUGIN_NAME,
+            { role },
+        );
+        this.name = "KeymaAclUnknownRole";
+    }
+}
+
+export class KeymaAclRoleInUse extends KeymaPluginError {
+    constructor(
+        public readonly role: string,
+        public readonly assignmentIds: string[],
+        public readonly ruleIds: string[],
+    ) {
+        super(
+            "ROLE_IN_USE",
+            `Role "${role}" is still referenced by ${assignmentIds.length} assignment(s) and ${ruleIds.length} rule(s). Remove those first.`,
+            ACL_PLUGIN_NAME,
+            { role, assignmentIds, ruleIds },
+        );
+        this.name = "KeymaAclRoleInUse";
+    }
+}

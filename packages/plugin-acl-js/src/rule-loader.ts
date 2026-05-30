@@ -1,5 +1,5 @@
 import type {
-    AclAction,
+    KeymaAction,
     KeymaDatabaseAdapter,
     RequestContext,
     SchemaMetadata,
@@ -115,7 +115,7 @@ export async function loadRulesFor(
 export function filterApplicable(
     rules: ReadonlyArray<AclRule>,
     schemaName: string,
-    action: AclAction,
+    action: KeymaAction,
 ): AclRule[] {
     return rules.filter(
         (r) =>
@@ -170,7 +170,7 @@ export function decodeRule(row: Record<string, unknown>): AclRule | undefined {
         id,
         subject,
         schema,
-        actions: actions as AclAction[],
+        actions: actions as KeymaAction[],
     };
     const where = row["where"];
     if (where !== null && typeof where === "object") {

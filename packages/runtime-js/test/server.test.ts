@@ -13,6 +13,7 @@ import {
     USER_SCHEMA,
     ORGANIZATION_SCHEMA,
     ADDRESS_SCHEMA,
+    SECRET_SCHEMA,
 } from "./fixtures.js";
 
 // ─── In-memory adapter ───────────────────────────────────────────────────────
@@ -292,6 +293,65 @@ describe("KeymaServer — single-leaf operations", () => {
         });
         const a = resp.results["a"] as KeymaLeafFailure;
         assert.equal(a.code, "SCHEMA_NOT_FOUND");
+    });
+});
+
+describe("KeymaServer — private schema visibility", () => {
+    function makeServerWithSecret(): { server: KeymaServer; adapter: InMemoryAdapter } {
+        const adapter = new InMemoryAdapter();
+        const server = new KeymaServer({
+            schemas: [USER_SCHEMA, ORGANIZATION_SCHEMA, ADDRESS_SCHEMA, SECRET_SCHEMA],
+            adapter,
+        });
+        return { server, adapter };
+    }
+
+    it("rejects ops targeting a private schema with SCHEMA_NOT_FOUND (no existence leak)", async () => {
+        const { server, adapter } = makeServerWithSecret();
+        adapter.stores.set("secret", new Map([["s1", { id: "s1", value: "shh" }]]));
+        const resp = await server.handle({
+            operations: {
+                a: { op: "read", schema: "secret", where: { id: "s1" } },
+                b: { op: "list", schema: "secret" },
+            },
+        });
+        const a = resp.results["a"] as KeymaLeafFailure;
+        const b = resp.results["b"] as KeymaLeafFailure;
+        assert.equal(a.code, "SCHEMA_NOT_FOUND");
+        assert.equal(b.code, "SCHEMA_NOT_FOUND");
+    });
+
+    it("returns the same code for private schemas as for nonexistent ones", async () => {
+        // The attacker-supplied name is echoed in the error message, which is fine —
+        // they already know what they asked for. What matters is that the *code* is
+        // indistinguishable, so a probe can't tell `private` from `nonexistent`.
+        const { server } = makeServerWithSecret();
+        const resp = await server.handle({
+            operations: {
+                priv: { op: "read", schema: "secret", where: { id: "x" } },
+                ghost: { op: "read", schema: "ghost", where: { id: "x" } },
+            },
+        });
+        const priv = resp.results["priv"] as KeymaLeafFailure;
+        const ghost = resp.results["ghost"] as KeymaLeafFailure;
+        assert.equal(priv.code, ghost.code);
+        assert.equal(priv.source, ghost.source);
+    });
+
+    it("system identity bypasses the visibility guard", async () => {
+        const { server, adapter } = makeServerWithSecret();
+        adapter.stores.set("secret", new Map([["s1", { id: "s1", value: "shh" }]]));
+        const resp = await server.handle(
+            {
+                operations: {
+                    a: { op: "read", schema: "secret", where: { id: "s1" } },
+                },
+            },
+            { identity: { isSystem: true } },
+        );
+        const a = resp.results["a"] as KeymaLeafSuccess<Record<string, unknown>>;
+        assert.equal(a.ok, true);
+        assert.equal(a.data["value"], "shh");
     });
 });
 

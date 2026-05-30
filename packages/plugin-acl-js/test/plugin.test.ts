@@ -7,14 +7,20 @@ import type {
     KeymaDatabaseAdapter,
     KeymaLeafFailure,
     KeymaLeafSuccess,
-    KeymaRequest,
     ListQuery,
     SchemaMetadata,
 } from "@keyma/runtime-js";
-import { aclSchemas, createAclPlugin } from "../src/index.js";
 import {
-    ACL_RULE_SCHEMA,
+    KeymaAclAdmin,
+    KeymaAclRoleInUse,
+    KeymaAclUnknownRole,
+    createAclPlugin,
+} from "../src/index.js";
+import {
     ACL_ROLE_ASSIGNMENT_SCHEMA,
+    ACL_ROLE_SCHEMA,
+    ACL_RULE_SCHEMA,
+    aclSchemas,
 } from "../src/schemas.js";
 
 // ── Domain fixtures ─────────────────────────────────────────────────────────
@@ -227,15 +233,17 @@ function applyEmbeddedSpec(
 async function setup(): Promise<{
     server: KeymaServer;
     adapter: InMemoryAdapter;
+    admin: KeymaAclAdmin;
 }> {
     const adapter = new InMemoryAdapter();
+    const { plugin, admin } = createAclPlugin({ adapter });
     const server = new KeymaServer({
-        schemas: [POST_SCHEMA, ...aclSchemas],
+        schemas: [POST_SCHEMA],
         adapter,
-        plugins: [createAclPlugin()],
+        plugins: [plugin],
     });
     await server.ensureSchemas();
-    return { server, adapter };
+    return { server, adapter, admin };
 }
 
 async function seedPosts(adapter: InMemoryAdapter): Promise<void> {
@@ -590,11 +598,6 @@ describe("ACL plugin — write enforcement", () => {
         const okR = ok.results["a"] as KeymaLeafSuccess<Record<string, unknown>>;
         assert.equal(okR.ok, true);
         assert.equal(adapter.stores.get("post")!.get("p1")!["title"], "renamed");
-
-        // Alice tries to update bob's post — adapter sees the merged filter
-        // (id=p2 AND author=alice) which matches nothing; in-memory adapter
-        // throws, surfaced as INTERNAL_ERROR. A real adapter would no-op or
-        // return rowcount=0. This is documented behavior.
     });
 
     it("delete is AND-ed with ACL filter", async () => {
@@ -635,7 +638,6 @@ describe("ACL plugin — system context bypass", () => {
     it("isSystem: true bypasses all rules", async () => {
         const { server, adapter } = await setup();
         await seedPosts(adapter);
-        // No rules — normal callers are denied.
         const sys = await server.handle(
             { operations: { a: { op: "list", schema: "post" } } },
             { identity: { isSystem: true } },
@@ -646,21 +648,279 @@ describe("ACL plugin — system context bypass", () => {
     });
 });
 
-describe("ACL plugin — init validation", () => {
-    it("throws at init if aclSchemas not registered", async () => {
+describe("ACL plugin — storage privacy", () => {
+    it("init throws if host KeymaServer registers any ACL schema", async () => {
         const adapter = new InMemoryAdapter();
+        const { plugin } = createAclPlugin({ adapter });
         const server = new KeymaServer({
-            schemas: [POST_SCHEMA], // missing aclSchemas
+            schemas: [POST_SCHEMA, ...aclSchemas],
             adapter,
-            plugins: [createAclPlugin()],
+            plugins: [plugin],
         });
         await assert.rejects(
-            () =>
-                server.handle(
-                    { operations: { a: { op: "list", schema: "post" } } },
-                    { identity: { id: "alice" } },
-                ),
-            /aclSchemas/,
+            () => server.ensureSchemas(),
+            /registered on the host KeymaServer/,
         );
+    });
+
+    for (const schemaName of [
+        ACL_RULE_SCHEMA.name,
+        ACL_ROLE_SCHEMA.name,
+        ACL_ROLE_ASSIGNMENT_SCHEMA.name,
+    ]) {
+        it(`host server cannot route operations to "${schemaName}"`, async () => {
+            const { server } = await setup();
+            const resp = await server.handle(
+                { operations: { a: { op: "list", schema: schemaName } } },
+                { identity: { isSystem: true } },
+            );
+            const a = resp.results["a"] as KeymaLeafFailure;
+            assert.equal(a.ok, false);
+            assert.equal(a.code, "SCHEMA_NOT_FOUND");
+        });
+    }
+});
+
+describe("KeymaAclAdmin — rules", () => {
+    it("addRule round-trips through getRule", async () => {
+        const { admin } = await setup();
+        const rule = await admin.addRule({
+            subject: { kind: "any-user" },
+            schema: "post",
+            actions: ["list", "read"],
+            where: { author: "$self" },
+        });
+        assert.equal(typeof rule.id, "string");
+        assert.ok(rule.id.length > 0);
+        const fetched = await admin.getRule(rule.id);
+        assert.deepEqual(fetched, rule);
+    });
+
+    it("addRule assigns an id via the adapter (not client-generated)", async () => {
+        const { admin } = await setup();
+        const a = await admin.addRule({
+            subject: { kind: "anon" },
+            schema: "post",
+            actions: ["read"],
+        });
+        const b = await admin.addRule({
+            subject: { kind: "anon" },
+            schema: "post",
+            actions: ["list"],
+        });
+        assert.notEqual(a.id, b.id);
+    });
+
+    it("addRule with role subject throws KeymaAclUnknownRole if role isn't declared", async () => {
+        const { admin } = await setup();
+        await assert.rejects(
+            () =>
+                admin.addRule({
+                    subject: { kind: "role", name: "ghost" },
+                    schema: "post",
+                    actions: ["read"],
+                }),
+            (err) => err instanceof KeymaAclUnknownRole,
+        );
+    });
+
+    it("addRule with role subject succeeds once the role is declared", async () => {
+        const { admin } = await setup();
+        await admin.addRole("editor");
+        const rule = await admin.addRule({
+            subject: { kind: "role", name: "editor" },
+            schema: "post",
+            actions: ["read"],
+        });
+        assert.deepEqual(rule.subject, { kind: "role", name: "editor" });
+    });
+
+    it("updateRule merges patch correctly", async () => {
+        const { admin } = await setup();
+        const rule = await admin.addRule({
+            subject: { kind: "any-user" },
+            schema: "post",
+            actions: ["list"],
+        });
+        const updated = await admin.updateRule(rule.id, {
+            actions: ["list", "read", "update"],
+        });
+        assert.deepEqual([...updated.actions].sort(), ["list", "read", "update"]);
+        assert.deepEqual(updated.subject, { kind: "any-user" });
+        assert.equal(updated.schema, "post");
+    });
+
+    it("updateRule rejects unknown ids", async () => {
+        const { admin } = await setup();
+        await assert.rejects(
+            () => admin.updateRule("does-not-exist", { actions: ["read"] }),
+            /not found/,
+        );
+    });
+
+    it("removeRule makes getRule return null", async () => {
+        const { admin } = await setup();
+        const rule = await admin.addRule({
+            subject: { kind: "anon" },
+            schema: "post",
+            actions: ["read"],
+        });
+        await admin.removeRule(rule.id);
+        assert.equal(await admin.getRule(rule.id), null);
+    });
+
+    it("listRules filters by schema and by subject", async () => {
+        const { admin } = await setup();
+        await admin.addRole("editor");
+        await admin.addRule({ subject: { kind: "any-user" }, schema: "post", actions: ["list"] });
+        await admin.addRule({ subject: { kind: "any-user" }, schema: "comment", actions: ["list"] });
+        await admin.addRule({ subject: { kind: "role", name: "editor" }, schema: "post", actions: ["update"] });
+
+        const postRules = await admin.listRules({ schema: "post" });
+        assert.equal(postRules.length, 2);
+
+        const editorRules = await admin.listRules({
+            subject: { kind: "role", name: "editor" },
+        });
+        assert.equal(editorRules.length, 1);
+        assert.deepEqual(editorRules[0]?.subject, { kind: "role", name: "editor" });
+    });
+});
+
+describe("KeymaAclAdmin — roles (catalog)", () => {
+    it("addRole is idempotent", async () => {
+        const { admin } = await setup();
+        const first = await admin.addRole("admin");
+        const second = await admin.addRole("admin");
+        assert.equal(first.id, second.id);
+        assert.equal(first.name, "admin");
+    });
+
+    it("getRole returns the record or null", async () => {
+        const { admin } = await setup();
+        assert.equal(await admin.getRole("missing"), null);
+        const created = await admin.addRole("admin");
+        const fetched = await admin.getRole("admin");
+        assert.deepEqual(fetched, created);
+    });
+
+    it("listRoles enumerates", async () => {
+        const { admin } = await setup();
+        await admin.addRole("admin");
+        await admin.addRole("editor");
+        const names = (await admin.listRoles()).map((r) => r.name).sort();
+        assert.deepEqual(names, ["admin", "editor"]);
+    });
+
+    it("removeRole succeeds when nothing references it", async () => {
+        const { admin } = await setup();
+        await admin.addRole("admin");
+        await admin.removeRole("admin");
+        assert.equal(await admin.getRole("admin"), null);
+    });
+
+    it("removeRole is silent when the role doesn't exist", async () => {
+        const { admin } = await setup();
+        await admin.removeRole("never-existed"); // does not throw
+    });
+
+    it("removeRole throws KeymaAclRoleInUse when an assignment references it", async () => {
+        const { admin } = await setup();
+        await admin.addRole("admin");
+        await admin.assignRole("alice", "admin");
+        await assert.rejects(
+            () => admin.removeRole("admin"),
+            (err) => {
+                if (!(err instanceof KeymaAclRoleInUse)) return false;
+                assert.equal(err.role, "admin");
+                assert.equal(err.assignmentIds.length, 1);
+                assert.equal(err.ruleIds.length, 0);
+                return true;
+            },
+        );
+    });
+
+    it("removeRole throws KeymaAclRoleInUse when a rule references it", async () => {
+        const { admin } = await setup();
+        await admin.addRole("editor");
+        const rule = await admin.addRule({
+            subject: { kind: "role", name: "editor" },
+            schema: "post",
+            actions: ["update"],
+        });
+        await assert.rejects(
+            () => admin.removeRole("editor"),
+            (err) => {
+                if (!(err instanceof KeymaAclRoleInUse)) return false;
+                assert.deepEqual(err.ruleIds, [rule.id]);
+                return true;
+            },
+        );
+    });
+});
+
+describe("KeymaAclAdmin — role assignments", () => {
+    it("assignRole throws KeymaAclUnknownRole if role isn't declared", async () => {
+        const { admin } = await setup();
+        await assert.rejects(
+            () => admin.assignRole("alice", "admin"),
+            (err) => err instanceof KeymaAclUnknownRole,
+        );
+    });
+
+    it("assignRole is idempotent after the role is declared", async () => {
+        const { admin } = await setup();
+        await admin.addRole("admin");
+        const first = await admin.assignRole("alice", "admin");
+        const second = await admin.assignRole("alice", "admin");
+        assert.equal(first.id, second.id);
+        const all = await admin.listAssignments({ userId: "alice", role: "admin" });
+        assert.equal(all.length, 1);
+    });
+
+    it("unassignRole removes only the matching pair", async () => {
+        const { admin } = await setup();
+        await admin.addRole("admin");
+        await admin.addRole("editor");
+        await admin.assignRole("alice", "admin");
+        await admin.assignRole("alice", "editor");
+        await admin.unassignRole("alice", "admin");
+        const aliceRoles = (await admin.getUserRoles("alice")).sort();
+        assert.deepEqual(aliceRoles, ["editor"]);
+    });
+
+    it("getUserRoles and listAssignments work", async () => {
+        const { admin } = await setup();
+        await admin.addRole("admin");
+        await admin.addRole("editor");
+        await admin.assignRole("alice", "admin");
+        await admin.assignRole("alice", "editor");
+        await admin.assignRole("bob", "admin");
+
+        const alice = (await admin.getUserRoles("alice")).sort();
+        assert.deepEqual(alice, ["admin", "editor"]);
+
+        const admins = await admin.listAssignments({ role: "admin" });
+        const userIds = admins.map((a) => a.userId).sort();
+        assert.deepEqual(userIds, ["alice", "bob"]);
+    });
+
+    it("rule written via admin is then enforced by the host server", async () => {
+        const { server, adapter, admin } = await setup();
+        await seedPosts(adapter);
+        await admin.addRule({
+            subject: { kind: "any-user" },
+            schema: "post",
+            actions: ["list"],
+            where: { author: "$self" },
+        });
+        const resp = await server.handle(
+            { operations: { a: { op: "list", schema: "post" } } },
+            { identity: { id: "alice" } },
+        );
+        const a = resp.results["a"] as KeymaLeafSuccess<Record<string, unknown>[]>;
+        assert.equal(a.ok, true);
+        assert.equal(a.data.length, 2);
+        assert.ok(a.data.every((p) => p["author"] === "alice"));
     });
 });

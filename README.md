@@ -250,9 +250,10 @@ You can then issue a typed, multi-hop traversal from any client. The same query 
 const colleagues = Keyma.traverse(Company, {
     start: { schema: Person, where: { id: Keyma.input("me") } },
     steps: [
-        { via: Knows,   direction: "out" },
-        { via: WorksAt, direction: "out" },
+        { via: Knows,   direction: "out", edgeWhere: { since: { $gte: "2020-01-01" } } },
+        { via: WorksAt, direction: "out", nodeWhere: { name: { $ne: "Acme" } } },
     ] as const,
+    where: { /* terminal-node filter */ },
     emit: "nodes",
 });
 
@@ -265,7 +266,32 @@ const network = Keyma.traverse(Person, {
 });
 ```
 
-`Keyma.traverse` is fully type-checked: chain steps must agree on edge endpoints, and the terminal class determines the leaf type of the response.
+`Keyma.traverse` is fully type-checked: chain steps must agree on edge endpoints, and the terminal class (the first argument) determines the leaf type of the response. The terminal-node class is independent of `start.schema` — a chain that doesn't connect them in the requested directions is rejected at compile time (the type system narrows the inferred terminal to `never`).
+
+Each step accepts two optional predicates:
+
+* `edgeWhere` — filters edges of that hop on their own fields (e.g. `since` on `Knows`).
+* `nodeWhere` — filters the node reached *via* that step, typed against that node's record type.
+
+A top-level `where` on the traversal filters the terminal nodes.
+
+The `emit` mode controls the result shape:
+
+| `emit`    | Result element                                                         |
+|-----------|------------------------------------------------------------------------|
+| `"nodes"` | Terminal-node records (the default — typed as the terminal class).     |
+| `"edges"` | Last-hop edge records.                                                 |
+| `"paths"` | `{ nodes, edges }` per matched path — full witness for visualization.  |
+
+Pagination and ordering apply to the emitted set via per-leaf `options`:
+
+```typescript
+await query.request({
+    network: { skip: 0, limit: 50, sort: { name: 1 } },
+}, { inputs, transport });
+```
+
+Adapters opt into traversals by setting `capabilities.traverse`. Graph databases lower the spec to a native traversal; document and relational adapters emulate it via `$lookup`-style joins. The client source is identical across backends — only the database adapter changes.
 
 ## Compiling
 
@@ -327,6 +353,53 @@ await server.sync(); // creates collections, indexes, and edge collections
 ```
 
 To implement your own adapter for a different database, conform to the `KeymaDatabaseAdapter` interface exported from `@keyma/runtime-js`.
+
+## Server plugins
+
+Cross-cutting concerns — access control, auditing, soft-delete, multi-tenancy, rate-limiting — plug into `KeymaServer` through the **plugin protocol**, without modifying schemas or touching generated code. A plugin is a plain object implementing `KeymaServerPlugin`; an array of them is passed to the server:
+
+```typescript
+import { KeymaServer } from "@keyma/runtime-js";
+import { createAclPlugin, aclSchemas } from "@keyma/plugin-acl-js";
+
+const server = new KeymaServer({
+    schemas: [...mySchemas, ...aclSchemas],
+    adapter,
+    plugins: [createAclPlugin(), auditLog, multiTenant],
+});
+```
+
+Plugins fire in array order at well-defined points in the operation lifecycle. Each hook is optional:
+
+| Hook                  | When it runs                                                          | What it can do                                                                                  |
+|-----------------------|-----------------------------------------------------------------------|-------------------------------------------------------------------------------------------------|
+| `init`                | Once after server construction.                                       | Inspect schemas / adapter via `PluginServerHandle`. Reject misconfiguration by throwing.        |
+| `beforeOperation`     | Before any work on each leaf.                                         | Observe; early-reject with a `KeymaPluginError`.                                                |
+| `transformFilter`     | On `list` / `read` / `update` / `delete` (also when computing trims). | Rewrite the `where` clause. Supports top-level `$and` / `$or` / `$nor` for layered policy.      |
+| `transformProjection` | On every operation that produces a projection.                        | Trim the projection (security) or augment it (e.g. pull predicate fields the plugin needs).     |
+| `checkWrite`          | On `create` / `update`, after default formatting and validation.      | Validate the payload; strip disallowed fields; throw `KeymaPluginError` for hard reject.        |
+| `transformResult`     | On records leaving the server.                                        | Post-process — redact, decorate, decrypt, etc.                                                  |
+| `afterOperation`      | After every operation regardless of outcome.                          | Observe for logging / metrics. Errors here are swallowed and cannot poison the response.        |
+
+Plugins share state across hooks through a per-request `RequestContext`, an open-shaped object the host supplies via `server.handle(request, context)` or via the `contextFactory` argument to `createDirectTransport`. The runtime treats `context.identity` as the canonical identity slot (with optional `id`, `roles`, and an `isSystem` bypass flag plugins may honor), but plugins are free to stash any additional keys they need to thread state from `transformFilter` to `transformResult`.
+
+### Error model
+
+Throwing a `KeymaPluginError` from any hook (other than `afterOperation`) aborts the operation and produces a structured `KeymaLeafFailure` on the wire:
+
+```json
+{
+    "ok": false,
+    "code": "FORBIDDEN",
+    "error": "No ACL rule grants list on post",
+    "source": "plugin",
+    "origin": "@keyma/plugin-acl-js"
+}
+```
+
+`source` distinguishes plugin failures from `runtime` (validation, missing schema, NOT_FOUND) and `adapter` (database errors) failures; `origin` is the package name of the plugin that raised the error. The same `KeymaLeafFailure` shape is produced for adapter errors via `KeymaAdapterError`.
+
+A worked example is `@keyma/plugin-acl-js`, which uses `transformFilter` to merge per-identity allow/deny predicates into the caller's `where`, `transformProjection` to enforce field-level read perms (and to pull predicate fields the adapter needs), `checkWrite` to enforce field-level write perms, and `transformResult` to strip plugin-added projection fields from the response.
 
 ## Transports
 

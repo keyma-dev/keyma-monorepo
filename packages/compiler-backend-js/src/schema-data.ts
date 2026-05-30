@@ -27,6 +27,7 @@ export function buildSchemaData(schema: IRSchema, opts: SchemaDataOptions): obje
     };
     if (indexes.length > 0) out["indexes"] = indexes;
     if (schema.edge !== undefined) out["edge"] = schema.edge;
+    if (schema.visibility === "private") out["visibility"] = "private";
     return out;
 }
 

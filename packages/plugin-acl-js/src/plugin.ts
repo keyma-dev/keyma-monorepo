@@ -1,5 +1,5 @@
 import {
-    type AclAction,
+    type KeymaAction,
     type AdapterProjection,
     type KeymaDatabaseAdapter,
     type KeymaServerPlugin,
@@ -10,7 +10,11 @@ import {
 import { AclDenied, AclFieldForbidden, ACL_PLUGIN_NAME } from "./errors.js";
 import type { AclPluginOptions, AclRule } from "./types.js";
 import {
+    ACL_ROLE_ASSIGNMENT_SCHEMA,
     ACL_ROLE_ASSIGNMENT_SCHEMA_NAME,
+    ACL_ROLE_SCHEMA,
+    ACL_ROLE_SCHEMA_NAME,
+    ACL_RULE_SCHEMA,
     ACL_RULE_SCHEMA_NAME,
 } from "./schemas.js";
 import {
@@ -34,34 +38,42 @@ import {
     fieldsReferenced,
     trimProjection,
 } from "./field-check.js";
+import { KeymaAclAdmin } from "./admin.js";
 
 const PLUGIN_NAME = ACL_PLUGIN_NAME;
 
-// Storage schemas the plugin manages — never gated by ACL. The plugin reads
-// these via its own adapter; writes go through normal KeymaServer (which the
-// host can secure with a separate admin rule set if desired).
-const INTERNAL_SCHEMAS: ReadonlySet<string> = new Set([
+const RESERVED_SCHEMA_NAMES: readonly string[] = [
     ACL_RULE_SCHEMA_NAME,
+    ACL_ROLE_SCHEMA_NAME,
     ACL_ROLE_ASSIGNMENT_SCHEMA_NAME,
-]);
+];
 
-export function createAclPlugin(options: AclPluginOptions = {}): KeymaServerPlugin {
-    let adapter: KeymaDatabaseAdapter | undefined = options.adapter;
+export type CreateAclPluginResult = {
+    plugin: KeymaServerPlugin;
+    admin: KeymaAclAdmin;
+};
+
+export function createAclPlugin(options: AclPluginOptions): CreateAclPluginResult {
+    const adapter: KeymaDatabaseAdapter = options.adapter;
     const stripWrites = options.stripWrites ?? false;
+    const admin = new KeymaAclAdmin(adapter);
 
-    return {
+    const plugin: KeymaServerPlugin = {
         name: PLUGIN_NAME,
 
-        init(server: PluginServerHandle) {
-            if (adapter === undefined) adapter = server.adapter;
-            // Sanity check: host must have included aclSchemas.
-            for (const name of INTERNAL_SCHEMAS) {
-                if (server.schema(name) === undefined) {
+        async init(server: PluginServerHandle) {
+            for (const name of RESERVED_SCHEMA_NAMES) {
+                if (server.schemas.some((s) => s.name === name)) {
                     throw new Error(
-                        `${PLUGIN_NAME}: schema "${name}" not registered; include aclSchemas in your KeymaServer config`,
+                        `${PLUGIN_NAME}: schema "${name}" is registered on the host KeymaServer. ` +
+                            `Remove it — the plugin manages its own ACL storage. ` +
+                            `Use the returned 'admin' handle (KeymaAclAdmin) for rules, roles, and role assignments.`,
                     );
                 }
             }
+            await adapter.ensureSchema(ACL_RULE_SCHEMA);
+            await adapter.ensureSchema(ACL_ROLE_SCHEMA);
+            await adapter.ensureSchema(ACL_ROLE_ASSIGNMENT_SCHEMA);
         },
 
         async beforeOperation(ctx, op) {
@@ -69,9 +81,8 @@ export function createAclPlugin(options: AclPluginOptions = {}): KeymaServerPlug
             // hooks for it), so enforce at least "traverse" permission here.
             if (op.op !== "traverse") return;
             if (ctx.identity?.isSystem === true) return;
-            if (INTERNAL_SCHEMAS.has(op.schema)) return;
             const applicable = filterApplicable(
-                await loadRulesFor(adapter!, ctx),
+                await loadRulesFor(adapter, ctx),
                 op.schema,
                 "traverse",
             );
@@ -82,9 +93,9 @@ export function createAclPlugin(options: AclPluginOptions = {}): KeymaServerPlug
         },
 
         async transformFilter(ctx, schema, where, action) {
-            if (skip(ctx, schema)) return undefined;
+            if (ctx.identity?.isSystem === true) return undefined;
             const rules = filterApplicable(
-                await loadRulesFor(adapter!, ctx),
+                await loadRulesFor(adapter, ctx),
                 schema.name,
                 action,
             );
@@ -138,15 +149,15 @@ export function createAclPlugin(options: AclPluginOptions = {}): KeymaServerPlug
         },
 
         async transformProjection(ctx, schema, projection, action) {
-            if (skip(ctx, schema)) return undefined;
+            if (ctx.identity?.isSystem === true) return undefined;
             if (action === "create") {
                 // Creates don't have predicate-based visibility; only field
                 // restrictions matter. Apply read-side trim so the response
                 // honors field-level perms.
-                return applyReadTrim(ctx, schema, projection, "read", adapter!);
+                return applyReadTrim(ctx, schema, projection, "read", adapter);
             }
             const rules = filterApplicable(
-                await loadRulesFor(adapter!, ctx),
+                await loadRulesFor(adapter, ctx),
                 schema.name,
                 readSideAction(action),
             );
@@ -171,9 +182,9 @@ export function createAclPlugin(options: AclPluginOptions = {}): KeymaServerPlug
         },
 
         async checkWrite(ctx, schema, data, action) {
-            if (skip(ctx, schema)) return undefined;
+            if (ctx.identity?.isSystem === true) return undefined;
             const rules = filterApplicable(
-                await loadRulesFor(adapter!, ctx),
+                await loadRulesFor(adapter, ctx),
                 schema.name,
                 action,
             );
@@ -199,7 +210,7 @@ export function createAclPlugin(options: AclPluginOptions = {}): KeymaServerPlug
         },
 
         transformResult(ctx, schema, records) {
-            if (skip(ctx, schema)) return undefined;
+            if (ctx.identity?.isSystem === true) return undefined;
             const strip = getStripFields(ctx, schema);
             if (strip === undefined || strip.size === 0) return undefined;
             return records.map((r) => {
@@ -211,12 +222,8 @@ export function createAclPlugin(options: AclPluginOptions = {}): KeymaServerPlug
             });
         },
     };
-}
 
-function skip(ctx: RequestContext, schema: SchemaMetadata): boolean {
-    if (ctx.identity?.isSystem === true) return true;
-    if (INTERNAL_SCHEMAS.has(schema.name)) return true;
-    return false;
+    return { plugin, admin };
 }
 
 function partition(rules: ReadonlyArray<AclRule>): {
@@ -235,7 +242,7 @@ function partition(rules: ReadonlyArray<AclRule>): {
 /** Pick the action whose rules govern field-level read perms for a given
  *  operation. Reads/lists/traverses use their own; writes use "read" since
  *  the response is what the caller sees regardless of the write op. */
-function readSideAction(action: AclAction): AclAction {
+function readSideAction(action: KeymaAction): KeymaAction {
     if (action === "list" || action === "read" || action === "traverse") return action;
     return "read";
 }
@@ -244,7 +251,7 @@ async function applyReadTrim(
     ctx: RequestContext,
     schema: SchemaMetadata,
     projection: AdapterProjection,
-    action: AclAction,
+    action: KeymaAction,
     adapter: KeymaDatabaseAdapter,
 ): Promise<AdapterProjection | undefined> {
     const rules = filterApplicable(

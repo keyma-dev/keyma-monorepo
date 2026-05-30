@@ -23,7 +23,7 @@ import type {
 import { validate, type ValidatorRegistry } from "./validate.js";
 import { format, type FormatterRegistry } from "./format.js";
 import {
-    type AclAction,
+    type KeymaAction,
     type KeymaServerPlugin,
     type PluginServerHandle,
     type RequestContext,
@@ -67,6 +67,20 @@ export class KeymaServer {
         return { results };
     }
 
+    // Resolves a client-supplied schema name. Private schemas are treated as
+    // non-existent unless the caller is the in-process system identity —
+    // returning a distinct error would let attackers probe for private names.
+    private resolveSchema(name: string, context: RequestContext): SchemaMetadata {
+        const schema = this.schemaMap.get(name);
+        if (
+            schema === undefined ||
+            (schema.visibility === "private" && context.identity?.isSystem !== true)
+        ) {
+            throw new KeymaRuntimeError("SCHEMA_NOT_FOUND", `Unknown schema: ${name}`);
+        }
+        return schema;
+    }
+
     private async ensureInitialized(): Promise<void> {
         if (this.initialized) return;
         this.initialized = true;
@@ -86,13 +100,7 @@ export class KeymaServer {
     ): Promise<KeymaLeafResult> {
         let result: KeymaLeafResult;
         try {
-            const schema = this.schemaMap.get(op.schema);
-            if (schema === undefined) {
-                throw new KeymaRuntimeError(
-                    "SCHEMA_NOT_FOUND",
-                    `Unknown schema: ${op.schema}`,
-                );
-            }
+            const schema = this.resolveSchema(op.schema, context);
             for (const p of this.plugins) {
                 if (p.beforeOperation !== undefined) await p.beforeOperation(context, op);
             }
@@ -142,25 +150,13 @@ export class KeymaServer {
                 "Database adapter does not support traverse operations",
             );
         }
-        const startSchema = this.schemaMap.get(op.spec.start.schema);
-        if (startSchema === undefined) {
-            throw new KeymaRuntimeError(
-                "SCHEMA_NOT_FOUND",
-                `Unknown start schema: ${op.spec.start.schema}`,
-            );
-        }
+        const startSchema = this.resolveSchema(op.spec.start.schema, context);
 
         const edges = new Map<string, SchemaMetadata>();
         const nodes = new Map<string, SchemaMetadata>();
         const referencedEdgeNames = collectEdgeNames(op.spec);
         for (const name of referencedEdgeNames) {
-            const s = this.schemaMap.get(name);
-            if (s === undefined) {
-                throw new KeymaRuntimeError(
-                    "SCHEMA_NOT_FOUND",
-                    `Unknown edge schema: ${name}`,
-                );
-            }
+            const s = this.resolveSchema(name, context);
             if (s.edge === undefined) {
                 throw new KeymaRuntimeError(
                     "NOT_AN_EDGE",
@@ -297,7 +293,7 @@ export class KeymaServer {
         context: RequestContext,
         schema: SchemaMetadata,
         where: Record<string, unknown>,
-        action: AclAction,
+        action: KeymaAction,
     ): Promise<Record<string, unknown>> {
         let acc = where;
         for (const p of this.plugins) {
@@ -312,7 +308,7 @@ export class KeymaServer {
         context: RequestContext,
         schema: SchemaMetadata,
         projection: AdapterProjection,
-        action: AclAction,
+        action: KeymaAction,
     ): Promise<AdapterProjection> {
         let acc = projection;
         for (const p of this.plugins) {
@@ -342,7 +338,7 @@ export class KeymaServer {
         context: RequestContext,
         schema: SchemaMetadata,
         records: Record<string, unknown>[],
-        action: AclAction,
+        action: KeymaAction,
     ): Promise<Record<string, unknown>[]> {
         let acc = records;
         for (const p of this.plugins) {

@@ -2,7 +2,9 @@ import type { SchemaMetadata } from "./types.js";
 import type { AdapterProjection, KeymaDatabaseAdapter } from "./adapter.js";
 import type { KeymaOperation, KeymaLeafResult } from "./protocol.js";
 
-export type AclAction = "read" | "list" | "create" | "update" | "delete" | "traverse";
+export type KeymaReadAction = "read" | "list" | "traverse";
+export type KeymaWriteAction = "create" | "update" | "delete";
+export type KeymaAction = KeymaReadAction | KeymaWriteAction;
 
 export type RequestContext = {
     identity?: {
@@ -34,7 +36,7 @@ export interface KeymaServerPlugin {
         ctx: RequestContext,
         schema: SchemaMetadata,
         where: Record<string, unknown>,
-        action: AclAction,
+        action: KeymaAction,
     ):
         | Promise<Record<string, unknown> | undefined>
         | Record<string, unknown>
@@ -45,16 +47,16 @@ export interface KeymaServerPlugin {
         ctx: RequestContext,
         schema: SchemaMetadata,
         projection: AdapterProjection,
-        action: AclAction,
+        action: KeymaAction,
     ): Promise<AdapterProjection | undefined> | AdapterProjection | undefined;
 
-    /** Validate/strip a write payload for create/update. Throw a KeymaPluginError
+    /** Validate/strip a write payload for create/update/delete. Throw a KeymaPluginError
      *  for hard reject. Return data (possibly mutated) or void. */
     checkWrite?(
         ctx: RequestContext,
         schema: SchemaMetadata,
         data: Record<string, unknown>,
-        action: "create" | "update",
+        action: KeymaWriteAction,
     ):
         | Promise<Record<string, unknown> | void>
         | Record<string, unknown>
@@ -65,7 +67,7 @@ export interface KeymaServerPlugin {
         ctx: RequestContext,
         schema: SchemaMetadata,
         records: Record<string, unknown>[],
-        action: AclAction,
+        action: KeymaAction,
     ):
         | Promise<Record<string, unknown>[] | undefined>
         | Record<string, unknown>[]

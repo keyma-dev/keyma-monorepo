@@ -459,6 +459,30 @@ describe("emitJs — private schema visibility", () => {
         assert.ok(content.includes("Credentials.schema = Object.freeze("), "private schema metadata missing from server");
     });
 
+    it("private schema metadata carries visibility flag in server model file", () => {
+        const content = fileContent(files, "dist/js/server/models/credentials.js");
+        assert.match(
+            content,
+            /"visibility":\s*"private"/,
+            "server-emitted private schema must include visibility: private so the runtime can refuse public access",
+        );
+    });
+
+    it("public schema metadata does not carry a schema-level visibility flag", () => {
+        const result = emitJs(BASIC_IR, serverOnlyTarget(), RESOLVED_CONFIG);
+        return result.then((r) => {
+            const content = fileContent(r.files, "dist/js/server/models/user.js");
+            // The field-level visibility for `secretNote` is allowed; the schema literal itself
+            // must not declare visibility for a public schema.
+            const schemaBlock = content.slice(content.indexOf("User.schema = Object.freeze("));
+            const topLevel = schemaBlock.slice(0, schemaBlock.indexOf('"fields"'));
+            assert.ok(
+                !/"visibility"/.test(topLevel),
+                "public schemas should omit the schema-level visibility key",
+            );
+        });
+    });
+
     it("private schema model is not emitted in client bundle", () => {
         const clientPaths = files.filter((f) => f.path.startsWith("dist/js/client/")).map((f) => f.path);
         assert.ok(!clientPaths.includes("dist/js/client/models/credentials.js"), "private schema should not appear in client");
