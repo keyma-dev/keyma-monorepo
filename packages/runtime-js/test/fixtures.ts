@@ -15,8 +15,8 @@ export const ORGANIZATION_SCHEMA: SchemaMetadata = {
     name: "organization",
     sourceName: "Organization",
     fields: [
-        { name: "id", type: { kind: "id" }, readonly: true, validators: [{ kind: "required" }] },
-        { name: "name", type: { kind: "string" }, validators: [{ kind: "required" }] },
+        { name: "id", type: { kind: "id" }, readonly: true, validators: [{ name: "required" }] },
+        { name: "name", type: { kind: "string" }, validators: [{ name: "required" }] },
         { name: "tier", type: { kind: "string" }, required: false },
     ],
 };
@@ -80,9 +80,9 @@ export const USER_SCHEMA: SchemaMetadata = {
     name: "user",
     sourceName: "User",
     fields: [
-        { name: "id", type: { kind: "id" }, readonly: true, validators: [{ kind: "required" }] },
-        { name: "email", type: { kind: "string" }, validators: [{ kind: "required" }, { kind: "emailAddress" }], formatters: [{ phase: "save", spec: { kind: "normalizeEmail" } }] },
-        { name: "name", type: { kind: "string" }, validators: [{ kind: "required" }, { kind: "minLength", value: 2 }] },
+        { name: "id", type: { kind: "id" }, readonly: true, validators: [{ name: "required" }] },
+        { name: "email", type: { kind: "string" }, validators: [{ name: "required" }, { name: "emailAddress" }], formatters: [{ phase: "save", spec: { name: "normalizeEmail" } }] },
+        { name: "name", type: { kind: "string" }, validators: [{ name: "required" }, { name: "minLength", params: { value: 2 } }] },
         { name: "organization", type: { kind: "reference", schema: "organization" }, required: false },
         { name: "address", type: { kind: "embedded", schema: "address" }, required: false },
         { name: "secret", type: { kind: "string" }, visibility: "private", required: false },
@@ -242,8 +242,8 @@ export const SECRET_SCHEMA: SchemaMetadata = {
     sourceName: "Secret",
     visibility: "private",
     fields: [
-        { name: "id", type: { kind: "id" }, readonly: true, validators: [{ kind: "required" }] },
-        { name: "value", type: { kind: "string" }, validators: [{ kind: "required" }] },
+        { name: "id", type: { kind: "id" }, readonly: true, validators: [{ name: "required" }] },
+        { name: "value", type: { kind: "string" }, validators: [{ name: "required" }] },
     ],
 };
 

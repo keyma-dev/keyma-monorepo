@@ -13,9 +13,11 @@ type ExtractContext = {
     checker: ts.TypeChecker;
     dslModuleName: string;
     schemaClassNames: ReadonlySet<string>;
-    customValidators: ReadonlySet<string>;
-    customFormatters: ReadonlySet<string>;
     diagnostics: IRDiagnostic[];
+    /** Optional: maps function name → validator name from @Validator-decorated declarations. */
+    discoveredValidators?: Map<string, string>;
+    /** Optional: maps function name → formatter name from @Formatter-decorated declarations. */
+    discoveredFormatters?: Map<string, string>;
 };
 
 /**
@@ -34,8 +36,6 @@ export function extractSchema(
         checker: ctx.checker,
         dslModuleName: ctx.dslModuleName,
         schemaClassNames: ctx.schemaClassNames,
-        customValidators: ctx.customValidators,
-        customFormatters: ctx.customFormatters,
         diagnostics: ctx.diagnostics,
         sourceFile,
     };
@@ -200,10 +200,12 @@ function extractField(
     let ephemeral = false;
 
     const lowerCtx = {
-        customValidators: ctx.customValidators,
-        customFormatters: ctx.customFormatters,
+        checker: ctx.checker,
         diagnostics: ctx.diagnostics,
         sourceFile: sf,
+        dslModuleName: ctx.dslModuleName,
+        ...(ctx.discoveredValidators !== undefined && { discoveredValidators: ctx.discoveredValidators }),
+        ...(ctx.discoveredFormatters !== undefined && { discoveredFormatters: ctx.discoveredFormatters }),
     };
 
     for (const deco of decorators) {
@@ -230,7 +232,7 @@ function extractField(
     }
 
     // Promote number → integer if @Validate(isInteger) is present
-    if (irType.kind === "number" && validators.some((v) => v.kind === "integer")) {
+    if (irType.kind === "number" && validators.some((v) => v.name === "integer")) {
         irType = { kind: "integer" };
     }
 
@@ -303,10 +305,12 @@ function extractComputedField(
     // Read @Indexed decorator from the getter
     const fieldIndexes: IRFieldIndex[] = [];
     const lowerCtx = {
-        customValidators: ctx.customValidators,
-        customFormatters: ctx.customFormatters,
+        checker: ctx.checker,
         diagnostics: ctx.diagnostics,
         sourceFile: sf,
+        dslModuleName: ctx.dslModuleName,
+        ...(ctx.discoveredValidators !== undefined && { discoveredValidators: ctx.discoveredValidators }),
+        ...(ctx.discoveredFormatters !== undefined && { discoveredFormatters: ctx.discoveredFormatters }),
     };
 
     for (const deco of ts.getDecorators(getter) ?? []) {

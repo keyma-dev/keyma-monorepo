@@ -77,33 +77,41 @@ export type AdapterTraversalContext = {
  *    use these to merge the client's filter with policy clauses; adapters
  *    must handle them. They are not exposed on the client-side query builder. */
 export interface KeymaDatabaseAdapter {
+
+    /** Optional capability surface. Adapters opt in by setting flags here. */
+    readonly capabilities?: AdapterCapabilities;
+
     ensureSchema(schema: SchemaMetadata): Promise<void>;
+
     create(
         schema: SchemaMetadata,
         data: Record<string, unknown>,
         projection?: AdapterProjection,
     ): Promise<Record<string, unknown>>;
+
     read(
         schema: SchemaMetadata,
         where: Record<string, unknown>,
         projection?: AdapterProjection,
     ): Promise<Record<string, unknown> | null>;
+
     list(
         schema: SchemaMetadata,
         query: ListQuery,
     ): Promise<Record<string, unknown>[]>;
+
     update(
         schema: SchemaMetadata,
         where: Record<string, unknown>,
         data: Record<string, unknown>,
         projection?: AdapterProjection,
     ): Promise<Record<string, unknown>>;
+
     delete(
         schema: SchemaMetadata,
         where: Record<string, unknown>,
     ): Promise<void>;
-    /** Optional capability surface. Adapters opt in by setting flags here. */
-    readonly capabilities?: AdapterCapabilities;
+
     /** Optional graph traversal. Implementations are responsible for honoring
      *  the spec's `start`, `steps`/`repeat`+`depth`, `where`, and `emit`. */
     traverse?(

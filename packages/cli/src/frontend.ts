@@ -13,11 +13,7 @@ export function createTsFrontend(cwd: string): KeymaFrontend {
         sourceExtensions: [".ts"],
         async compile(config: ResolvedConfig) {
             const files = await resolveSources(config.source, cwd);
-            return compile({
-                files,
-                customValidators: config.customValidators,
-                customFormatters: config.customFormatters,
-            });
+            return compile({ files });
         },
     };
 }

@@ -10,6 +10,7 @@ import type {
     AdapterFieldSpec,
 } from "../src/adapter.js";
 import type { SchemaMetadata } from "../src/types.js";
+import type { ValidatorRegistry } from "../src/validate.js";
 import {
     User,
     Organization,
@@ -140,11 +141,31 @@ class InMemoryAdapter implements KeymaDatabaseAdapter {
     }
 }
 
+const EMAIL_RE = /^[^\s@]+@[^\s@]+\.[^\s@]{2,}$/;
+
+const defaultValidators: ValidatorRegistry = new Map([
+    ["required", (v, _spec, field) =>
+        v === null || v === undefined || v === ""
+            ? { field, code: "required", message: `${field} is required` }
+            : null],
+    ["emailAddress", (v, _spec, field) =>
+        typeof v === "string" && !EMAIL_RE.test(v)
+            ? { field, code: "emailAddress", message: `${field} must be a valid email address` }
+            : null],
+    ["minLength", (v, spec, field) => {
+        const min = typeof spec["value"] === "number" ? spec["value"] : 0;
+        return typeof v === "string" && v.length < min
+            ? { field, code: "minLength", message: `${field} must be at least ${min} characters` }
+            : null;
+    }],
+]);
+
 function setupServer() {
     const adapter = new InMemoryAdapter();
     const server = new KeymaServer({
         schemas: [USER_SCHEMA, ORGANIZATION_SCHEMA, ADDRESS_SCHEMA],
         adapter,
+        validators: defaultValidators,
     });
     return { server, adapter, transport: createDirectTransport(server) };
 }

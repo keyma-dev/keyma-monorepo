@@ -3,6 +3,8 @@ import type { IRSchema } from "@keyma/ir";
 type IndexEmitOptions = {
     includePrivate: boolean;
     emitMaterializers: boolean;
+    hasValidators: boolean;
+    hasFormatters: boolean;
 };
 
 /**
@@ -30,6 +32,15 @@ export function emitIndexJs(
         lines.push(`export { ${exports.join(", ")} } from "./models/${fileName}.js";`);
     }
 
+    if (opts.hasValidators) {
+        lines.push(`export * from "./validators.js";`);
+        lines.push(`export * from "./registry.js";`);
+    }
+    if (opts.hasFormatters) {
+        lines.push(`export * from "./formatters.js";`);
+        lines.push(`export * from "./formatter-registry.js";`);
+    }
+
     lines.push("");
     return lines.join("\n");
 }
@@ -55,6 +66,15 @@ export function emitIndexDts(
         if (opts.emitMaterializers && schema.fields.some((f) => f.computed !== undefined)) {
             lines.push(`export { materialize${schema.sourceName} } from "./models/${fileName}.js";`);
         }
+    }
+
+    if (opts.hasValidators) {
+        lines.push(`export * from "./validators.js";`);
+        lines.push(`export * from "./registry.js";`);
+    }
+    if (opts.hasFormatters) {
+        lines.push(`export * from "./formatters.js";`);
+        lines.push(`export * from "./formatter-registry.js";`);
     }
 
     lines.push("");

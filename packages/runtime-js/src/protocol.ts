@@ -94,7 +94,7 @@ export type KeymaLeafFailure = {
     source: ErrorSource;
     /** Package name of the originator (plugin or adapter). Omitted for runtime errors. */
     origin?: string;
-    /** Structured field errors. Present iff code === "VALIDATION_FAILED". */
+    /** Structured field errors. Present if code === "VALIDATION_FAILED". */
     errors?: ValidationError[];
     /** Free-form extras supplied by the throwing layer (e.g. {fields: [...]} for FIELD_FORBIDDEN). */
     [key: string]: unknown;

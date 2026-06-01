@@ -6,6 +6,12 @@ export type JsTargetConfig = {
     client?: boolean;
     /** Emit a server bundle (all schemas, all fields, index metadata, materializers). Default: true. */
     server?: boolean;
+    /**
+     * Emit a single unified bundle (all schemas, all fields, materializers) directly into outDir.
+     * When true, `client` and `server` are ignored and no client/ or server/ subdirectory is created.
+     * Default: false.
+     */
+    library?: boolean;
 };
 
 /** Resolved emit flags after applying defaults. */
@@ -13,12 +19,15 @@ export type ResolvedJsTarget = {
     outDir: string;
     emitClient: boolean;
     emitServer: boolean;
+    emitLibrary: boolean;
 };
 
 export function resolveJsTarget(target: JsTargetConfig): ResolvedJsTarget {
+    const emitLibrary = target.library === true;
     return {
         outDir: target.outDir,
-        emitClient: target.client !== false,
-        emitServer: target.server !== false,
+        emitClient: !emitLibrary && target.client !== false,
+        emitServer: !emitLibrary && target.server !== false,
+        emitLibrary,
     };
 }

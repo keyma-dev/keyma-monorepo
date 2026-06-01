@@ -1,6 +1,34 @@
 declare const __brand: unique symbol;
 type Brand<T, B extends string> = T & { readonly [__brand]: B };
 
+// ─── Validator / formatter reference types ───────────────────────────────────
+
+/**
+ * Opaque reference to a named validator, optionally carrying compile-time params.
+ * The name is a type parameter so it survives into emitted `.d.ts` files — the
+ * compiler reads it off the call expression's type, which is how it resolves
+ * validators imported from compiled packages (e.g. `@keyma/validators`).
+ */
+export type ValidatorRef<N extends string = string> = { readonly __validatorName: N; readonly params?: Record<string, unknown> };
+
+/** Opaque reference to a named formatter, optionally carrying compile-time params. */
+export type FormatterRef<N extends string = string> = { readonly __formatterName: N; readonly params?: Record<string, unknown> };
+
+/** Error shape returned by validator implementations. */
+export type ValidationError = { field: string; code: string; message: string };
+
+/** Context object passed to validator/formatter implementations. */
+export type ValidatorContext = { object: Record<string, unknown> };
+
+/** Context object passed to formatter implementations. */
+export type FormatterContext = { object: Record<string, unknown> };
+
+/** Required function signature for user-defined validator implementations. */
+export type UserValidatorFn = (value: unknown, spec: Record<string, unknown>, ctx: ValidatorContext) => ValidationError | null;
+
+/** Required function signature for user-defined formatter implementations. */
+export type UserFormatterFn = (value: unknown, spec: Record<string, unknown>, ctx: FormatterContext) => unknown;
+
 /**
  * Opaque database identifier. Covers string IDs, integer IDs, ObjectId, UUID-based IDs, etc.
  * Maps to IR type `{ kind: "id" }`.
@@ -42,6 +70,12 @@ export type Json = unknown;
  * Maps to IR type `{ kind: "bytes" }`.
  */
 export type Bytes = Uint8Array;
+
+/**
+ * Regular expression pattern.
+ * Maps to IR type `{ kind: "regexp" }`.
+ */
+export type Regexp = RegExp;
 
 /**
  * Makes a type nullable (T | null).

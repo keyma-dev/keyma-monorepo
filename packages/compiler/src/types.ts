@@ -17,10 +17,6 @@ export type KeymaUserConfig = {
     irOutFile?: string;
     /** One entry per code-generation target. */
     targets?: KeymaTargetConfig[];
-    /** Custom validator names registered for this project. */
-    customValidators?: string[];
-    /** Custom formatter names registered for this project. */
-    customFormatters?: string[];
 };
 
 /** Resolved configuration with all defaults applied. Passed to frontend and backend plugins. */
@@ -29,8 +25,6 @@ export type ResolvedConfig = {
     outDir: string;
     irOutFile?: string;
     targets: KeymaTargetConfig[];
-    customValidators: string[];
-    customFormatters: string[];
 };
 
 /** A single file to be written by the driver. */

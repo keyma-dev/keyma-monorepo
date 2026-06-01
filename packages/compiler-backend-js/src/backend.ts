@@ -3,6 +3,7 @@ import type { KeymaIR, IRSchema } from "@keyma/ir";
 import type { KeymaBackend, KeymaTargetConfig, ResolvedConfig, EmitFile, EmitResult } from "@keyma/compiler";
 import { emitModelJs, emitModelDts } from "./emit-model.js";
 import { emitIndexJs, emitIndexDts } from "./emit-index.js";
+import { emitValidatorFiles, emitFormatterFiles } from "./emit-validators.js";
 import { resolveJsTarget, type JsTargetConfig } from "./types.js";
 
 export const jsBackend: KeymaBackend = {
@@ -30,7 +31,7 @@ export async function emitJs(
     );
 
     if (jsTarget.emitClient) {
-        files.push(...emitBundle(ir, "client", jsTarget.outDir, schemaFileNames, embeddedTypeNames, {
+        files.push(...emitBundle(ir, path.posix.join(jsTarget.outDir, "client"), schemaFileNames, embeddedTypeNames, {
             includePrivate: false,
             includeIndexes: false,
             emitMaterializers: false,
@@ -39,12 +40,51 @@ export async function emitJs(
     }
 
     if (jsTarget.emitServer) {
-        files.push(...emitBundle(ir, "server", jsTarget.outDir, schemaFileNames, embeddedTypeNames, {
+        files.push(...emitBundle(ir, path.posix.join(jsTarget.outDir, "server"), schemaFileNames, embeddedTypeNames, {
             includePrivate: true,
             includeIndexes: true,
             emitMaterializers: true,
             formPhasesOnly: false,
         }));
+    }
+
+    if (jsTarget.emitLibrary) {
+        files.push(...emitBundle(ir, jsTarget.outDir, schemaFileNames, embeddedTypeNames, {
+            includePrivate: true,
+            includeIndexes: true,
+            emitMaterializers: true,
+            formPhasesOnly: false,
+        }));
+    }
+
+    // Validator and formatter declarations go into each enabled bundle (same content).
+    const validatorDecls = ir.validatorDeclarations ?? [];
+    const formatterDecls = ir.formatterDeclarations ?? [];
+
+    const bundleDirs: string[] = [
+        ...(jsTarget.emitClient ? [path.posix.join(jsTarget.outDir, "client")] : []),
+        ...(jsTarget.emitServer ? [path.posix.join(jsTarget.outDir, "server")] : []),
+        ...(jsTarget.emitLibrary ? [jsTarget.outDir] : []),
+    ];
+
+    if (validatorDecls.length > 0) {
+        const vf = emitValidatorFiles(validatorDecls);
+        for (const bundleDir of bundleDirs) {
+            files.push({ path: `${bundleDir}/validators.js`, content: vf.factoriesJs });
+            files.push({ path: `${bundleDir}/validators.d.ts`, content: vf.factoriesDts });
+            files.push({ path: `${bundleDir}/registry.js`, content: vf.registryJs });
+            files.push({ path: `${bundleDir}/registry.d.ts`, content: vf.registryDts });
+        }
+    }
+
+    if (formatterDecls.length > 0) {
+        const ff = emitFormatterFiles(formatterDecls);
+        for (const bundleDir of bundleDirs) {
+            files.push({ path: `${bundleDir}/formatters.js`, content: ff.factoriesJs });
+            files.push({ path: `${bundleDir}/formatters.d.ts`, content: ff.factoriesDts });
+            files.push({ path: `${bundleDir}/formatter-registry.js`, content: ff.registryJs });
+            files.push({ path: `${bundleDir}/formatter-registry.d.ts`, content: ff.registryDts });
+        }
     }
 
     return { files, diagnostics: [] };
@@ -59,14 +99,12 @@ type BundleOptions = {
 
 function emitBundle(
     ir: KeymaIR,
-    bundle: "client" | "server",
-    outDir: string,
+    bundleDir: string,
     schemaFileNames: ReadonlyMap<string, string>,
     embeddedTypeNames: ReadonlyMap<string, string>,
     opts: BundleOptions
 ): EmitFile[] {
     const files: EmitFile[] = [];
-    const bundleDir = path.posix.join(outDir, bundle);
 
     const visibleSchemas: IRSchema[] = opts.includePrivate
         ? ir.schemas
@@ -96,6 +134,8 @@ function emitBundle(
     const indexOpts = {
         includePrivate: opts.includePrivate,
         emitMaterializers: opts.emitMaterializers,
+        hasValidators: (ir.validatorDeclarations ?? []).length > 0,
+        hasFormatters: (ir.formatterDeclarations ?? []).length > 0,
     };
 
     // index.js + index.d.ts

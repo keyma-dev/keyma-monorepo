@@ -40,6 +40,24 @@ function checkDocument(doc: unknown, _path: string): IRValidationError[] {
         doc["schemas"].forEach((s, i) => errors.push(...checkSchema(s, `schemas[${i}]`)));
     }
 
+    if ("validatorDeclarations" in doc && doc["validatorDeclarations"] !== undefined) {
+        if (!isArr(doc["validatorDeclarations"])) {
+            errors.push(e("validatorDeclarations", "must be an array when present"));
+        } else {
+            doc["validatorDeclarations"].forEach((d, i) =>
+                errors.push(...checkDeclaration(d, `validatorDeclarations[${i}]`)));
+        }
+    }
+
+    if ("formatterDeclarations" in doc && doc["formatterDeclarations"] !== undefined) {
+        if (!isArr(doc["formatterDeclarations"])) {
+            errors.push(e("formatterDeclarations", "must be an array when present"));
+        } else {
+            doc["formatterDeclarations"].forEach((d, i) =>
+                errors.push(...checkDeclaration(d, `formatterDeclarations[${i}]`)));
+        }
+    }
+
     if (!isArr(doc["diagnostics"])) {
         errors.push(e("diagnostics", "must be an array"));
     } else {
@@ -138,7 +156,7 @@ function checkField(field: unknown, path: string): IRValidationError[] {
 
 const SCALAR_TYPE_KINDS = new Set([
     "string", "number", "integer", "bigint", "decimal", "boolean",
-    "bytes", "json", "date", "dateTime", "time", "id"
+    "bytes", "json", "date", "dateTime", "time", "id", "regexp"
 ]);
 
 function checkType(type: unknown, path: string): IRValidationError[] {
@@ -171,66 +189,13 @@ function checkType(type: unknown, path: string): IRValidationError[] {
     }
 }
 
-const VALIDATOR_KINDS_SCALAR = new Set([
-    "required", "positive", "nonNegative", "negative", "nonPositive",
-    "integer", "uniqueItems", "emailAddress"
-]);
-const VALIDATOR_KINDS_NUMBER = new Set(["minLength", "maxLength", "length", "min", "max", "multipleOf", "minItems", "maxItems"]);
-const VALIDATOR_KINDS_DATE_STR = new Set(["minDate", "maxDate"]);
-
 function checkValidator(v: unknown, path: string): IRValidationError[] {
     if (!isObj(v)) return [e(path, "must be an object")];
-    if (!isStr(v["kind"])) return [e(`${path}.kind`, "must be a string")];
-
-    const kind = v["kind"];
-    if (VALIDATOR_KINDS_SCALAR.has(kind)) return [];
-
-    if (VALIDATOR_KINDS_NUMBER.has(kind)) {
-        if (!isNum(v["value"])) return [e(`${path}.value`, "must be a number")];
-        return [];
+    if (!isStr(v["name"]) || v["name"] === "") return [e(`${path}.name`, "must be a non-empty string")];
+    if ("params" in v && v["params"] !== undefined && !isObj(v["params"])) {
+        return [e(`${path}.params`, "must be an object when present")];
     }
-
-    if (VALIDATOR_KINDS_DATE_STR.has(kind)) {
-        if (!isStr(v["value"])) return [e(`${path}.value`, "must be a string")];
-        return [];
-    }
-
-    switch (kind) {
-        case "pattern":
-            if (!isStr(v["pattern"])) return [e(`${path}.pattern`, "must be a string")];
-            if ("flags" in v && v["flags"] !== undefined && !isStr(v["flags"])) {
-                return [e(`${path}.flags`, "must be a string when present")];
-            }
-            return [];
-        case "url":
-            if ("protocols" in v && v["protocols"] !== undefined) {
-                if (!isArr(v["protocols"])) return [e(`${path}.protocols`, "must be an array when present")];
-                const bad = v["protocols"].findIndex(p => !isStr(p));
-                if (bad !== -1) return [e(`${path}.protocols[${bad}]`, "must be a string")];
-            }
-            return [];
-        case "phoneNumber":
-            if ("region" in v && v["region"] !== undefined && !isStr(v["region"])) {
-                return [e(`${path}.region`, "must be a string when present")];
-            }
-            return [];
-        case "ipAddress":
-            if ("version" in v && v["version"] !== undefined && v["version"] !== "v4" && v["version"] !== "v6") {
-                return [e(`${path}.version`, 'must be "v4" or "v6" when present')];
-            }
-            return [];
-        case "oneOf": {
-            if (!isArr(v["values"])) return [e(`${path}.values`, "must be an array")];
-            const bad = v["values"].findIndex(val => !isStr(val) && !isNum(val));
-            if (bad !== -1) return [e(`${path}.values[${bad}]`, "must be a string or number")];
-            return [];
-        }
-        case "custom":
-            if (!isStr(v["name"]) || v["name"] === "") return [e(`${path}.name`, "must be a non-empty string")];
-            return [];
-        default:
-            return [e(`${path}.kind`, `unknown validator kind "${kind}"`)];
-    }
+    return [];
 }
 
 const FORMATTER_PHASES = new Set(["change", "blur", "submit", "save"]);
@@ -245,33 +210,13 @@ function checkFormatter(f: unknown, path: string): IRValidationError[] {
     return errors;
 }
 
-const FORMATTER_SPEC_SCALAR = new Set([
-    "trim", "lowercase", "uppercase", "titleCase", "capitalize",
-    "normalizeWhitespace", "stripNonDigits", "normalizeEmail", "normalizeUrl", "slugify"
-]);
-
 function checkFormatterSpec(spec: unknown, path: string): IRValidationError[] {
     if (!isObj(spec)) return [e(path, "must be an object")];
-    if (!isStr(spec["kind"])) return [e(`${path}.kind`, "must be a string")];
-
-    const kind = spec["kind"];
-    if (FORMATTER_SPEC_SCALAR.has(kind)) return [];
-
-    switch (kind) {
-        case "normalizePhone":
-            if ("region" in spec && spec["region"] !== undefined && !isStr(spec["region"])) {
-                return [e(`${path}.region`, "must be a string when present")];
-            }
-            return [];
-        case "truncate":
-            if (!isNum(spec["maxLength"])) return [e(`${path}.maxLength`, "must be a number")];
-            return [];
-        case "custom":
-            if (!isStr(spec["name"]) || spec["name"] === "") return [e(`${path}.name`, "must be a non-empty string")];
-            return [];
-        default:
-            return [e(`${path}.kind`, `unknown formatter spec kind "${kind}"`)];
+    if (!isStr(spec["name"]) || spec["name"] === "") return [e(`${path}.name`, "must be a non-empty string")];
+    if ("params" in spec && spec["params"] !== undefined && !isObj(spec["params"])) {
+        return [e(`${path}.params`, "must be an object when present")];
     }
+    return [];
 }
 
 function checkFieldIndex(idx: unknown, path: string): IRValidationError[] {
@@ -329,6 +274,7 @@ function checkExpression(expr: unknown, path: string): IRValidationError[] {
             return [];
         }
         case "field":
+        case "identifier":
             if (!isStr(expr["name"]) || expr["name"] === "") return [e(`${path}.name`, "must be a non-empty string")];
             return [];
         case "member": {
@@ -336,6 +282,17 @@ function checkExpression(expr: unknown, path: string): IRValidationError[] {
             if (!isStr(expr["member"]) || expr["member"] === "") errors.push(e(`${path}.member`, "must be a non-empty string"));
             return errors;
         }
+        case "call": {
+            const errors = checkExpression(expr["callee"], `${path}.callee`);
+            if (!isArr(expr["args"])) {
+                errors.push(e(`${path}.args`, "must be an array"));
+            } else {
+                expr["args"].forEach((a, i) => errors.push(...checkExpression(a, `${path}.args[${i}]`)));
+            }
+            return errors;
+        }
+        case "typeof":
+            return checkExpression(expr["operand"], `${path}.operand`);
         case "template":
             if (!isArr(expr["parts"])) return [e(`${path}.parts`, "must be an array")];
             return expr["parts"].flatMap((p, i) => checkExpression(p, `${path}.parts[${i}]`));
@@ -360,9 +317,129 @@ function checkExpression(expr: unknown, path: string): IRValidationError[] {
             errors.push(...checkExpression(expr["whenFalse"], `${path}.whenFalse`));
             return errors;
         }
+        case "object": {
+            if (!isArr(expr["properties"])) return [e(`${path}.properties`, "must be an array")];
+            const errors: IRValidationError[] = [];
+            expr["properties"].forEach((prop, i) => {
+                if (!isObj(prop)) { errors.push(e(`${path}.properties[${i}]`, "must be an object")); return; }
+                if (!isStr(prop["key"]) || prop["key"] === "") errors.push(e(`${path}.properties[${i}].key`, "must be a non-empty string"));
+                errors.push(...checkExpression(prop["value"], `${path}.properties[${i}].value`));
+            });
+            return errors;
+        }
+        case "regexp": {
+            const errors: IRValidationError[] = [];
+            if (!isStr(expr["pattern"])) errors.push(e(`${path}.pattern`, "must be a string"));
+            if (!isStr(expr["flags"])) errors.push(e(`${path}.flags`, "must be a string"));
+            return errors;
+        }
+        case "arrow": {
+            const errors: IRValidationError[] = [];
+            if (!isArr(expr["params"])) {
+                errors.push(e(`${path}.params`, "must be an array"));
+            } else {
+                expr["params"].forEach((p, i) => {
+                    if (!isStr(p) || p === "") errors.push(e(`${path}.params[${i}]`, "must be a non-empty string"));
+                });
+            }
+            errors.push(...checkExpression(expr["body"], `${path}.body`));
+            return errors;
+        }
+        case "new": {
+            const errors = checkExpression(expr["callee"], `${path}.callee`);
+            if (!isArr(expr["args"])) {
+                errors.push(e(`${path}.args`, "must be an array"));
+            } else {
+                expr["args"].forEach((a, i) => errors.push(...checkExpression(a, `${path}.args[${i}]`)));
+            }
+            return errors;
+        }
         default:
             return [e(`${path}.kind`, `unknown expression kind "${kind}"`)];
     }
+}
+
+function checkStatement(stmt: unknown, path: string): IRValidationError[] {
+    if (!isObj(stmt)) return [e(path, "must be an object")];
+    if (!isStr(stmt["kind"])) return [e(`${path}.kind`, "must be a string")];
+
+    const kind = stmt["kind"];
+    switch (kind) {
+        case "return": {
+            if (stmt["value"] !== null && stmt["value"] !== undefined) {
+                return checkExpression(stmt["value"], `${path}.value`);
+            }
+            return [];
+        }
+        case "if": {
+            const errors = checkExpression(stmt["condition"], `${path}.condition`);
+            if (!isArr(stmt["consequent"])) {
+                errors.push(e(`${path}.consequent`, "must be an array"));
+            } else {
+                stmt["consequent"].forEach((s, i) => errors.push(...checkStatement(s, `${path}.consequent[${i}]`)));
+            }
+            if ("alternate" in stmt && stmt["alternate"] !== undefined) {
+                if (!isArr(stmt["alternate"])) {
+                    errors.push(e(`${path}.alternate`, "must be an array when present"));
+                } else {
+                    stmt["alternate"].forEach((s, i) => errors.push(...checkStatement(s, `${path}.alternate[${i}]`)));
+                }
+            }
+            return errors;
+        }
+        case "const": {
+            const errors: IRValidationError[] = [];
+            if (!isStr(stmt["name"]) || stmt["name"] === "") errors.push(e(`${path}.name`, "must be a non-empty string"));
+            errors.push(...checkExpression(stmt["init"], `${path}.init`));
+            return errors;
+        }
+        case "expression":
+            return checkExpression(stmt["expr"], `${path}.expr`);
+        default:
+            return [e(`${path}.kind`, `unknown statement kind "${kind}"`)];
+    }
+}
+
+function checkFunctionBody(body: unknown, path: string): IRValidationError[] {
+    if (!isObj(body)) return [e(path, "must be an object")];
+    const errors: IRValidationError[] = [];
+
+    if (!isArr(body["params"])) {
+        errors.push(e(`${path}.params`, "must be an array"));
+    } else {
+        body["params"].forEach((p, i) => {
+            if (!isObj(p)) { errors.push(e(`${path}.params[${i}]`, "must be an object")); return; }
+            if (!isStr(p["name"]) || p["name"] === "") errors.push(e(`${path}.params[${i}].name`, "must be a non-empty string"));
+            if (p["role"] !== "value" && p["role"] !== "field" && p["role"] !== "spec" && p["role"] !== "context") {
+                errors.push(e(`${path}.params[${i}].role`, 'must be "value", "field", "spec", or "context"'));
+            }
+        });
+    }
+
+    if (!isArr(body["statements"])) {
+        errors.push(e(`${path}.statements`, "must be an array"));
+    } else {
+        body["statements"].forEach((s, i) => errors.push(...checkStatement(s, `${path}.statements[${i}]`)));
+    }
+
+    return errors;
+}
+
+function checkDeclaration(decl: unknown, path: string): IRValidationError[] {
+    if (!isObj(decl)) return [e(path, "must be an object")];
+    const errors: IRValidationError[] = [];
+    if (!isStr(decl["name"]) || decl["name"] === "") errors.push(e(`${path}.name`, "must be a non-empty string"));
+    if (!isArr(decl["factoryParams"])) {
+        errors.push(e(`${path}.factoryParams`, "must be an array"));
+    } else {
+        decl["factoryParams"].forEach((p, i) => {
+            if (!isObj(p)) { errors.push(e(`${path}.factoryParams[${i}]`, "must be an object")); return; }
+            if (!isStr(p["name"]) || p["name"] === "") errors.push(e(`${path}.factoryParams[${i}].name`, "must be a non-empty string"));
+        });
+    }
+    errors.push(...checkFunctionBody(decl["body"], `${path}.body`));
+    errors.push(...checkSourceLocation(decl["source"], `${path}.source`));
+    return errors;
 }
 
 function checkComputed(computed: unknown, path: string): IRValidationError[] {

@@ -45,6 +45,12 @@ export const KEYMA064 = "KEYMA064"; // Edge schema cannot itself be referenced b
 // Reference errors
 export const KEYMA070 = "KEYMA070"; // Reference<T> target schema has no `id: ID` field
 
+// Validator/formatter declaration compilation errors
+export const KEYMA080 = "KEYMA080"; // @Validator/@Formatter applied to non-exported or non-function declaration
+export const KEYMA081 = "KEYMA081"; // Factory body does not return a function expression
+export const KEYMA082 = "KEYMA082"; // Unsupported statement or expression in validator/formatter body
+export const KEYMA083 = "KEYMA083"; // Inner function has wrong arity (must have 2–3 params: value, fieldKey[, context])
+
 export function mkError(
     code: string,
     message: string,

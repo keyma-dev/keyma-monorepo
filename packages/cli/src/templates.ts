@@ -33,7 +33,8 @@ export function projectFiles(projectName: string): ProjectFile[] {
 export function schemaTemplate(name: string): { relativePath: string; content: string } {
     const className = pascalCase(name);
     const schemaName = kebabCase(name) || name.toLowerCase();
-    const content = `import { Schema, Validate, Indexed, isRequired, minLength, maxLength } from "@keyma/dsl";
+    const content = `import { Schema, Validate, Indexed } from "@keyma/dsl";
+import { required } from "@keyma/validators";
 import type { ID } from "@keyma/dsl";
 
 @Schema({ name: "${schemaName}" })
@@ -41,7 +42,7 @@ export class ${className} {
 
     declare readonly id: ID;
 
-    @Validate(isRequired, minLength(1), maxLength(255))
+    @Validate(required())
     declare name: string;
 }
 `;
@@ -61,6 +62,7 @@ function packageJsonTemplate(projectName: string): string {
         },
         dependencies: {
             "@keyma/dsl": "*",
+            "@keyma/validators": "*",
             "@keyma/runtime-js": "*",
         },
         devDependencies: {

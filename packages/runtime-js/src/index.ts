@@ -30,16 +30,10 @@ export type {
     TraversalEmit,
 } from "./protocol.js";
 
-export {
-    validate,
-    createDefaultValidatorRegistry,
-} from "./validate.js";
+export { validate } from "./validate.js";
 export type { ValidatorFn, ValidatorRegistry, ValidatorContext } from "./validate.js";
 
-export {
-    format,
-    createDefaultFormatterRegistry,
-} from "./format.js";
+export { format } from "./format.js";
 export type { FormatterFn, FormatterRegistry, FormatterContext } from "./format.js";
 
 export { serialize } from "./serialize.js";

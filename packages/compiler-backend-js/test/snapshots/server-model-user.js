@@ -25,7 +25,7 @@ User.schema = Object.freeze({
             "readonly": true,
             "validators": [
                 {
-                    "kind": "required"
+                    "name": "required"
                 }
             ],
             "indexes": [
@@ -41,15 +41,17 @@ User.schema = Object.freeze({
             },
             "validators": [
                 {
-                    "kind": "minLength",
-                    "value": 2
+                    "name": "minLength",
+                    "params": {
+                        "value": 2
+                    }
                 }
             ],
             "formatters": [
                 {
                     "phase": "change",
                     "spec": {
-                        "kind": "trim"
+                        "name": "trim"
                     }
                 }
             ]

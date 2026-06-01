@@ -13,14 +13,15 @@ export type FieldType =
     | { kind: "dateTime" }
     | { kind: "time" }
     | { kind: "id" }
+    | { kind: "regexp" }
     | { kind: "enum"; values: string[] }
     | { kind: "nullable"; of: FieldType }
     | { kind: "array"; of: FieldType }
     | { kind: "reference"; schema: string }
     | { kind: "embedded"; schema: string };
 
-export type ValidatorSpec = { kind: string } & Record<string, unknown>;
-export type FormatterSpec = { kind: string } & Record<string, unknown>;
+export type ValidatorSpec = { name: string } & Record<string, unknown>;
+export type FormatterSpec = { name: string } & Record<string, unknown>;
 
 export type FormatterEntry = {
     phase: string;

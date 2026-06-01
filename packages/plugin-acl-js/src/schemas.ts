@@ -13,15 +13,16 @@ export const ACL_ROLE_ASSIGNMENT_SCHEMA_NAME = "keymaAclRoleAssignment";
 
 export const ACL_RULE_SCHEMA: SchemaMetadata = {
     name: ACL_RULE_SCHEMA_NAME,
+    visibility: "private",
     sourceName: "KeymaAclRule",
     fields: [
-        { name: "id", type: { kind: "id" }, readonly: true, validators: [{ kind: "required" }] },
+        { name: "id", type: { kind: "id" }, readonly: true, validators: [{ name: "required" }] },
         {
             name: "subjectKind",
             type: { kind: "string" },
             validators: [
-                { kind: "required" },
-                { kind: "oneOf", values: ["anon", "any-user", "user", "role"] },
+                { name: "required" },
+                { name: "oneOf", values: ["anon", "any-user", "user", "role"] },
             ],
         },
         { name: "subjectId", type: { kind: "string" }, required: false },
@@ -29,12 +30,12 @@ export const ACL_RULE_SCHEMA: SchemaMetadata = {
         {
             name: "schema",
             type: { kind: "string" },
-            validators: [{ kind: "required" }],
+            validators: [{ name: "required" }],
         },
         {
             name: "actions",
             type: { kind: "array", of: { kind: "string" } },
-            validators: [{ kind: "required" }, { kind: "minItems", value: 1 }],
+            validators: [{ name: "required" }, { name: "minItems", value: 1 }],
         },
         { name: "where", type: { kind: "json" }, required: false },
         { name: "fieldsRead", type: { kind: "array", of: { kind: "string" } }, required: false },
@@ -43,7 +44,7 @@ export const ACL_RULE_SCHEMA: SchemaMetadata = {
             name: "effect",
             type: { kind: "string" },
             required: false,
-            validators: [{ kind: "oneOf", values: ["allow", "deny"] }],
+            validators: [{ name: "oneOf", values: ["allow", "deny"] }],
         },
         { name: "priority", type: { kind: "integer" }, required: false },
     ],
@@ -56,21 +57,23 @@ export const ACL_RULE_SCHEMA: SchemaMetadata = {
 
 export const ACL_ROLE_SCHEMA: SchemaMetadata = {
     name: ACL_ROLE_SCHEMA_NAME,
+    visibility: "private",
     sourceName: "KeymaAclRole",
     fields: [
-        { name: "id", type: { kind: "id" }, readonly: true, validators: [{ kind: "required" }] },
-        { name: "name", type: { kind: "string" }, validators: [{ kind: "required" }] },
+        { name: "id", type: { kind: "id" }, readonly: true, validators: [{ name: "required" }] },
+        { name: "name", type: { kind: "string" }, validators: [{ name: "required" }] },
     ],
     indexes: [{ fields: [{ name: "name", direction: 1 }], unique: true }],
 };
 
 export const ACL_ROLE_ASSIGNMENT_SCHEMA: SchemaMetadata = {
     name: ACL_ROLE_ASSIGNMENT_SCHEMA_NAME,
+    visibility: "private",
     sourceName: "KeymaAclRoleAssignment",
     fields: [
-        { name: "id", type: { kind: "id" }, readonly: true, validators: [{ kind: "required" }] },
-        { name: "userId", type: { kind: "string" }, validators: [{ kind: "required" }] },
-        { name: "role", type: { kind: "string" }, validators: [{ kind: "required" }] },
+        { name: "id", type: { kind: "id" }, readonly: true, validators: [{ name: "required" }] },
+        { name: "userId", type: { kind: "string" }, validators: [{ name: "required" }] },
+        { name: "role", type: { kind: "string" }, validators: [{ name: "required" }] },
     ],
     indexes: [
         { fields: [{ name: "userId", direction: 1 }] },

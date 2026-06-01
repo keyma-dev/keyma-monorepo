@@ -18,7 +18,7 @@ function deserializeValue(
     type: FieldType,
     refs: ReadonlyMap<string, SchemaClass> | undefined,
 ): unknown {
-    if (type.kind === "dateTime" && typeof value === "string") {
+    if (type.kind === "dateTime" && (typeof value === "string")) {
         return new Date(value);
     }
 

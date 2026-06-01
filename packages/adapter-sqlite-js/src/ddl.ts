@@ -81,6 +81,7 @@ function inspectType(t: FieldType): InspectedType {
 export function sqliteColumnType(type: FieldType): string {
     switch (type.kind) {
         case "id":
+        case "regexp":
         case "string":
         case "enum":
         case "reference":

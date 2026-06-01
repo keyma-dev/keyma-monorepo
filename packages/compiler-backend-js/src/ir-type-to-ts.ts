@@ -25,6 +25,7 @@ export function irTypeToTs(
         case "time":     return "string";
         case "id":       return "string";
         case "json":     return "unknown";
+        case "regexp":   return "RegExp";
 
         case "enum":
             return type.values.map((v) => JSON.stringify(v)).join(" | ");

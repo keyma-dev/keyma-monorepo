@@ -15,12 +15,14 @@ const DSL_SCALAR_TYPES: ReadonlyMap<string, IRType> = new Map([
     ["Decimal", { kind: "decimal" }],
     ["Json", { kind: "json" }],
     ["Bytes", { kind: "bytes" }],
+    ["Regexp", { kind: "regexp" }],
 ]);
 
 /** Global (non-DSL) type names that map to IR types. */
 const GLOBAL_SCALAR_TYPES: ReadonlyMap<string, IRType> = new Map([
     ["Date", { kind: "dateTime" }],
     ["Uint8Array", { kind: "bytes" }],
+    ["RegExp", { kind: "regexp" }],
 ]);
 
 type TypeMapContext = {

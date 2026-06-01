@@ -150,9 +150,9 @@ describe("validateIR", () => {
 
     it("accepts all scalar validators", () => {
         const scalarValidators = [
-            { kind: "required" }, { kind: "positive" }, { kind: "nonNegative" },
-            { kind: "negative" }, { kind: "nonPositive" }, { kind: "integer" },
-            { kind: "uniqueItems" }, { kind: "emailAddress" },
+            { name: "required" }, { name: "positive" }, { name: "nonNegative" },
+            { name: "negative" }, { name: "nonPositive" }, { name: "integer" },
+            { name: "uniqueItems" }, { name: "emailAddress" },
         ];
         const doc = {
             ...goldenIR,
@@ -166,10 +166,10 @@ describe("validateIR", () => {
 
     it("accepts numeric validators", () => {
         const numericValidators = [
-            { kind: "minLength", value: 2 }, { kind: "maxLength", value: 32 },
-            { kind: "length", value: 10 }, { kind: "min", value: 0 },
-            { kind: "max", value: 100 }, { kind: "multipleOf", value: 5 },
-            { kind: "minItems", value: 1 }, { kind: "maxItems", value: 10 },
+            { name: "minLength", params: { value: 2 } }, { name: "maxLength", params: { value: 32 } },
+            { name: "length", params: { value: 10 } }, { name: "min", params: { value: 0 } },
+            { name: "max", params: { value: 100 } }, { name: "multipleOf", params: { value: 5 } },
+            { name: "minItems", params: { value: 1 } }, { name: "maxItems", params: { value: 10 } },
         ];
         const doc = {
             ...goldenIR,
@@ -186,7 +186,8 @@ describe("validateIR", () => {
             ...goldenIR,
             schemas: [{
                 ...minimalSchema,
-                fields: [{ ...minimalField, validators: [{ kind: "madeUp" }] }],
+                // eslint-disable-next-line @typescript-eslint/no-explicit-any
+                fields: [{ ...minimalField, validators: [{ kind: "madeUp" }] as any }],
             }],
         };
         assert.equal(validateIR(doc).valid, false);
@@ -194,10 +195,10 @@ describe("validateIR", () => {
 
     it("accepts formatters with all phases", () => {
         const formatters = [
-            { phase: "change", spec: { kind: "trim" } },
-            { phase: "blur", spec: { kind: "lowercase" } },
-            { phase: "submit", spec: { kind: "normalizeEmail" } },
-            { phase: "save", spec: { kind: "slugify" } },
+            { phase: "change", spec: { name: "trim" } },
+            { phase: "blur", spec: { name: "lowercase" } },
+            { phase: "submit", spec: { name: "normalizeEmail" } },
+            { phase: "save", spec: { name: "slugify" } },
         ];
         const doc = {
             ...goldenIR,
@@ -216,7 +217,8 @@ describe("validateIR", () => {
                 ...minimalSchema,
                 fields: [{
                     ...minimalField,
-                    formatters: [{ phase: "midnight", spec: { kind: "trim" } }],
+                    // eslint-disable-next-line @typescript-eslint/no-explicit-any
+                    formatters: [{ phase: "midnight", spec: { name: "trim" } }] as any,
                 }],
             }],
         };
@@ -230,7 +232,7 @@ describe("validateIR", () => {
                 ...minimalSchema,
                 fields: [{
                     ...minimalField,
-                    formatters: [{ phase: "save", spec: { kind: "truncate", maxLength: 50 } }],
+                    formatters: [{ phase: "save", spec: { name: "truncate", params: { maxLength: 50 } } }],
                 }],
             }],
         };

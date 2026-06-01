@@ -17,7 +17,7 @@ function fixture(name: string): string {
 /** Base directory for virtual file module resolution — inside the package src. */
 const VIRTUAL_BASE = path.join(__dirname, "..", "..", "src");
 
-/** Compile virtual TypeScript source and return the result. */
+/** Compile a virtual TypeScript source and return the result. */
 function cv(sources: Record<string, string>) {
     return compileVirtual(sources, { baseDir: VIRTUAL_BASE });
 }
@@ -63,7 +63,7 @@ describe("compile basic schema", () => {
         assert.equal(id.readonly, true);
         assert.equal(id.required, true);
         assert.equal(id.visibility, "public");
-        assert.ok(id.validators.some((v) => v.kind === "required"), "isRequired validator expected");
+        assert.ok(id.validators.some((v) => v.name === "required"), "isRequired validator expected");
         assert.ok(id.indexes.some((i) => i.unique === true), "unique index expected");
     });
 
@@ -73,10 +73,10 @@ describe("compile basic schema", () => {
         assert.ok(f, "firstName field not found");
         assert.deepEqual(f.type, { kind: "string" });
         assert.equal(f.required, true);
-        assert.ok(f.validators.some((v) => v.kind === "required"), "required validator expected");
-        assert.ok(f.validators.some((v) => v.kind === "minLength" && v.value === 2), "minLength(2) expected");
-        assert.ok(f.validators.some((v) => v.kind === "maxLength" && v.value === 64), "maxLength(64) expected");
-        assert.ok(f.formatters.some((fmt) => fmt.phase === "change" && fmt.spec.kind === "trim"), "trim formatter expected");
+        assert.ok(f.validators.some((v) => v.name === "required"), "required validator expected");
+        assert.ok(f.validators.some((v) => v.name === "minLength" && (v.params as any)?.value === 2), "minLength(2) expected");
+        assert.ok(f.validators.some((v) => v.name === "maxLength" && (v.params as any)?.value === 64), "maxLength(64) expected");
+        assert.ok(f.formatters.some((fmt) => fmt.phase === "change" && fmt.spec.name === "trim"), "trim formatter expected");
     });
 
     it("maps email: string with emailAddress validator and unique index", () => {
@@ -84,7 +84,7 @@ describe("compile basic schema", () => {
         const f = user.fields.find((f) => f.name === "email");
         assert.ok(f, "email field not found");
         assert.deepEqual(f.type, { kind: "string" });
-        assert.ok(f.validators.some((v) => v.kind === "emailAddress"), "emailAddress validator expected");
+        assert.ok(f.validators.some((v) => v.name === "emailAddress"), "emailAddress validator expected");
         assert.ok(f.indexes.some((i) => i.unique === true), "unique index expected");
     });
 
@@ -406,11 +406,59 @@ describe("compile IR structure", () => {
         assert.equal(schema.id, "schema:widget");
     });
 
+    it("resolves Validator()/Formatter() factory calls by following the declaration", () => {
+        const result = cv({
+            "validators.ts": `
+                import { Validator, Formatter } from "@keyma/dsl";
+                export const required = Validator("required", () => (_raw: unknown) => null);
+                export const minLength = Validator("minLength", (value: number) => (_raw: unknown) => null);
+                export const trim = Formatter("trim", () => (v: unknown) => v);
+            `,
+            "s.ts": `
+                import { Schema, Validate, Format } from "@keyma/dsl";
+                import { required, minLength, trim } from "./validators.js";
+                @Schema() class Account {
+                    @Validate(required(), minLength(3))
+                    @Format("change", trim())
+                    declare name: string;
+                }
+            `,
+        });
+        assert.deepEqual(errorCodes(result), [], `Unexpected errors: ${JSON.stringify(result.diagnostics)}`);
+        const f = schemaByName(result, "Account").fields.find((f) => f.name === "name");
+        assert.ok(f);
+        assert.ok(f.validators.some((v) => v.name === "required"), "required validator expected");
+        assert.ok(f.validators.some((v) => v.name === "minLength" && (v.params as any)?.value === 3), "minLength(3) expected");
+        assert.ok(f.formatters.some((fmt) => fmt.phase === "change" && fmt.spec.name === "trim"), "trim formatter expected");
+    });
+
+    it("resolves factory calls imported under an alias", () => {
+        const result = cv({
+            "validators.ts": `
+                import { Validator } from "@keyma/dsl";
+                export const required = Validator("required", () => (_raw: unknown) => null);
+            `,
+            "s.ts": `
+                import { Schema, Validate } from "@keyma/dsl";
+                import { required as req } from "./validators.js";
+                @Schema() class Account {
+                    @Validate(req())
+                    declare name: string;
+                }
+            `,
+        });
+        assert.deepEqual(errorCodes(result), [], `Unexpected errors: ${JSON.stringify(result.diagnostics)}`);
+        const f = schemaByName(result, "Account").fields.find((f) => f.name === "name");
+        assert.ok(f);
+        assert.ok(f.validators.some((v) => v.name === "required"), "aliased required validator expected");
+    });
+
     it("number field with isInteger validator is promoted to integer type", () => {
         const result = cv({
             "s.ts": `
-                import { Schema, Validate, isInteger } from "@keyma/dsl";
-                @Schema() class Count { @Validate(isInteger) declare n: number; }
+                import { Schema, Validate } from "@keyma/dsl";
+                function isInteger() { return { __validatorName: "integer" } as const; }
+                @Schema() class Count { @Validate(isInteger()) declare n: number; }
             `,
         });
         assert.deepEqual(errorCodes(result), []);

@@ -24,52 +24,24 @@ export type IRType =
     | { kind: "dateTime" }
     | { kind: "time" }
     | { kind: "id" }
+    | { kind: "regexp" }
     | { kind: "enum"; values: string[] }
     | { kind: "nullable"; of: IRType }
     | { kind: "array"; of: IRType }
     | { kind: "reference"; schema: string }
     | { kind: "embedded"; schema: string };
 
-export type IRValidator =
-    | { kind: "required" }
-    | { kind: "minLength"; value: number }
-    | { kind: "maxLength"; value: number }
-    | { kind: "length"; value: number }
-    | { kind: "min"; value: number }
-    | { kind: "max"; value: number }
-    | { kind: "multipleOf"; value: number }
-    | { kind: "positive" }
-    | { kind: "nonNegative" }
-    | { kind: "negative" }
-    | { kind: "nonPositive" }
-    | { kind: "integer" }
-    | { kind: "minDate"; value: string }
-    | { kind: "maxDate"; value: string }
-    | { kind: "minItems"; value: number }
-    | { kind: "maxItems"; value: number }
-    | { kind: "uniqueItems" }
-    | { kind: "pattern"; pattern: string; flags?: string }
-    | { kind: "emailAddress" }
-    | { kind: "url"; protocols?: string[] }
-    | { kind: "phoneNumber"; region?: string }
-    | { kind: "ipAddress"; version?: "v4" | "v6" }
-    | { kind: "oneOf"; values: (string | number)[] }
-    | { kind: "custom"; name: string };
+/** Generic validator reference — identified by name, optionally parameterized. */
+export type IRValidator = {
+    name: string;
+    params?: Record<string, unknown>;
+};
 
-export type IRFormatterSpec =
-    | { kind: "trim" }
-    | { kind: "lowercase" }
-    | { kind: "uppercase" }
-    | { kind: "titleCase" }
-    | { kind: "capitalize" }
-    | { kind: "normalizeWhitespace" }
-    | { kind: "stripNonDigits" }
-    | { kind: "normalizeEmail" }
-    | { kind: "normalizePhone"; region?: string }
-    | { kind: "normalizeUrl" }
-    | { kind: "slugify" }
-    | { kind: "truncate"; maxLength: number }
-    | { kind: "custom"; name: string };
+/** Generic formatter spec — identified by name, optionally parameterized. */
+export type IRFormatterSpec = {
+    name: string;
+    params?: Record<string, unknown>;
+};
 
 export type IRFormatter = {
     phase: "change" | "blur" | "submit" | "save";
@@ -93,11 +65,47 @@ export type IRIndex = {
 export type IRExpression =
     | { kind: "literal"; value: string | number | boolean | null }
     | { kind: "field"; name: string }
+    | { kind: "identifier"; name: string }
     | { kind: "member"; object: IRExpression; member: string }
+    | { kind: "call"; callee: IRExpression; args: IRExpression[] }
+    | { kind: "typeof"; operand: IRExpression }
     | { kind: "template"; parts: IRExpression[] }
     | { kind: "binary"; op: "+" | "-" | "*" | "/" | "%" | "&&" | "||" | "??" | "==" | "!=" | "<" | "<=" | ">" | ">="; left: IRExpression; right: IRExpression }
     | { kind: "unary"; op: "!" | "-" | "+"; operand: IRExpression }
-    | { kind: "conditional"; condition: IRExpression; whenTrue: IRExpression; whenFalse: IRExpression };
+    | { kind: "conditional"; condition: IRExpression; whenTrue: IRExpression; whenFalse: IRExpression }
+    | { kind: "object"; properties: Array<{ key: string; value: IRExpression }> }
+    | { kind: "regexp"; pattern: string; flags: string }
+    | { kind: "arrow"; params: string[]; body: IRExpression }
+    | { kind: "new"; callee: IRExpression; args: IRExpression[] };
+
+// ─── Statement IR (for validator / formatter function bodies) ─────────────────
+
+export type IRReturnStmt  = { kind: "return"; value: IRExpression | null };
+export type IRIfStmt      = { kind: "if"; condition: IRExpression; consequent: IRStatement[]; alternate?: IRStatement[] };
+export type IRConstDecl   = { kind: "const"; name: string; init: IRExpression };
+export type IRExprStmt    = { kind: "expression"; expr: IRExpression };
+export type IRStatement   = IRReturnStmt | IRIfStmt | IRConstDecl | IRExprStmt;
+
+export type IRParam = { name: string; role: "value" | "field" | "spec" | "context" };
+export type IRFunctionBody = { params: IRParam[]; statements: IRStatement[] };
+
+// ─── Validator / formatter declarations ───────────────────────────────────────
+
+export type IRValidatorDeclaration = {
+    name: string;
+    /** Names of the outer factory function's parameters; become spec keys at code-gen time. */
+    factoryParams: { name: string }[];
+    body: IRFunctionBody;
+    source: IRSourceLocation;
+};
+
+export type IRFormatterDeclaration = {
+    name: string;
+    /** Names of the outer factory function's parameters; become spec keys at code-gen time. */
+    factoryParams: { name: string }[];
+    body: IRFunctionBody;
+    source: IRSourceLocation;
+};
 
 export type IRComputed = {
     expression: IRExpression;
@@ -156,5 +164,7 @@ export type KeymaIR = {
     irVersion: string;
     compilerVersion: string;
     schemas: IRSchema[];
+    validatorDeclarations?: IRValidatorDeclaration[];
+    formatterDeclarations?: IRFormatterDeclaration[];
     diagnostics: IRDiagnostic[];
 };

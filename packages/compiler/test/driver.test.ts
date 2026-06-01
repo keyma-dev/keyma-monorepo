@@ -69,11 +69,9 @@ describe("resolveConfig", () => {
         assert.deepEqual(resolved.source, ["a.ts", "b.ts"]);
     });
 
-    it("defaults to empty arrays for targets and custom validators/formatters", () => {
+    it("defaults to empty array for targets", () => {
         const resolved = resolveConfig({});
         assert.deepEqual(resolved.targets, []);
-        assert.deepEqual(resolved.customValidators, []);
-        assert.deepEqual(resolved.customFormatters, []);
     });
 
     it("passes irOutFile through when present", () => {

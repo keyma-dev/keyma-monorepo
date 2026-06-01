@@ -4,6 +4,8 @@ import ts from "typescript";
 import type { KeymaIR, IRDiagnostic } from "@keyma/ir";
 import { createProgram, DEFAULT_COMPILER_OPTIONS, type VirtualFiles } from "./program.js";
 import { discoverSchemas } from "./discover.js";
+import { discoverValidators, discoverFormatters } from "./discover-validators.js";
+import { lowerValidatorDeclaration, lowerFormatterDeclaration } from "./lower-validator.js";
 import { extractSchema } from "./extract-schema.js";
 import { flattenAll } from "./flatten.js";
 import {
@@ -24,10 +26,6 @@ export type FrontendConfig = {
     compilerOptions?: ts.CompilerOptions;
     /** Module name of the Keyma DSL. Defaults to "@keyma/dsl". */
     dslModuleName?: string;
-    /** Registered custom validator names. */
-    customValidators?: readonly string[];
-    /** Registered custom formatter names. */
-    customFormatters?: readonly string[];
     /** Compiler version string embedded in the IR document. */
     compilerVersion?: string;
     /** IR schema version string. Defaults to "1.0.0". */
@@ -80,14 +78,26 @@ function compileProgram(program: ts.Program, config: FrontendConfig): CompileRes
     // Pass 1: discover all @Schema classes
     const discovered = discoverSchemas(program, discoverCtx);
 
+    // Pass 1b: discover Validator(name, fn) / Formatter(name, fn) factory declarations
+    const discoveredValidatorDecls = discoverValidators(program, discoverCtx);
+    const discoveredFormatterDecls = discoverFormatters(program, discoverCtx);
+
+    // Build lookup maps: function name → validator/formatter name
+    const discoveredValidators = new Map(
+        discoveredValidatorDecls.map((d) => [d.funcName, d.validatorName])
+    );
+    const discoveredFormatters = new Map(
+        discoveredFormatterDecls.map((d) => [d.funcName, d.formatterName])
+    );
+
     const schemaClassNames = new Set(discovered.map((d) => d.className));
     const extractCtx = {
         checker,
         dslModuleName,
         schemaClassNames,
-        customValidators: new Set(config.customValidators ?? []),
-        customFormatters: new Set(config.customFormatters ?? []),
         diagnostics,
+        discoveredValidators,
+        discoveredFormatters,
     };
 
     // Pass 2: extract fields for each schema (own fields only)
@@ -111,12 +121,25 @@ function compileProgram(program: ts.Program, config: FrontendConfig): CompileRes
     // Post-processing: every Reference<T> target schema must declare an ID field
     checkReferenceTargetsHaveId(schemas, diagnostics);
 
+    // Pass 4: lower Validator() declarations to IR
+    const validatorDeclarations = discoveredValidatorDecls.map((d) =>
+        lowerValidatorDeclaration(d, diagnostics)
+    );
+
+    // Pass 5: lower Formatter() declarations to IR
+    const formatterDeclarations = discoveredFormatterDecls.map((d) =>
+        lowerFormatterDeclaration(d, diagnostics)
+    );
+
     const ir: KeymaIR = {
         irVersion: config.irVersion ?? "1.0.0",
         compilerVersion: config.compilerVersion ?? "0.1.0",
         schemas,
         diagnostics,
     };
+
+    if (validatorDeclarations.length > 0) ir.validatorDeclarations = validatorDeclarations;
+    if (formatterDeclarations.length > 0) ir.formatterDeclarations = formatterDeclarations;
 
     return { ir, diagnostics };
 }

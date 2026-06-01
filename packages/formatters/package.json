@@ -1,0 +1,24 @@
+{
+  "name": "@keyma/formatters",
+  "version": "0.1.0",
+  "description": "Built-in formatters for Keyma schemas",
+  "type": "module",
+  "main": "./dist/js/index.js",
+  "types": "./dist/js/index.d.ts",
+  "exports": {
+    ".": {
+      "import": "./dist/js/index.js",
+      "types": "./dist/js/index.d.ts"
+    }
+  },
+  "scripts": {
+    "build": "keyma build",
+    "test": ""
+  },
+  "dependencies": {
+    "@keyma/dsl": "*"
+  },
+  "devDependencies": {
+    "typescript": "*"
+  }
+}

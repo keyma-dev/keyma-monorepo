@@ -13,6 +13,14 @@
       "type": "array",
       "items": { "$ref": "#/$defs/IRSchema" }
     },
+    "validatorDeclarations": {
+      "type": "array",
+      "items": { "$ref": "#/$defs/IRValidatorDeclaration" }
+    },
+    "formatterDeclarations": {
+      "type": "array",
+      "items": { "$ref": "#/$defs/IRFormatterDeclaration" }
+    },
     "diagnostics": {
       "type": "array",
       "items": { "$ref": "#/$defs/IRDiagnostic" }
@@ -102,6 +110,7 @@
         { "type": "object", "required": ["kind"], "properties": { "kind": { "const": "dateTime" } }, "additionalProperties": false },
         { "type": "object", "required": ["kind"], "properties": { "kind": { "const": "time" } }, "additionalProperties": false },
         { "type": "object", "required": ["kind"], "properties": { "kind": { "const": "id" } }, "additionalProperties": false },
+        { "type": "object", "required": ["kind"], "properties": { "kind": { "const": "regexp" } }, "additionalProperties": false },
         {
           "type": "object",
           "required": ["kind", "values"],
@@ -139,8 +148,11 @@
     },
     "IRValidator": {
       "type": "object",
-      "required": ["kind"],
-      "properties": { "kind": { "type": "string" } }
+      "required": ["name"],
+      "properties": {
+        "name": { "type": "string", "minLength": 1 },
+        "params": { "type": "object" }
+      }
     },
     "IRFormatter": {
       "type": "object",
@@ -153,8 +165,11 @@
     },
     "IRFormatterSpec": {
       "type": "object",
-      "required": ["kind"],
-      "properties": { "kind": { "type": "string" } }
+      "required": ["name"],
+      "properties": {
+        "name": { "type": "string", "minLength": 1 },
+        "params": { "type": "object" }
+      }
     },
     "IRFieldIndex": {
       "type": "object",
@@ -194,11 +209,70 @@
     },
     "IRComputed": {
       "type": "object",
-      "required": ["persist", "expression"],
+      "required": ["expression"],
       "additionalProperties": false,
       "properties": {
-        "persist": { "type": "boolean" },
         "expression": { "$ref": "#/$defs/IRExpression" }
+      }
+    },
+    "IRParam": {
+      "type": "object",
+      "required": ["name", "role"],
+      "additionalProperties": false,
+      "properties": {
+        "name": { "type": "string", "minLength": 1 },
+        "role": { "type": "string", "enum": ["value", "field", "spec", "context"] }
+      }
+    },
+    "IRFunctionBody": {
+      "type": "object",
+      "required": ["params", "statements"],
+      "additionalProperties": false,
+      "properties": {
+        "params": {
+          "type": "array",
+          "items": { "$ref": "#/$defs/IRParam" }
+        },
+        "statements": {
+          "type": "array",
+          "items": { "type": "object", "required": ["kind"], "properties": { "kind": { "type": "string" } } }
+        }
+      }
+    },
+    "IRFactoryParam": {
+      "type": "object",
+      "required": ["name"],
+      "additionalProperties": false,
+      "properties": {
+        "name": { "type": "string", "minLength": 1 }
+      }
+    },
+    "IRValidatorDeclaration": {
+      "type": "object",
+      "required": ["name", "factoryParams", "body", "source"],
+      "additionalProperties": false,
+      "properties": {
+        "name": { "type": "string", "minLength": 1 },
+        "factoryParams": {
+          "type": "array",
+          "items": { "$ref": "#/$defs/IRFactoryParam" }
+        },
+        "body": { "$ref": "#/$defs/IRFunctionBody" },
+        "source": { "$ref": "#/$defs/IRSourceLocation" }
+      }
+    },
+    "IRFormatterDeclaration": {
+      "type": "object",
+      "required": ["name", "factoryParams", "body", "source"],
+      "additionalProperties": false,
+      "properties": {
+        "name": { "type": "string", "minLength": 1 },
+        "factoryParams": {
+          "type": "array",
+          "items": { "$ref": "#/$defs/IRFactoryParam" }
+        },
+        "body": { "$ref": "#/$defs/IRFunctionBody" },
+        "source": { "$ref": "#/$defs/IRSourceLocation" }
       }
     }
   }

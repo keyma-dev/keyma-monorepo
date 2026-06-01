@@ -27,13 +27,47 @@ export function exprToJs(expr: IRExpression): string {
                 `${wrapIfComplex(expr.whenTrue)} : ` +
                 `${exprToJs(expr.whenFalse)}`
             );
+
+        case "identifier":
+            return expr.name;
+
+        case "call": {
+            const callee = wrapIfComplex(expr.callee);
+            const args = expr.args.map(exprToJs).join(", ");
+            return `${callee}(${args})`;
+        }
+
+        case "typeof":
+            return `typeof (${exprToJs(expr.operand)})`;
+
+        case "object": {
+            const props = expr.properties
+                .map((p) => `${JSON.stringify(p.key)}: ${exprToJs(p.value)}`)
+                .join(", ");
+            return `{ ${props} }`;
+        }
+
+        case "regexp":
+            return `/${expr.pattern}/${expr.flags}`;
+
+        case "arrow": {
+            // Parenthesize an object-literal body so it isn't parsed as a block.
+            const body = expr.body.kind === "object" ? `(${exprToJs(expr.body)})` : exprToJs(expr.body);
+            return `(${expr.params.join(", ")}) => ${body}`;
+        }
+
+        case "new": {
+            const callee = wrapIfComplex(expr.callee);
+            const args = expr.args.map(exprToJs).join(", ");
+            return `new ${callee}(${args})`;
+        }
     }
 }
 
 /** Wrap in parens if this is a complex expression that needs grouping in certain positions. */
 function wrapIfComplex(expr: IRExpression): string {
     const s = exprToJs(expr);
-    if (expr.kind === "binary" || expr.kind === "conditional") {
+    if (expr.kind === "binary" || expr.kind === "conditional" || expr.kind === "typeof" || expr.kind === "new" || expr.kind === "arrow") {
         return `(${s})`;
     }
     return s;

@@ -32,8 +32,8 @@ const BASIC_IR: KeymaIR = {
             sourceName: "User",
             visibility: "public",
             fields: [
-                { name: "id", type: { kind: "id" }, visibility: "public", readonly: true, required: true, validators: [{ kind: "required" }], formatters: [], indexes: [{ unique: true }], source: SRC },
-                { name: "firstName", type: { kind: "string" }, visibility: "public", readonly: false, required: true, validators: [{ kind: "minLength", value: 2 }], formatters: [{ phase: "change", spec: { kind: "trim" } }], indexes: [], source: SRC },
+                { name: "id", type: { kind: "id" }, visibility: "public", readonly: true, required: true, validators: [{ name: "required" }], formatters: [], indexes: [{ unique: true }], source: SRC },
+                { name: "firstName", type: { kind: "string" }, visibility: "public", readonly: false, required: true, validators: [{ name: "minLength", params: { value: 2 } }], formatters: [{ phase: "change", spec: { name: "trim" } }], indexes: [], source: SRC },
                 { name: "lastName", type: { kind: "string" }, visibility: "public", readonly: false, required: true, validators: [], formatters: [], indexes: [], source: SRC },
                 { name: "secretNote", type: { kind: "string" }, visibility: "private", readonly: false, required: false, validators: [], formatters: [], indexes: [], source: SRC },
                 {
@@ -143,6 +143,66 @@ const REFS_IR: KeymaIR = {
     diagnostics: [],
 };
 
+const VALIDATORS_IR: KeymaIR = {
+    irVersion: "1.0.0",
+    compilerVersion: "0.1.0",
+    schemas: [
+        {
+            id: "schema:item",
+            name: "item",
+            sourceName: "Item",
+            visibility: "public",
+            fields: [
+                { name: "id", type: { kind: "id" }, visibility: "public", readonly: true, required: true, validators: [{ name: "required" }], formatters: [], indexes: [], source: SRC },
+            ],
+            indexes: [],
+            source: SRC,
+        },
+    ],
+    validatorDeclarations: [
+        {
+            name: "required",
+            factoryParams: [],
+            body: {
+                params: [{ name: "value", role: "value" }],
+                statements: [{ kind: "return", value: { kind: "binary", op: "!=", left: { kind: "field", name: "value" }, right: { kind: "literal", value: null } } }],
+            },
+            source: SRC,
+        },
+    ],
+    diagnostics: [],
+};
+
+const FORMATTERS_IR: KeymaIR = {
+    irVersion: "1.0.0",
+    compilerVersion: "0.1.0",
+    schemas: [
+        {
+            id: "schema:item",
+            name: "item",
+            sourceName: "Item",
+            visibility: "public",
+            fields: [
+                { name: "name", type: { kind: "string" }, visibility: "public", readonly: false, required: true, validators: [], formatters: [{ phase: "change", spec: { name: "trim" } }], indexes: [], source: SRC },
+            ],
+            indexes: [],
+            source: SRC,
+        },
+    ],
+    formatterDeclarations: [
+        {
+            name: "trim",
+            factoryParams: [],
+            body: {
+                params: [{ name: "value", role: "value" }],
+                statements: [{ kind: "return", value: { kind: "call", callee: { kind: "member", object: { kind: "field", name: "value" }, member: "trim" }, args: [] } }],
+            },
+            source: SRC,
+        },
+    ],
+    diagnostics: [],
+};
+
 // ─── Target config helpers ────────────────────────────────────────────────────
 
 function clientOnlyTarget(outDir = "dist/js"): JsTargetConfig {
@@ -157,8 +217,12 @@ function bothTarget(outDir = "dist/js"): JsTargetConfig {
     return { language: "js", outDir };
 }
 
+function libraryTarget(outDir = "dist/js"): JsTargetConfig {
+    return { language: "js", outDir, library: true };
+}
+
 const RESOLVED_CONFIG = {
-    source: [], outDir: "dist", targets: [], customValidators: [], customFormatters: [],
+    source: [], outDir: "dist", targets: [],
 };
 
 function fileContent(files: { path: string; content: string | Uint8Array }[], filePath: string): string {
@@ -567,5 +631,142 @@ describe("emitJs — output structure", () => {
     it("returns no diagnostics", async () => {
         const result = await emitJs(BASIC_IR, bothTarget(), RESOLVED_CONFIG);
         assert.deepEqual(result.diagnostics, []);
+    });
+});
+
+// ─── Validators exported from index ──────────────────────────────────────────
+
+describe("emitJs — validators in index", () => {
+    let files: { path: string; content: string | Uint8Array }[];
+
+    before(async () => {
+        const result = await emitJs(VALIDATORS_IR, bothTarget(), RESOLVED_CONFIG);
+        files = result.files;
+    });
+
+    it("client index.js re-exports validators and registry", () => {
+        const content = fileContent(files, "dist/js/client/index.js");
+        assert.ok(content.includes(`export * from "./validators.js"`), "missing validators re-export in client index.js");
+        assert.ok(content.includes(`export * from "./registry.js"`), "missing registry re-export in client index.js");
+    });
+
+    it("client index.d.ts re-exports validators and registry", () => {
+        const content = fileContent(files, "dist/js/client/index.d.ts");
+        assert.ok(content.includes(`export * from "./validators.js"`), "missing validators re-export in client index.d.ts");
+        assert.ok(content.includes(`export * from "./registry.js"`), "missing registry re-export in client index.d.ts");
+    });
+
+    it("server index.js re-exports validators and registry", () => {
+        const content = fileContent(files, "dist/js/server/index.js");
+        assert.ok(content.includes(`export * from "./validators.js"`), "missing validators re-export in server index.js");
+        assert.ok(content.includes(`export * from "./registry.js"`), "missing registry re-export in server index.js");
+    });
+
+    it("server index.d.ts re-exports validators and registry", () => {
+        const content = fileContent(files, "dist/js/server/index.d.ts");
+        assert.ok(content.includes(`export * from "./validators.js"`), "missing validators re-export in server index.d.ts");
+        assert.ok(content.includes(`export * from "./registry.js"`), "missing registry re-export in server index.d.ts");
+    });
+
+    it("client index.js does not re-export formatters when none declared", () => {
+        const content = fileContent(files, "dist/js/client/index.js");
+        assert.ok(!content.includes(`from "./formatters.js"`), "unexpected formatters export in client index.js");
+        assert.ok(!content.includes(`from "./formatter-registry.js"`), "unexpected formatter-registry export in client index.js");
+    });
+});
+
+// ─── Formatters exported from index ──────────────────────────────────────────
+
+describe("emitJs — formatters in index", () => {
+    let files: { path: string; content: string | Uint8Array }[];
+
+    before(async () => {
+        const result = await emitJs(FORMATTERS_IR, bothTarget(), RESOLVED_CONFIG);
+        files = result.files;
+    });
+
+    it("client index.js re-exports formatters and formatter-registry", () => {
+        const content = fileContent(files, "dist/js/client/index.js");
+        assert.ok(content.includes(`export * from "./formatters.js"`), "missing formatters re-export in client index.js");
+        assert.ok(content.includes(`export * from "./formatter-registry.js"`), "missing formatter-registry re-export in client index.js");
+    });
+
+    it("client index.d.ts re-exports formatters and formatter-registry", () => {
+        const content = fileContent(files, "dist/js/client/index.d.ts");
+        assert.ok(content.includes(`export * from "./formatters.js"`), "missing formatters re-export in client index.d.ts");
+        assert.ok(content.includes(`export * from "./formatter-registry.js"`), "missing formatter-registry re-export in client index.d.ts");
+    });
+
+    it("client index.js does not re-export validators when none declared", () => {
+        const content = fileContent(files, "dist/js/client/index.js");
+        assert.ok(!content.includes(`from "./validators.js"`), "unexpected validators export in client index.js");
+        assert.ok(!content.includes(`from "./registry.js"`), "unexpected registry export in client index.js");
+    });
+});
+
+// ─── No spurious exports when no declarations ─────────────────────────────────
+
+describe("emitJs — no validator/formatter exports when IR has none", () => {
+    it("index.js does not include validators/formatters when IR has no declarations", async () => {
+        const result = await emitJs(BASIC_IR, bothTarget(), RESOLVED_CONFIG);
+        const content = fileContent(result.files, "dist/js/client/index.js");
+        assert.ok(!content.includes(`from "./validators.js"`), "no validators should be exported when none declared");
+        assert.ok(!content.includes(`from "./formatters.js"`), "no formatters should be exported when none declared");
+    });
+});
+
+// ─── Library mode ─────────────────────────────────────────────────────────────
+
+describe("emitJs — library mode", () => {
+    let files: { path: string; content: string | Uint8Array }[];
+
+    before(async () => {
+        const result = await emitJs(BASIC_IR, libraryTarget(), RESOLVED_CONFIG);
+        files = result.files;
+    });
+
+    it("emits model files directly into outDir (no client/ or server/ subdirectory)", () => {
+        const paths = files.map((f) => f.path);
+        assert.ok(paths.includes("dist/js/models/user.js"), "library model .js missing");
+        assert.ok(paths.includes("dist/js/models/user.d.ts"), "library model .d.ts missing");
+        assert.ok(paths.includes("dist/js/index.js"), "library index.js missing");
+        assert.ok(paths.includes("dist/js/index.d.ts"), "library index.d.ts missing");
+    });
+
+    it("does not emit client/ or server/ subdirectories", () => {
+        const paths = files.map((f) => f.path);
+        assert.ok(!paths.some((p) => p.includes("/client/")), "library mode should not emit client/ subdirectory");
+        assert.ok(!paths.some((p) => p.includes("/server/")), "library mode should not emit server/ subdirectory");
+    });
+
+    it("includes private fields (server-like behaviour)", () => {
+        const content = fileContent(files, "dist/js/models/user.js");
+        assert.ok(content.includes("secretNote"), "library mode should include private fields");
+    });
+
+    it("emits materializers for computed fields", () => {
+        const content = fileContent(files, "dist/js/models/user.js");
+        assert.ok(content.includes("function materializeUser"), "library mode should emit materializers");
+    });
+
+    it("index.js exports materializer", () => {
+        const content = fileContent(files, "dist/js/index.js");
+        assert.ok(content.includes("materializeUser"), "library index should export materializer");
+    });
+});
+
+describe("emitJs — library mode with validators", () => {
+    it("emits validators and registry into outDir directly", async () => {
+        const result = await emitJs(VALIDATORS_IR, libraryTarget(), RESOLVED_CONFIG);
+        const paths = result.files.map((f) => f.path);
+        assert.ok(paths.includes("dist/js/validators.js"), "validators.js missing in library mode");
+        assert.ok(paths.includes("dist/js/registry.js"), "registry.js missing in library mode");
+    });
+
+    it("index.js re-exports validators in library mode", async () => {
+        const result = await emitJs(VALIDATORS_IR, libraryTarget(), RESOLVED_CONFIG);
+        const content = fileContent(result.files, "dist/js/index.js");
+        assert.ok(content.includes(`export * from "./validators.js"`), "validators not re-exported from library index");
+        assert.ok(content.includes(`export * from "./registry.js"`), "registry not re-exported from library index");
     });
 });

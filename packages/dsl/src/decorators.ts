@@ -1,5 +1,4 @@
-import type { ValidatorMarker } from "./validators.js";
-import type { FormatterMarker } from "./formatters.js";
+import type { ValidatorRef, FormatterRef, UserValidatorFn, UserFormatterFn } from "./types.js";
 
 export type SchemaOptions = {
     /** Database/canonical collection name. Defaults to the class name (lowercased). */
@@ -56,12 +55,48 @@ export function Schema(_options?: SchemaOptions): ClassDecorator {
 }
 
 /**
- * Attaches validators to a field. The compiler reads each marker from the AST
+ * Declares a named validator factory. The Keyma compiler reads the factory
+ * parameter list and the returned inner function body from the AST and lowers
+ * them to IRValidatorDeclaration. At runtime the returned wrapper calls the
+ * factory and produces a ValidatorRef used by @Validate().
+ *
+ * @example
+ * export const minLength = Validator("minLength", (value: number) =>
+ *     (raw: unknown, fieldKey: string, ctx: ValidatorContext): ValidationError | undefined => {
+ *         if (typeof raw === "string" && raw.length < value)
+ *             return { field: fieldKey, code: "MIN_LENGTH", message: `${fieldKey} must be at least ${value} characters` };
+ *     }
+ * );
+ */
+export function Validator<N extends string, F extends (...factoryArgs: any[]) => ((...innerArgs: any[]) => any)>(
+    _name: N,
+    _factory: F,
+): (...args: Parameters<F>) => ValidatorRef<N> {
+    return (..._args: Parameters<F>) => ({ __validatorName: _name });
+}
+
+/**
+ * Declares a named formatter factory. The Keyma compiler reads the factory
+ * parameter list and the returned inner function body from the AST and lowers
+ * them to IRFormatterDeclaration. At runtime the returned wrapper calls the
+ * factory and produces a FormatterRef used by @Format().
+ */
+export function Formatter<N extends string, F extends (...factoryArgs: any[]) => ((...innerArgs: any[]) => any)>(
+    _name: N,
+    _factory: F,
+): (...args: Parameters<F>) => FormatterRef<N> {
+    return (..._args: Parameters<F>) => (<FormatterRef<N>>{ __formatterName: _name });
+}
+
+/**
+ * Attaches validators to a field. The compiler reads each argument from the AST
  * and lowers it to the corresponding IRValidator.
+ *
+ * Accepts ValidatorRef markers (from factory functions) or direct UserValidatorFn references.
  *
  * No-op at runtime — the decorator implementation does nothing.
  */
-export function Validate(..._validators: ValidatorMarker[]): PropertyDecorator {
+export function Validate(..._validators: (ValidatorRef | UserValidatorFn)[]): PropertyDecorator {
     return () => undefined;
 }
 
@@ -97,7 +132,7 @@ export function Ephemeral(): PropertyDecorator {
  */
 export function Format(
     _phase: "change" | "blur" | "submit" | "save",
-    ..._formatters: FormatterMarker[]
+    ..._formatters: (FormatterRef | UserFormatterFn)[]
 ): PropertyDecorator {
     return () => undefined;
 }
