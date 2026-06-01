@@ -41,8 +41,7 @@ export function irTypeToTs(
             return "string";
 
         case "embedded": {
-            const name = embeddedNames?.get(type.schema) ?? type.schema;
-            return name;
+            return embeddedNames?.get(type.schema) ?? type.schema;
         }
     }
 }

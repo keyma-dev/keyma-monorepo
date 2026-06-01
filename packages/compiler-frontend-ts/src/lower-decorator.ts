@@ -1,5 +1,5 @@
 import ts from "typescript";
-import type { IRValidator, IRFormatter, IRFormatterSpec, IRFieldIndex, IRDiagnostic } from "@keyma/ir";
+import type { IRValidator, IRFormatterSpec, IRFieldIndex, IRDiagnostic } from "@keyma/ir";
 import {
     mkError,
     KEYMA011, KEYMA013, KEYMA016, KEYMA020, KEYMA021,

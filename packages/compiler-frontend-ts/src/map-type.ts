@@ -78,8 +78,8 @@ function isNullishTypeNode(t: ts.TypeNode): boolean {
     if (t.kind === ts.SyntaxKind.UndefinedKeyword) return true;
     if (t.kind === ts.SyntaxKind.NullKeyword) return true;
     // In TypeScript 5.x, `null` in type position is a LiteralTypeNode wrapping NullKeyword
-    if (ts.isLiteralTypeNode(t) && t.literal.kind === ts.SyntaxKind.NullKeyword) return true;
-    return false;
+    return ts.isLiteralTypeNode(t) && t.literal.kind === ts.SyntaxKind.NullKeyword;
+
 }
 
 function mapUnionType(node: ts.UnionTypeNode, ctx: TypeMapContext): MapTypeResult {

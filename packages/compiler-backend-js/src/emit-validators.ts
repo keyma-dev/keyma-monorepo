@@ -1,4 +1,4 @@
-import type { IRValidatorDeclaration, IRFormatterDeclaration, IRStatement, IRExpression } from "@keyma/ir";
+import type { IRValidatorDeclaration, IRFormatterDeclaration, IRStatement } from "@keyma/ir";
 import { exprToJs } from "./emit-expression.js";
 
 export type ValidatorEmitFiles = {
