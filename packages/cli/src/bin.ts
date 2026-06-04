@@ -61,7 +61,7 @@ async function main(argv: readonly string[]): Promise<number> {
             const result = await runBuild(opts);
             printDiagnostics(result.diagnostics);
             if (result.hasErrors) return 1;
-            for (const f of result.written) process.stdout.write(`wrote ${f}\n`);
+            //for (const f of result.written) process.stdout.write(`wrote ${f}\n`);
             return 0;
         }
         case "watch": {

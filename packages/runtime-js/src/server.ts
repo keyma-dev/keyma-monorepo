@@ -88,6 +88,11 @@ export class KeymaServer {
             schemas: this.opts.schemas,
             adapter: this.opts.adapter,
             schema: (name) => this.schemaMap.get(name),
+            addSchema: async (schema) => {
+                this.schemaMap.set(schema.name, schema);
+                // Ensure the adapter creates necessary tables/collections for the new schema
+                await this.opts.adapter.ensureSchema(schema);
+            },
         };
         for (const p of this.plugins) {
             if (p.init !== undefined) await p.init(handle);
@@ -100,6 +105,12 @@ export class KeymaServer {
     ): Promise<KeymaLeafResult> {
         let result: KeymaLeafResult;
         try {
+            for (const p of this.plugins) {
+                if (p.transformOperation !== undefined) {
+                    const next = await p.transformOperation(context, op);
+                    if (next !== undefined) op = next;
+                }
+            }
             const schema = this.resolveSchema(op.schema, context);
             for (const p of this.plugins) {
                 if (p.beforeOperation !== undefined) await p.beforeOperation(context, op);

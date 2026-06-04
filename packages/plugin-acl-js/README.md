@@ -7,7 +7,7 @@ The plugin hooks into the runtime's `beforeOperation`, `transformFilter`, `trans
 ## Capabilities
 
 - **Subjects** — `anon` (no `identity.id`), `any-user` (any authenticated identity), `user:<id>` (a specific identity), `role:<name>` (any identity that has the role).
-- **Actions** — `read`, `list`, `create`, `update`, `delete`, `traverse`. A single rule lists one or more actions, and may target a specific schema by name or all schemas via `"*"`.
+- **Actions** — `read`, `create`, `update`, `delete`. A single `read` grant governs every read-side operation — `list`, `read`, *and* `traverse` all match `read` rules. A rule lists one or more actions, and may target a specific schema by name or all schemas via `"*"`.
 - **Row-level predicates** — each rule's `where` is merged into the operation's `where` clause. Filters support the same operator vocabulary the runtime defines for adapters (`$eq`, `$ne`, `$gt`, `$gte`, `$lt`, `$lte`, `$in`, `$nin`, `$and`, `$or`, `$nor`) plus two placeholder strings:
   - `"$self"` — substituted with `ctx.identity.id`. Unresolved → rule skipped.
   - `"$ctx.path.to.value"` — substituted by walking `RequestContext`. Unresolved → rule skipped.
@@ -27,7 +27,7 @@ import { KeymaServer } from "@keyma/runtime-js";
 import { createAclPlugin } from "@keyma/plugin-acl-js";
 import { schemas } from "./generated/server";
 
-const { plugin: aclPlugin, admin: acl } = createAclPlugin({ adapter });
+const aclPlugin = createAclPlugin({});
 
 const server = new KeymaServer({
     schemas,                  // do NOT include any keymaAcl* schemas
@@ -47,22 +47,22 @@ Registering `keymaAclRule`, `keymaAclRole`, or `keymaAclRoleAssignment` on the h
 ### Rule management
 
 ```ts
-// Create a rule: any authenticated user can list/read their own posts
+// Create a rule: any authenticated user can read (and list/traverse) their own posts
 const rule = await acl.addRule({
     subject: { kind: "any-user" },
     schema: "post",
-    actions: ["list", "read"],
+    actions: ["read"],
     where: { author: "$self" },
 });
 
 // Extend the rule to also allow update
-await acl.updateRule(rule.id, { actions: ["list", "read", "update"] });
+await acl.updateRule(rule.id, { actions: ["read", "update"] });
 
 // Add a deny rule for flagged posts
 await acl.addRule({
     subject: { kind: "any-user" },
     schema: "post",
-    actions: ["list", "read"],
+    actions: ["read"],
     where: { flagged: true },
     effect: "deny",
 });
@@ -71,7 +71,7 @@ await acl.addRule({
 await acl.addRule({
     subject: { kind: "anon" },
     schema: "post",
-    actions: ["read", "list"],
+    actions: ["read"],
     fields: { read: ["id", "title", "publishedAt"] },
 });
 
@@ -120,17 +120,6 @@ const aliceRoles = await acl.getUserRoles("alice");    // → ["admin", ...]
 const adminUsers = await acl.listAssignments({ role: "admin" });
 ```
 
-### Gating the admin handle
-
-`acl` is unguarded. The host wraps it however its auth model demands. A typical Express handler:
-
-```ts
-app.post("/admin/acl/rules", requireRole("admin"), async (req, res) => {
-    const rule = await acl.addRule(req.body);
-    res.json(rule);
-});
-```
-
 ## Rule shape
 
 The in-memory rule type:
@@ -144,7 +133,7 @@ type AclRule = {
         | { kind: "user"; id: string }
         | { kind: "role"; name: string };
     schema: string;              // schema name or "*"
-    actions: AclAction[];        // "read" | "list" | "create" | "update" | "delete" | "traverse"
+    actions: AclAction[];        // "read" | "create" | "update" | "delete"
     where?: Record<string, unknown>;
     fields?: { read?: string[]; write?: string[] };
     effect?: "allow" | "deny";   // default "allow"
@@ -162,14 +151,14 @@ Authors can list and read their own posts but never see flagged ones:
 await acl.addRule({
     subject: { kind: "any-user" },
     schema: "post",
-    actions: ["list", "read"],
+    actions: ["read"],
     where: { author: "$self" },
 });
 
 await acl.addRule({
     subject: { kind: "any-user" },
     schema: "post",
-    actions: ["list", "read"],
+    actions: ["read"],
     where: { flagged: true },
     effect: "deny",
 });
@@ -187,7 +176,6 @@ The plugin tracks which fields were referenced by predicates but **not** request
 
 ```ts
 createAclPlugin({
-    adapter: KeymaDatabaseAdapter,   // required; same instance as your KeymaServer's adapter
     stripWrites?: boolean,           // silently drop disallowed write fields instead of throwing FIELD_FORBIDDEN
     leakExistence?: boolean,         // when true, denied reads return null; default false (don't leak existence)
     logger?: (level, message, details?) => void,
@@ -207,8 +195,7 @@ All error classes extend `KeymaPluginError` and serialize on the wire with `sour
 
 ## Caveats (v1)
 
-- Predicates apply to top-level fields of the operating schema only. Joined or populated paths are not evaluated by the plugin.
+- **Traverse enforcement is bounded to the endpoints.** Because the runtime never runs `transformFilter` for traverse operations, the plugin injects `read` predicates via `transformOperation` — but only onto the two node schemas it can name from the spec: the **start node** (`spec.start`) and the **terminal node** (the operation's `schema`). Intermediate edges and hopped-through nodes are not predicate-filtered, consistent with the "no joins/populated paths" limit below. Field-level `fields.read` trimming still applies to terminal nodes via the projection hook.
 - The `priority` field is reserved for future ordering control; currently ignored.
 - Per-request rule cache is keyed by identity and roles, so reusing a `RequestContext` across logical requests will reuse cached rules. Construct a fresh context per request.
-- Traversals don't run `transformFilter`, so the plugin enforces `traverse` permission via `beforeOperation` (require at least one allow rule for the terminal schema). Edge-level row predicates for traversals are not yet supported.
 - The role catalog (`keymaAclRole`) is only consulted by the admin API — `assignRole` and `addRule` (with role subject) validate against it. Enforcement at request time still works off whatever role strings appear in `keymaAclRoleAssignment` or `ctx.identity.roles`, so the catalog is a write-side hygiene check, not a runtime gate.

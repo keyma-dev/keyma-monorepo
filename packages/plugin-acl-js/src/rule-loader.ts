@@ -4,7 +4,7 @@ import type {
     RequestContext,
     SchemaMetadata,
 } from "@keyma/runtime-js";
-import type { AclRule, AclSubject } from "./types.js";
+import type { AclAction, AclRule, AclSubject } from "./types.js";
 import { ACL_ROLE_ASSIGNMENT_SCHEMA, ACL_RULE_SCHEMA } from "./schemas.js";
 
 const CACHE_KEY = "_aclCache";
@@ -111,16 +111,29 @@ export async function loadRulesFor(
     return p;
 }
 
-/** Pull the rules applicable to a (schema, action) from the full identity set. */
+/** Map a runtime operation action onto the ACL action vocabulary. The runtime
+ *  dispatches `list`, `read`, and `traverse` as distinct actions, but they are
+ *  all reads as far as ACL is concerned, so they collapse to `read`. Write
+ *  actions pass through unchanged. */
+export function normalizeAction(action: KeymaAction): AclAction {
+    if (action === "list" || action === "read" || action === "traverse") {
+        return "read";
+    }
+    return action;
+}
+
+/** Pull the rules applicable to a (schema, action) from the full identity set.
+ *  The action is normalized to the ACL vocabulary before matching. */
 export function filterApplicable(
     rules: ReadonlyArray<AclRule>,
     schemaName: string,
     action: KeymaAction,
 ): AclRule[] {
+    const normalized = normalizeAction(action);
     return rules.filter(
         (r) =>
             (r.schema === "*" || r.schema === schemaName) &&
-            r.actions.includes(action),
+            r.actions.includes(normalized),
     );
 }
 
@@ -170,7 +183,7 @@ export function decodeRule(row: Record<string, unknown>): AclRule | undefined {
         id,
         subject,
         schema,
-        actions: actions as KeymaAction[],
+        actions: actions as AclAction[],
     };
     const where = row["where"];
     if (where !== null && typeof where === "object") {

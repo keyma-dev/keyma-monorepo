@@ -92,6 +92,8 @@ export type {
     PluginServerHandle,
     RequestContext,
     KeymaAction,
+    KeymaWriteAction,
+    KeymaReadAction
 } from "./plugin.js";
 
 export {

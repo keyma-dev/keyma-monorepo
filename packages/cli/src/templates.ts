@@ -92,7 +92,7 @@ const KEYMA_CONFIG_TEMPLATE = `import type { KeymaUserConfig } from "@keyma/comp
 const config: KeymaUserConfig = {
     source: "src/schemas/**/*.ts",
     targets: [
-        { language: "js", outDir: "src/generated" },
+        { language: "js", outDir: "dist/js" },
     ],
 };
 

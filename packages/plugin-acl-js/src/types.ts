@@ -1,4 +1,7 @@
-import type { KeymaAction } from "@keyma/runtime-js";
+/** The ACL action vocabulary. Read-side operations (`list`, `read`, `traverse`)
+ *  are consolidated into a single `read` grant — see `normalizeAction` in
+ *  rule-loader.ts. Writes keep their distinct actions. */
+export type AclAction = "read" | "create" | "update" | "delete";
 
 export type AclSubject =
     | { kind: "anon" }
@@ -14,7 +17,8 @@ export type AclRule = {
     subject: AclSubject;
     /** "*" matches any schema. */
     schema: string;
-    actions: readonly KeymaAction[];
+    /** Granted actions. Read-side ops (list/read/traverse) all match `read`. */
+    actions: readonly AclAction[];
     /** Filter merged into the operation's `where`. May use "$self" and
      *  "$ctx.path.to.value" placeholders. Restricted to top-level fields of the
      *  operating schema in v1 — joins/populated paths are not evaluated. */
@@ -31,10 +35,6 @@ export type AclRule = {
 };
 
 export type AclPluginOptions = {
-    /** Database adapter used for both ACL storage (rules, roles, role
-     *  assignments) and rule loading at request time. Must be the same
-     *  adapter instance the host passes to its `KeymaServer`. */
-    adapter: import("@keyma/runtime-js").KeymaDatabaseAdapter;
     /** Silent-strip disallowed write fields instead of throwing FIELD_FORBIDDEN. */
     stripWrites?: boolean;
     /** If true, ACL-stripped reads return null with a structured FORBIDDEN

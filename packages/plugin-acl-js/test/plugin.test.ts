@@ -7,7 +7,10 @@ import type {
     KeymaDatabaseAdapter,
     KeymaLeafFailure,
     KeymaLeafSuccess,
+    KeymaOperation,
     ListQuery,
+    PluginServerHandle,
+    RequestContext,
     SchemaMetadata,
 } from "@keyma/runtime-js";
 import {
@@ -236,13 +239,14 @@ async function setup(): Promise<{
     admin: KeymaAclAdmin;
 }> {
     const adapter = new InMemoryAdapter();
-    const { plugin, admin } = createAclPlugin({ adapter });
+    const plugin = createAclPlugin({});
     const server = new KeymaServer({
         schemas: [POST_SCHEMA],
         adapter,
         plugins: [plugin],
     });
     await server.ensureSchemas();
+    const admin = new KeymaAclAdmin(adapter);
     return { server, adapter, admin };
 }
 
@@ -293,7 +297,7 @@ describe("ACL plugin — list visibility", () => {
         await seedRule(adapter, {
             subjectKind: "any-user",
             schema: "post",
-            actions: ["list", "read"],
+            actions: ["read"],
         });
         const resp = await server.handle(
             { operations: { a: { op: "list", schema: "post" } } },
@@ -310,7 +314,7 @@ describe("ACL plugin — list visibility", () => {
         await seedRule(adapter, {
             subjectKind: "any-user",
             schema: "post",
-            actions: ["list", "read"],
+            actions: ["read"],
             where: { author: "$self" },
         });
         const aliceResp = await server.handle(
@@ -336,12 +340,12 @@ describe("ACL plugin — list visibility", () => {
         await seedRule(adapter, {
             subjectKind: "any-user",
             schema: "post",
-            actions: ["list", "read"],
+            actions: ["read"],
         });
         await seedRule(adapter, {
             subjectKind: "any-user",
             schema: "post",
-            actions: ["list", "read"],
+            actions: ["read"],
             where: { flagged: true },
             effect: "deny",
         });
@@ -360,7 +364,7 @@ describe("ACL plugin — list visibility", () => {
         await seedRule(adapter, {
             subjectKind: "any-user",
             schema: "post",
-            actions: ["list"],
+            actions: ["read"],
             where: { author: "$self" },
         });
         const resp = await server.handle(
@@ -388,7 +392,7 @@ describe("ACL plugin — list visibility", () => {
             subjectKind: "role",
             subjectRole: "editor",
             schema: "post",
-            actions: ["list"],
+            actions: ["read"],
         });
         const aliceResp = await server.handle(
             { operations: { a: { op: "list", schema: "post" } } },
@@ -412,7 +416,7 @@ describe("ACL plugin — list visibility", () => {
             subjectKind: "role",
             subjectRole: "admin",
             schema: "post",
-            actions: ["list"],
+            actions: ["read"],
         });
         const resp = await server.handle(
             { operations: { a: { op: "list", schema: "post" } } },
@@ -469,6 +473,104 @@ describe("ACL plugin — read", () => {
     });
 });
 
+describe("ACL plugin — read consolidation", () => {
+    it("a single 'read' rule grants both read and list operations", async () => {
+        const { server, adapter } = await setup();
+        await seedPosts(adapter);
+        await seedRule(adapter, {
+            subjectKind: "any-user",
+            schema: "post",
+            actions: ["read"],
+        });
+
+        const listResp = await server.handle(
+            { operations: { a: { op: "list", schema: "post" } } },
+            { identity: { id: "alice" } },
+        );
+        const list = listResp.results["a"] as KeymaLeafSuccess<Record<string, unknown>[]>;
+        assert.equal(list.ok, true);
+        assert.equal(list.data.length, 4);
+
+        const readResp = await server.handle(
+            {
+                operations: {
+                    a: { op: "read", schema: "post", where: { id: "p1" } },
+                },
+            },
+            { identity: { id: "alice" } },
+        );
+        const read = readResp.results["a"] as KeymaLeafSuccess<Record<string, unknown>>;
+        assert.equal(read.ok, true);
+        assert.equal(read.data["id"], "p1");
+    });
+});
+
+describe("ACL plugin — traverse enforcement", () => {
+    // The traverse op never runs transformFilter; the plugin enforces row-level
+    // read rules via transformOperation. The in-memory adapter doesn't implement
+    // traverse, so we exercise transformOperation directly.
+    async function makePlugin(): Promise<{
+        plugin: ReturnType<typeof createAclPlugin>;
+        adapter: InMemoryAdapter;
+    }> {
+        const adapter = new InMemoryAdapter();
+        const plugin = createAclPlugin({});
+        const handle: PluginServerHandle = {
+            schemas: [POST_SCHEMA],
+            adapter,
+            schema: (name) => (name === POST_SCHEMA.name ? POST_SCHEMA : undefined),
+            addSchema: async (s) => {
+                await adapter.ensureSchema(s);
+            },
+        };
+        await plugin.init(handle);
+        return { plugin, adapter };
+    }
+
+    it("injects read predicates into start and terminal where clauses", async () => {
+        const { plugin, adapter } = await makePlugin();
+        await seedRule(adapter, {
+            subjectKind: "any-user",
+            schema: "post",
+            actions: ["read"],
+            where: { author: "$self" },
+        });
+        const op: KeymaOperation = {
+            op: "traverse",
+            schema: "post",
+            spec: {
+                start: { schema: "post", where: { id: "p1" } },
+                emit: "nodes",
+            },
+        };
+        const ctx: RequestContext = { identity: { id: "alice" } };
+        const out = await plugin.transformOperation(ctx, op);
+        assert.ok(out !== undefined);
+        const spec = (out as Extract<KeymaOperation, { op: "traverse" }>).spec;
+        assert.deepEqual(spec.start.where, {
+            $and: [{ id: "p1" }, { author: "alice" }],
+        });
+        assert.deepEqual(spec.where, { author: "alice" });
+    });
+
+    it("denies traverse when no read rule grants the schema", async () => {
+        const { plugin } = await makePlugin();
+        const op: KeymaOperation = {
+            op: "traverse",
+            schema: "post",
+            spec: {
+                start: { schema: "post", where: {} },
+                emit: "nodes",
+            },
+        };
+        const ctx: RequestContext = { identity: { id: "alice" } };
+        await assert.rejects(
+            () => Promise.resolve(plugin.transformOperation(ctx, op)),
+            /No ACL rule grants/,
+        );
+    });
+});
+
 describe("ACL plugin — field-level perms", () => {
     it("read: response only includes allowed fields", async () => {
         const { server, adapter } = await setup();
@@ -476,7 +578,7 @@ describe("ACL plugin — field-level perms", () => {
         await seedRule(adapter, {
             subjectKind: "any-user",
             schema: "post",
-            actions: ["read", "list"],
+            actions: ["read"],
             fieldsRead: ["id", "title"],
         });
         const resp = await server.handle(
@@ -529,7 +631,7 @@ describe("ACL plugin — field-level perms", () => {
         await seedRule(adapter, {
             subjectKind: "any-user",
             schema: "post",
-            actions: ["read", "list"],
+            actions: ["read"],
             where: { author: "$self" },
             fieldsRead: ["id", "title"],
         });
@@ -649,30 +751,16 @@ describe("ACL plugin — system context bypass", () => {
 });
 
 describe("ACL plugin — storage privacy", () => {
-    it("init throws if host KeymaServer registers any ACL schema", async () => {
-        const adapter = new InMemoryAdapter();
-        const { plugin } = createAclPlugin({ adapter });
-        const server = new KeymaServer({
-            schemas: [POST_SCHEMA, ...aclSchemas],
-            adapter,
-            plugins: [plugin],
-        });
-        await assert.rejects(
-            () => server.ensureSchemas(),
-            /registered on the host KeymaServer/,
-        );
-    });
-
     for (const schemaName of [
         ACL_RULE_SCHEMA.name,
         ACL_ROLE_SCHEMA.name,
         ACL_ROLE_ASSIGNMENT_SCHEMA.name,
     ]) {
-        it(`host server cannot route operations to "${schemaName}"`, async () => {
+        it(`host server cannot route operations to "${schemaName}" for non-system identities`, async () => {
             const { server } = await setup();
             const resp = await server.handle(
                 { operations: { a: { op: "list", schema: schemaName } } },
-                { identity: { isSystem: true } },
+                { identity: { id: "alice" } },
             );
             const a = resp.results["a"] as KeymaLeafFailure;
             assert.equal(a.ok, false);
@@ -687,7 +775,7 @@ describe("KeymaAclAdmin — rules", () => {
         const rule = await admin.addRule({
             subject: { kind: "any-user" },
             schema: "post",
-            actions: ["list", "read"],
+            actions: ["read"],
             where: { author: "$self" },
         });
         assert.equal(typeof rule.id, "string");
@@ -706,7 +794,7 @@ describe("KeymaAclAdmin — rules", () => {
         const b = await admin.addRule({
             subject: { kind: "anon" },
             schema: "post",
-            actions: ["list"],
+            actions: ["create"],
         });
         assert.notEqual(a.id, b.id);
     });
@@ -740,12 +828,12 @@ describe("KeymaAclAdmin — rules", () => {
         const rule = await admin.addRule({
             subject: { kind: "any-user" },
             schema: "post",
-            actions: ["list"],
+            actions: ["read"],
         });
         const updated = await admin.updateRule(rule.id, {
-            actions: ["list", "read", "update"],
+            actions: ["read", "create", "update"],
         });
-        assert.deepEqual([...updated.actions].sort(), ["list", "read", "update"]);
+        assert.deepEqual([...updated.actions].sort(), ["create", "read", "update"]);
         assert.deepEqual(updated.subject, { kind: "any-user" });
         assert.equal(updated.schema, "post");
     });
@@ -772,8 +860,8 @@ describe("KeymaAclAdmin — rules", () => {
     it("listRules filters by schema and by subject", async () => {
         const { admin } = await setup();
         await admin.addRole("editor");
-        await admin.addRule({ subject: { kind: "any-user" }, schema: "post", actions: ["list"] });
-        await admin.addRule({ subject: { kind: "any-user" }, schema: "comment", actions: ["list"] });
+        await admin.addRule({ subject: { kind: "any-user" }, schema: "post", actions: ["read"] });
+        await admin.addRule({ subject: { kind: "any-user" }, schema: "comment", actions: ["read"] });
         await admin.addRule({ subject: { kind: "role", name: "editor" }, schema: "post", actions: ["update"] });
 
         const postRules = await admin.listRules({ schema: "post" });
@@ -911,7 +999,7 @@ describe("KeymaAclAdmin — role assignments", () => {
         await admin.addRule({
             subject: { kind: "any-user" },
             schema: "post",
-            actions: ["list"],
+            actions: ["read"],
             where: { author: "$self" },
         });
         const resp = await server.handle(

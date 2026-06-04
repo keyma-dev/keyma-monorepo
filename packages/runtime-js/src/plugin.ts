@@ -22,6 +22,17 @@ export interface KeymaServerPlugin {
     /** Called once after the server is constructed. */
     init?(server: PluginServerHandle): Promise<void> | void;
 
+    /** Rewrite the entire operation. This is called before any other hooks
+     *  and allows plugins to inject filters into complex operations like
+     *  traversals or nested populates. */
+    transformOperation?(
+        ctx: RequestContext,
+        op: KeymaOperation,
+    ):
+        | Promise<KeymaOperation | undefined>
+        | KeymaOperation
+        | undefined;
+
     /** Observe or early-reject the operation. Throw a KeymaPluginError to abort. */
     beforeOperation?(
         ctx: RequestContext,
@@ -88,4 +99,5 @@ export interface PluginServerHandle {
     readonly schemas: readonly SchemaMetadata[];
     readonly adapter: KeymaDatabaseAdapter;
     schema(name: string): SchemaMetadata | undefined;
+    addSchema(schema: SchemaMetadata): Promise<void> | void;
 }
