@@ -1,7 +1,7 @@
 import { describe, it, before, after, beforeEach } from "node:test";
 import assert from "node:assert/strict";
 import { GremlinAdapter } from "../src/index.js";
-import { ADDRESS_SCHEMA, IDS, ORG_SCHEMA, USER_SCHEMA } from "./fixtures.js";
+import { ADDRESS_SCHEMA, IDS, ORG_SCHEMA, TAG_SCHEMA, USER_SCHEMA } from "./fixtures.js";
 import { clean, close, connect, hasServer, type LiveHandle } from "./setup.js";
 
 // Integration tests: require a live Gremlin server (GREMLIN_ENDPOINT). Skipped
@@ -21,6 +21,7 @@ describe("GremlinAdapter — CRUD round-trips", { skip: !hasServer }, () => {
         adapter = new GremlinAdapter(h.g);
         await adapter.ensureSchema(ORG_SCHEMA);
         await adapter.ensureSchema(ADDRESS_SCHEMA);
+        await adapter.ensureSchema(TAG_SCHEMA);
         await adapter.ensureSchema(USER_SCHEMA);
     });
 
@@ -153,5 +154,55 @@ describe("GremlinAdapter — CRUD round-trips", { skip: !hasServer }, () => {
             { fields: { id: 1, organization: 1 }, populate: { organization: { schema: ORG_SCHEMA, projection: { fields: { id: 1, name: 1 } } } } },
         );
         assert.deepEqual(fetched!["organization"], { id: IDS.o1, name: "Acme" });
+    });
+
+    it("populate resolves an array of references in a single query", async () => {
+        await adapter.create(TAG_SCHEMA, { id: IDS.tech, label: "tech" });
+        await adapter.create(TAG_SCHEMA, { id: IDS.news, label: "news" });
+        await adapter.create(USER_SCHEMA, { id: IDS.u1, email: "a@x.com", name: "A", tagIds: [IDS.tech, IDS.news] });
+        const fetched = await adapter.read(
+            USER_SCHEMA,
+            { id: IDS.u1 },
+            { fields: { id: 1, tagIds: 1 }, populate: { tagIds: { schema: TAG_SCHEMA, projection: { fields: { id: 1, label: 1 } } } } },
+        );
+        const tags = fetched!["tagIds"] as Array<Record<string, unknown>>;
+        assert.deepEqual(tags.map((t) => t["id"]).sort(), [IDS.news, IDS.tech].sort());
+        assert.deepEqual(tags.map((t) => t["label"]).sort(), ["news", "tech"]);
+    });
+
+    it("nested populate (ref → ref) resolves in a single query", async () => {
+        await adapter.create(ORG_SCHEMA, { id: IDS.o1, name: "Acme", tier: "gold" });
+        await adapter.create(USER_SCHEMA, { id: IDS.u2, email: "mgr@x.com", name: "Mgr", organization: IDS.o1 });
+        await adapter.create(USER_SCHEMA, { id: IDS.u1, email: "a@x.com", name: "A", manager: IDS.u2 });
+        const fetched = await adapter.read(
+            USER_SCHEMA,
+            { id: IDS.u1 },
+            {
+                fields: { id: 1 },
+                populate: {
+                    manager: {
+                        schema: USER_SCHEMA,
+                        projection: {
+                            fields: { id: 1, name: 1 },
+                            populate: { organization: { schema: ORG_SCHEMA, projection: { fields: { id: 1, name: 1 } } } },
+                        },
+                    },
+                },
+            },
+        );
+        assert.deepEqual(fetched, {
+            id: IDS.u1,
+            manager: { id: IDS.u2, name: "Mgr", organization: { id: IDS.o1, name: "Acme" } },
+        });
+    });
+
+    it("populate yields null for a missing single reference", async () => {
+        await adapter.create(USER_SCHEMA, { id: IDS.u1, email: "a@x.com", name: "A", organization: "does-not-exist" });
+        const fetched = await adapter.read(
+            USER_SCHEMA,
+            { id: IDS.u1 },
+            { fields: { id: 1, organization: 1 }, populate: { organization: { schema: ORG_SCHEMA, projection: { fields: { id: 1 } } } } },
+        );
+        assert.equal(fetched!["organization"], null);
     });
 });

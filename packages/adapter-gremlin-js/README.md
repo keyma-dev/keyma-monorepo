@@ -58,8 +58,12 @@ lifecycle (`conn.close()`), exactly as the MongoDB adapter takes a connected `Db
 - **Range queries on `bigint`/`decimal`** are not supported (they are stored as
   strings; equality and `$in`/`$nin` work). `number`/`integer` and ISO dates
   sort/range correctly.
-- **`populate` issues one read per reference** (no server-side join). Correct,
-  but N+1 for large result sets.
+- **`populate` runs in a single traversal** via `project()` with sub-traversals
+  that follow each stored reference id to its target vertex (array references
+  and nested populate included) — no per-reference round-trip. Because
+  references are id properties rather than edges, the in-traversal lookup is not
+  served by the vertex id index, so very large graphs may prefer modeling those
+  relationships as `@Edge` schemas.
 - **Identity portability:** ids are supplied as `T.id`. TinkerGraph (with an
   `ANY` id manager) and Neptune honor user-supplied string ids; backends that
   ignore them (e.g. JanusGraph) assign their own, which the adapter reads back

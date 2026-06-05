@@ -6,21 +6,15 @@ import type {
     AdapterTraversalResult,
     KeymaDatabaseAdapter,
     ListQuery,
-    PopulateSpec,
     SchemaMetadata,
     TraversalSpec,
 } from "@keyma/runtime-js";
-import { __, cardinality, t } from "./gremlin.js";
+import { __, cardinality, P, t } from "./gremlin.js";
 import type { GraphTraversal, GraphTraversalSource } from "./gremlin.js";
 import { applyOrder, applyWhere, translateSort } from "./filter.js";
-import {
-    elementMapToPlain,
-    fromProps,
-    toProps,
-    type PropEntry,
-    type SchemaMap,
-} from "./props.js";
-import { selectFields } from "./projection.js";
+import { toProps, type PropEntry, type SchemaMap } from "./props.js";
+import { hasPopulate, selectFields } from "./projection.js";
+import { emitProjected, parseProjectedRow } from "./read.js";
 import { ensureIndexes } from "./indexes.js";
 import { runTraverse } from "./traverse.js";
 import type { LabelFns } from "./traverse-steps.js";
@@ -147,11 +141,10 @@ export class GremlinAdapter implements KeymaDatabaseAdapter {
     ): Promise<Record<string, unknown> | null> {
         this.register(schema);
         const schemas = this.cachedSchemas();
-        const trav = applyWhere(this.base(schema), where, schema, schemas).limit(1).valueMap(true);
-        const res = await trav.next();
+        const base = applyWhere(this.base(schema), where, schema, schemas).limit(1);
+        const res = await emitProjected(base, schema, projection, schemas).next();
         if (res.done === true || res.value === undefined || res.value === null) return null;
-        const rec = fromProps(elementMapToPlain(res.value), schema, schemas);
-        return this.hydrate(rec, schema, projection);
+        return parseProjectedRow(res.value, schema, projection, schemas);
     }
 
     async list(
@@ -171,9 +164,8 @@ export class GremlinAdapter implements KeymaDatabaseAdapter {
         trav = applyOrder(trav, order);
         trav = applyRange(trav, query.skip, query.limit);
 
-        const rows = (await trav.valueMap(true).toList()) as unknown[];
-        const recs = rows.map((r) => fromProps(elementMapToPlain(r), schema, schemas));
-        return Promise.all(recs.map((r) => this.hydrate(r, schema, query.projection)));
+        const rows = (await emitProjected(trav, schema, query.projection, schemas).toList()) as unknown[];
+        return rows.map((r) => parseProjectedRow(r, schema, query.projection, schemas));
     }
 
     async update(
@@ -234,8 +226,7 @@ export class GremlinAdapter implements KeymaDatabaseAdapter {
 
         const result = await runTraverse(this.g, ctx, spec, this.cachedSchemas(), this.labelFns());
         if (spec.emit === "nodes" && projection !== undefined) {
-            const recs = result as Record<string, unknown>[];
-            return Promise.all(recs.map((r) => this.hydrate(r, ctx.terminalSchema, projection)));
+            return this.hydrateNodes(result as Record<string, unknown>[], ctx.terminalSchema, projection);
         }
         return result;
     }
@@ -256,34 +247,29 @@ export class GremlinAdapter implements KeymaDatabaseAdapter {
         return this.read(schema, { id }, projection);
     }
 
-    /** Resolve `populate` references (issuing per-reference reads) and prune to
-     *  the projection's field selection. */
-    private async hydrate(
-        rec: Record<string, unknown>,
+    /** Apply projection to a materialized set of traverse terminal nodes. Field
+     *  pruning is local; populate is resolved with a single batched, projected
+     *  query keyed on the nodes' ids (no per-node round-trip). */
+    private async hydrateNodes(
+        recs: Record<string, unknown>[],
         schema: SchemaMetadata,
-        projection: AdapterProjection | undefined,
-    ): Promise<Record<string, unknown>> {
-        if (projection?.populate !== undefined) {
-            await this.populate(rec, projection.populate);
+        projection: AdapterProjection,
+    ): Promise<Record<string, unknown>[]> {
+        if (!hasPopulate(projection)) {
+            return recs.map((r) => selectFields(r, projection));
         }
-        return selectFields(rec, projection);
-    }
+        const ids = recs.map((r) => r["id"]).filter((v) => v !== undefined);
+        if (ids.length === 0) return recs.map((r) => selectFields(r, projection));
 
-    private async populate(
-        rec: Record<string, unknown>,
-        populate: PopulateSpec,
-    ): Promise<void> {
-        for (const [field, node] of Object.entries(populate)) {
-            const refVal = rec[field];
-            if (refVal === undefined || refVal === null) continue;
-            if (Array.isArray(refVal)) {
-                rec[field] = await Promise.all(
-                    refVal.map((id) => this.read(node.schema, { id }, node.projection)),
-                );
-            } else {
-                rec[field] = await this.read(node.schema, { id: refVal }, node.projection);
-            }
+        const schemas = this.cachedSchemas();
+        const base = this.g.V().hasLabel(this.label(schema)).hasId(P.within(...ids));
+        const rows = (await emitProjected(base, schema, projection, schemas).toList()) as unknown[];
+        const byId = new Map<unknown, Record<string, unknown>>();
+        for (const row of rows) {
+            const rec = parseProjectedRow(row, schema, projection, schemas);
+            byId.set(rec["id"], rec);
         }
+        return recs.map((r) => byId.get(r["id"]) ?? selectFields(r, projection));
     }
 }
 

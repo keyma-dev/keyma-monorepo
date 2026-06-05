@@ -52,6 +52,8 @@ export const USER_SCHEMA: SchemaMetadata = {
         },
         { name: "address", type: { kind: "embedded", schema: "address" }, required: false },
         { name: "tags", type: { kind: "array", of: { kind: "string" } }, required: false },
+        { name: "manager", type: { kind: "reference", schema: "user" }, required: false },
+        { name: "tagIds", type: { kind: "array", of: { kind: "reference", schema: "tag" } }, required: false },
     ],
     indexes: [
         { fields: [{ name: "name", direction: 1 }, { name: "age", direction: -1 }] },
