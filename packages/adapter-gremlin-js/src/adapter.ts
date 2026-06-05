@@ -1,0 +1,313 @@
+import { randomUUID } from "node:crypto";
+import type {
+    AdapterCapabilities,
+    AdapterProjection,
+    AdapterTraversalContext,
+    AdapterTraversalResult,
+    KeymaDatabaseAdapter,
+    ListQuery,
+    PopulateSpec,
+    SchemaMetadata,
+    TraversalSpec,
+} from "@keyma/runtime-js";
+import { __, cardinality, t } from "./gremlin.js";
+import type { GraphTraversal, GraphTraversalSource } from "./gremlin.js";
+import { applyOrder, applyWhere, translateSort } from "./filter.js";
+import {
+    elementMapToPlain,
+    fromProps,
+    toProps,
+    type PropEntry,
+    type SchemaMap,
+} from "./props.js";
+import { selectFields } from "./projection.js";
+import { ensureIndexes } from "./indexes.js";
+import { runTraverse } from "./traverse.js";
+import type { LabelFns } from "./traverse-steps.js";
+import { GremlinAdapterInternal, GremlinAdapterInvalidQuery } from "./errors.js";
+
+export interface GremlinAdapterOptions {
+    /** Override how a schema maps to its vertex label. Defaults to `schema.name`. */
+    label?: (schema: SchemaMetadata) => string;
+    /** Override how an edge schema maps to its Gremlin edge label. Must agree
+     *  with what traversals use; defaults to `schema.name`. */
+    edgeLabel?: (schema: SchemaMetadata) => string;
+    /** Override the id generator used when a record is created without an `id`.
+     *  Supplied as the element's `T.id`. Defaults to `crypto.randomUUID()` so
+     *  ids are consistent strings on backends that honor user-supplied ids
+     *  (TinkerGraph, Neptune). */
+    generateId?: () => string;
+}
+
+/** A Keyma database adapter backed by Apache TinkerPop / Gremlin. Talks to any
+ *  Gremlin-enabled store (TinkerGraph, Neptune, JanusGraph, …) through a
+ *  connected `GraphTraversalSource` using bytecode GLV. Non-edge schemas map to
+ *  vertices; `@Edge` schemas map to real edges and drive `traverse()`. */
+export class GremlinAdapter implements KeymaDatabaseAdapter {
+    readonly capabilities: AdapterCapabilities = {
+        traverse: { maxDepth: 50, emitPaths: true, heterogeneous: true },
+    };
+
+    private readonly schemas = new Map<string, SchemaMetadata>();
+    private readonly label: (schema: SchemaMetadata) => string;
+    private readonly edgeLabel: (schema: SchemaMetadata) => string;
+    private readonly generateId: () => string;
+
+    constructor(
+        private readonly g: GraphTraversalSource,
+        opts: GremlinAdapterOptions = {},
+    ) {
+        this.label = opts.label ?? ((s) => s.name);
+        this.edgeLabel = opts.edgeLabel ?? ((s) => s.name);
+        this.generateId = opts.generateId ?? (() => randomUUID());
+    }
+
+    private register(schema: SchemaMetadata): void {
+        this.schemas.set(schema.name, schema);
+    }
+
+    private cachedSchemas(): SchemaMap {
+        return this.schemas;
+    }
+
+    private labelFns(): LabelFns {
+        return { vertexLabel: (s) => this.label(s), edgeLabel: (s) => this.edgeLabel(s) };
+    }
+
+    async ensureSchema(schema: SchemaMetadata): Promise<void> {
+        this.register(schema);
+        await ensureIndexes(this.g, schema);
+    }
+
+    async create(
+        schema: SchemaMetadata,
+        data: Record<string, unknown>,
+        projection?: AdapterProjection,
+    ): Promise<Record<string, unknown>> {
+        this.register(schema);
+        const schemas = this.cachedSchemas();
+        const id = schema.edge !== undefined
+            ? await this.insertEdge(schema, data, schemas)
+            : await this.insertVertex(schema, data, schemas);
+        const fetched = await this.fetchById(schema, id, projection);
+        if (fetched === null) {
+            throw new GremlinAdapterInternal("Created record not found post-insert");
+        }
+        return fetched;
+    }
+
+    private async insertVertex(
+        schema: SchemaMetadata,
+        data: Record<string, unknown>,
+        schemas: SchemaMap,
+    ): Promise<unknown> {
+        const idVal = data["id"] ?? this.generateId();
+        let trav: GraphTraversal = this.g.addV(this.label(schema)).property(t.id, idVal);
+        const { props } = toProps(data, schema, schemas, { excludeId: true, multiProperty: true });
+        trav = applyProps(trav, props);
+        const res = await trav.id().next();
+        return res.value;
+    }
+
+    private async insertEdge(
+        schema: SchemaMetadata,
+        data: Record<string, unknown>,
+        schemas: SchemaMap,
+    ): Promise<unknown> {
+        const meta = schema.edge!;
+        const fromId = data[meta.fromField];
+        const toId = data[meta.toField];
+        if (fromId === undefined || toId === undefined) {
+            throw new GremlinAdapterInvalidQuery(
+                `Edge "${schema.name}" requires "${meta.fromField}" and "${meta.toField}" endpoint ids`,
+            );
+        }
+        const idVal = data["id"] ?? this.generateId();
+        // Edges cannot carry multi-properties; arrays are JSON-encoded.
+        const { props } = toProps(data, schema, schemas, { excludeId: true, multiProperty: false });
+        let trav: GraphTraversal = this.g
+            .V(fromId)
+            .addE(this.edgeLabel(schema))
+            .to(__.V(toId))
+            .property(t.id, idVal);
+        trav = applyProps(trav, props);
+        const res = await trav.id().next();
+        if (res.done === true || res.value === undefined) {
+            throw new GremlinAdapterInternal(
+                `Edge endpoints not found (from=${String(fromId)}, to=${String(toId)})`,
+            );
+        }
+        return res.value;
+    }
+
+    async read(
+        schema: SchemaMetadata,
+        where: Record<string, unknown>,
+        projection?: AdapterProjection,
+    ): Promise<Record<string, unknown> | null> {
+        this.register(schema);
+        const schemas = this.cachedSchemas();
+        const trav = applyWhere(this.base(schema), where, schema, schemas).limit(1).valueMap(true);
+        const res = await trav.next();
+        if (res.done === true || res.value === undefined || res.value === null) return null;
+        const rec = fromProps(elementMapToPlain(res.value), schema, schemas);
+        return this.hydrate(rec, schema, projection);
+    }
+
+    async list(
+        schema: SchemaMetadata,
+        query: ListQuery,
+    ): Promise<Record<string, unknown>[]> {
+        this.register(schema);
+        const schemas = this.cachedSchemas();
+        let trav = applyWhere(this.base(schema), query.where, schema, schemas);
+
+        const entries = translateSort(query.sort);
+        const paginating = query.skip !== undefined || query.limit !== undefined;
+        // Add a deterministic id tiebreaker when slicing.
+        const order = paginating && !entries.some((e) => e.key === "id")
+            ? [...entries, { key: "id", desc: false }]
+            : entries;
+        trav = applyOrder(trav, order);
+        trav = applyRange(trav, query.skip, query.limit);
+
+        const rows = (await trav.valueMap(true).toList()) as unknown[];
+        const recs = rows.map((r) => fromProps(elementMapToPlain(r), schema, schemas));
+        return Promise.all(recs.map((r) => this.hydrate(r, schema, query.projection)));
+    }
+
+    async update(
+        schema: SchemaMetadata,
+        where: Record<string, unknown>,
+        data: Record<string, unknown>,
+        projection?: AdapterProjection,
+    ): Promise<Record<string, unknown>> {
+        this.register(schema);
+        const schemas = this.cachedSchemas();
+        const isEdge = schema.edge !== undefined;
+        let trav = applyWhere(this.base(schema), where, schema, schemas).limit(1);
+
+        const { props, nulls } = toProps(data, schema, schemas, {
+            excludeId: true,
+            multiProperty: !isEdge,
+        });
+        for (const key of nulls) {
+            trav = trav.sideEffect(__.properties(key).drop());
+        }
+        for (const p of props) {
+            if (p.list === true) {
+                trav = trav.sideEffect(__.properties(p.key).drop());
+                for (const elem of p.value as unknown[]) {
+                    trav = trav.property(cardinality.list, p.key, elem);
+                }
+            } else {
+                trav = trav.property(cardinality.single, p.key, p.value);
+            }
+        }
+        const res = await trav.id().next();
+        if (res.done === true || res.value === undefined) {
+            throw new GremlinAdapterInternal("Update target not found");
+        }
+        const fetched = await this.fetchById(schema, res.value, projection);
+        if (fetched === null) {
+            throw new GremlinAdapterInternal("Updated record not found post-update");
+        }
+        return fetched;
+    }
+
+    async delete(schema: SchemaMetadata, where: Record<string, unknown>): Promise<void> {
+        this.register(schema);
+        const schemas = this.cachedSchemas();
+        const trav = applyWhere(this.base(schema), where, schema, schemas).limit(1);
+        await trav.drop().iterate();
+    }
+
+    async traverse(
+        ctx: AdapterTraversalContext,
+        spec: TraversalSpec,
+        projection?: AdapterProjection,
+    ): Promise<AdapterTraversalResult> {
+        for (const s of ctx.edges.values()) this.register(s);
+        for (const s of ctx.nodes.values()) this.register(s);
+        this.register(ctx.startSchema);
+        this.register(ctx.terminalSchema);
+
+        const result = await runTraverse(this.g, ctx, spec, this.cachedSchemas(), this.labelFns());
+        if (spec.emit === "nodes" && projection !== undefined) {
+            const recs = result as Record<string, unknown>[];
+            return Promise.all(recs.map((r) => this.hydrate(r, ctx.terminalSchema, projection)));
+        }
+        return result;
+    }
+
+    // ── internals ───────────────────────────────────────────────────────────
+
+    private base(schema: SchemaMetadata): GraphTraversal {
+        return schema.edge !== undefined
+            ? this.g.E().hasLabel(this.edgeLabel(schema))
+            : this.g.V().hasLabel(this.label(schema));
+    }
+
+    private async fetchById(
+        schema: SchemaMetadata,
+        id: unknown,
+        projection?: AdapterProjection,
+    ): Promise<Record<string, unknown> | null> {
+        return this.read(schema, { id }, projection);
+    }
+
+    /** Resolve `populate` references (issuing per-reference reads) and prune to
+     *  the projection's field selection. */
+    private async hydrate(
+        rec: Record<string, unknown>,
+        schema: SchemaMetadata,
+        projection: AdapterProjection | undefined,
+    ): Promise<Record<string, unknown>> {
+        if (projection?.populate !== undefined) {
+            await this.populate(rec, projection.populate);
+        }
+        return selectFields(rec, projection);
+    }
+
+    private async populate(
+        rec: Record<string, unknown>,
+        populate: PopulateSpec,
+    ): Promise<void> {
+        for (const [field, node] of Object.entries(populate)) {
+            const refVal = rec[field];
+            if (refVal === undefined || refVal === null) continue;
+            if (Array.isArray(refVal)) {
+                rec[field] = await Promise.all(
+                    refVal.map((id) => this.read(node.schema, { id }, node.projection)),
+                );
+            } else {
+                rec[field] = await this.read(node.schema, { id: refVal }, node.projection);
+            }
+        }
+    }
+}
+
+function applyProps(trav: GraphTraversal, props: PropEntry[]): GraphTraversal {
+    let t2 = trav;
+    for (const p of props) {
+        if (p.list === true) {
+            for (const elem of p.value as unknown[]) {
+                t2 = t2.property(cardinality.list, p.key, elem);
+            }
+        } else {
+            t2 = t2.property(p.key, p.value);
+        }
+    }
+    return t2;
+}
+
+function applyRange(
+    trav: GraphTraversal,
+    skip: number | undefined,
+    limit: number | undefined,
+): GraphTraversal {
+    if (skip === undefined && limit === undefined) return trav;
+    const low = skip ?? 0;
+    const high = limit === undefined ? -1 : low + limit;
+    return trav.range(low, high);
+}
