@@ -81,7 +81,7 @@ Let's add some fields with validation to our User model:
 
 ```typescript
 import { Schema, ID, Validate } from "@keyma/dsl";
-import { isRequired, minLength, maxLength, isEmailAddress } from "@keyma/dsl";
+import { required, minLength, maxLength, isEmail } from "@keyma/validators";
 
 @Schema({
     name: "user",
@@ -89,13 +89,13 @@ import { isRequired, minLength, maxLength, isEmailAddress } from "@keyma/dsl";
 export class User {
     readonly id: ID;
 
-    @Validate(isRequired, minLength(2), maxLength(32))
+    @Validate(required(), minLength(2), maxLength(32))
     firstName: string;
 
-    @Validate(isRequired, minLength(2), maxLength(32))
+    @Validate(required(), minLength(2), maxLength(32))
     lastName: string;
 
-    @Validate(isRequired, isEmailAddress)
+    @Validate(required(), isEmail())
     email: string;
 }
 ```
@@ -104,7 +104,7 @@ We'll want to store users in a database, so we'll declare how it's indexed. We c
 
 ```typescript
 import { Schema, ID, Validate, Indexed } from "@keyma/dsl";
-import { isRequired, minLength, maxLength, isEmailAddress } from "@keyma/dsl";
+import { required, minLength, maxLength, isEmail } from "@keyma/validators";
 
 @Schema({
     name: "user",
@@ -112,13 +112,13 @@ import { isRequired, minLength, maxLength, isEmailAddress } from "@keyma/dsl";
 export class User {
     readonly id: ID;
 
-    @Validate(isRequired, minLength(2), maxLength(32))
+    @Validate(required(), minLength(2), maxLength(32))
     firstName: string;
 
-    @Validate(isRequired, minLength(2), maxLength(32))
+    @Validate(required(), minLength(2), maxLength(32))
     lastName: string;
 
-    @Validate(isRequired, isEmailAddress)
+    @Validate(required(), isEmail())
     @Indexed({ unique: true })
     email: string;
 
@@ -146,8 +146,8 @@ Let's add formatting and form behavior:
 
 ```typescript
 import { Schema, ID, Validate, Indexed, Format, Ephemeral } from "@keyma/dsl";
-import { isRequired, minLength, maxLength, isEmailAddress } from "@keyma/dsl";
-import { trim, normalizeEmail } from "@keyma/dsl";
+import { required, minLength, maxLength, isEmail } from "@keyma/validators";
+import { trim, normalizeEmail } from "@keyma/formatters";
 
 @Schema({
     name: "user",
@@ -155,17 +155,17 @@ import { trim, normalizeEmail } from "@keyma/dsl";
 export class User {
     readonly id: ID;
 
-    @Validate(isRequired, minLength(2), maxLength(32))
+    @Validate(required(), minLength(2), maxLength(32))
     @Format("change", trim)
     firstName: string;
 
-    @Validate(isRequired, minLength(2), maxLength(32))
+    @Validate(required(), minLength(2), maxLength(32))
     @Format("change", trim)
     lastName: string;
 
-    @Validate(isRequired, isEmailAddress)
+    @Validate(required(), isEmail())
     @Indexed({ unique: true })
-    @Format("change", normalizeEmail)
+    @Format("change", normalizeEmail())
     email: string;
 
     @Indexed()
@@ -481,6 +481,14 @@ Keyma sidesteps all of those limitations by treating TypeScript as an authoring 
 ## Status
 
 Keyma is under active development.
+
+## Roadmap
+
+TODO
+
+### Pipe dreams
+ - getters that reference a persisted type should hydrate that reference in materialize function. Would need to pass in a context with db adapter.
+ - A more usable expression set for TS -> IR -> C++/Rust/etc... 
 
 ## License
 
