@@ -7,7 +7,9 @@
     },
     "scripts": {
         "build": "tsc",
-        "test": "tsc && node --test --test-concurrency=1 --test-timeout=300000 dist/test/*.test.js"
+        "test": "tsc && node --test --test-concurrency=1 --test-timeout=300000 dist/test/*.test.js",
+        "gremlin:start": "docker run -d --rm -p 8182:8182 -v \"$PWD/test/tinkergraph-any.properties:/opt/gremlin-server/conf/tinkergraph-empty.properties:ro\" --name keyma-gremlin-test tinkerpop/gremlin-server:3.8.1",
+        "gremlin:stop": "docker stop keyma-gremlin-test"
     },
     "peerDependencies": {
         "@keyma/runtime-js": "*",

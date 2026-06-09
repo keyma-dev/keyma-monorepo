@@ -1,5 +1,30 @@
 import type { ListOptions } from "@keyma/runtime-js";
-import { translateSort, type SortEntry } from "./filter.js";
+import type { GraphTraversal } from "./gremlin.js";
+import { applyOrder, applyRange, translateSort, type SortEntry } from "./filter.js";
+
+/** Push sort/skip/limit down into a single Gremlin traversal as
+ *  `order().by(...).range(...)`. Adds the same trailing `id` tiebreaker as
+ *  {@link applyListOptionsInMemory} so a sliced result is deterministic under
+ *  ties, but lets the graph engine do the ordering and pagination.
+ *
+ *  Only valid when the whole result set is produced by one traversal — i.e. a
+ *  single node/edge chain. The `repeat`-unrolled and `paths` shapes assemble
+ *  their rows across multiple sub-queries (or post-hoc) and must finalize in
+ *  memory instead. */
+export function applyListOptions(
+    trav: GraphTraversal,
+    options: ListOptions | undefined,
+): GraphTraversal {
+    if (options === undefined) return trav;
+    const { skip, limit, sort } = options;
+    if (skip === undefined && limit === undefined && sort === undefined) return trav;
+
+    const entries = translateSort(sort);
+    const hasId = entries.some((e) => e.key === "id");
+    const order: SortEntry[] = hasId ? entries : [...entries, { key: "id", desc: false }];
+
+    return applyRange(applyOrder(trav, order), skip, limit);
+}
 
 /** Apply sort/skip/limit to an already-materialized result set in memory.
  *

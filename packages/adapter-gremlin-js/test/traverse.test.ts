@@ -210,4 +210,28 @@ describe("GremlinAdapter — traverse", { skip: !hasServer }, () => {
         })) as Rec[];
         assert.deepEqual(result.map((r) => r["id"]), [IDS.p2]);
     });
+
+    it("steps mode + emit: nodes — sort + skip pages past the first row", async () => {
+        await seedAuthorshipGraph();
+        const ctx = makeCtx(USER_SCHEMA, POST_SCHEMA, [AUTHORSHIP_SCHEMA], [USER_SCHEMA, POST_SCHEMA]);
+        const result = (await adapter.traverse(ctx, {
+            start: { schema: "user", where: { id: IDS.alice } },
+            steps: [{ via: "authorship", direction: "out" }],
+            emit: "nodes",
+            options: { sort: { title: 1 }, skip: 1 },
+        })) as Rec[];
+        assert.deepEqual(result.map((r) => r["id"]), [IDS.p2]);
+    });
+
+    it("steps mode + emit: edges — sort + limit returns a deterministic slice", async () => {
+        await seedAuthorshipGraph();
+        const ctx = makeCtx(USER_SCHEMA, POST_SCHEMA, [AUTHORSHIP_SCHEMA], [USER_SCHEMA, POST_SCHEMA]);
+        const result = (await adapter.traverse(ctx, {
+            start: { schema: "user", where: { id: IDS.alice } },
+            steps: [{ via: "authorship", direction: "out" }],
+            emit: "edges",
+            options: { sort: { id: -1 }, limit: 1 },
+        })) as Rec[];
+        assert.deepEqual(result.map((r) => r["id"]), [IDS.a2]);
+    });
 });

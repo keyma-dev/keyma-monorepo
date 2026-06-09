@@ -125,3 +125,15 @@ export function applyOrder(trav: GraphTraversal, entries: SortEntry[]): GraphTra
     }
     return t2;
 }
+
+/** Apply skip/limit onto a traversal as a `range(low, high)` slice. */
+export function applyRange(
+    trav: GraphTraversal,
+    skip: number | undefined,
+    limit: number | undefined,
+): GraphTraversal {
+    if (skip === undefined && limit === undefined) return trav;
+    const low = skip ?? 0;
+    const high = limit === undefined ? -1 : low + limit;
+    return trav.range(low, high);
+}

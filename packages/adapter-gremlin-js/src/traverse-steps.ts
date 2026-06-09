@@ -7,6 +7,7 @@ import type {
 import { __ } from "./gremlin.js";
 import type { GraphTraversal, GraphTraversalSource } from "./gremlin.js";
 import { applyWhere } from "./filter.js";
+import { applyListOptions } from "./list-options.js";
 import { elementMapToPlain, fromProps, type SchemaMap } from "./props.js";
 import { GremlinAdapterInvalidQuery } from "./errors.js";
 
@@ -116,8 +117,12 @@ function buildChain(
 }
 
 /** Execute one heterogeneous step chain and return records shaped per `emit`.
- *  Applies start/edge/node/terminal filters but NOT options or projection —
- *  the orchestrator handles those across the merged result set. */
+ *  Applies start/edge/node/terminal filters and (for node/edge emit, when
+ *  `inQueryOptions` is set) pushes dedup/sort/skip/limit down into the Gremlin
+ *  traversal. `inQueryOptions` must be false when the caller merges results
+ *  across multiple chains (the `repeat` unroll) — there, ordering and
+ *  pagination span all the sub-queries and are finalized in memory. Projection
+ *  is never applied here. */
 export async function runSteps(
     g: GraphTraversalSource,
     spec: TraversalSpec,
@@ -125,6 +130,7 @@ export async function runSteps(
     ctx: AdapterTraversalContext,
     schemas: SchemaMap,
     labels: LabelFns,
+    inQueryOptions: boolean,
 ): Promise<Record<string, unknown>[] | PathRow[]> {
     if (steps.length === 0) {
         throw new GremlinAdapterInvalidQuery("traversal requires at least one step");
@@ -133,7 +139,9 @@ export async function runSteps(
 
     if (spec.emit === "edges") {
         const lastEdge = chain.edgeLabels[chain.edgeLabels.length - 1]!;
-        const rows = (await chain.trav.select(lastEdge).dedup().valueMap(true).toList()) as unknown[];
+        let trav = chain.trav.select(lastEdge).dedup();
+        if (inQueryOptions) trav = applyListOptions(trav, spec.options);
+        const rows = (await trav.valueMap(true).toList()) as unknown[];
         const edgeSchema = chain.edgeSchemas[chain.edgeSchemas.length - 1]!;
         return rows.map((r) => fromProps(elementMapToPlain(r), edgeSchema, schemas));
     }
@@ -163,7 +171,9 @@ export async function runSteps(
     if (spec.where !== undefined) {
         trav = applyWhere(trav, spec.where, chain.terminalSchema, schemas);
     }
-    const rows = (await trav.dedup().valueMap(true).toList()) as unknown[];
+    trav = trav.dedup();
+    if (inQueryOptions) trav = applyListOptions(trav, spec.options);
+    const rows = (await trav.valueMap(true).toList()) as unknown[];
     return rows.map((r) => fromProps(elementMapToPlain(r), chain.terminalSchema, schemas));
 }
 

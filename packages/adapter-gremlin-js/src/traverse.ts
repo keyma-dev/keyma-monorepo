@@ -14,7 +14,12 @@ import { GremlinAdapterInvalidQuery } from "./errors.js";
  *  applies afterwards). Heterogeneous `steps` run as a single chain; a
  *  homogeneous `repeat` is expanded into one chain per depth in [min, max] and
  *  the results are merged — mirroring the MongoDB adapter's unrolled fallback,
- *  and giving uniform handling across nodes/edges/paths. */
+ *  and giving uniform handling across nodes/edges/paths.
+ *
+ *  A single `steps` chain with node/edge emit is one Gremlin traversal, so its
+ *  dedup/sort/skip/limit are pushed into the query. The `repeat` unroll merges
+ *  rows across per-depth sub-queries, and `paths` rows are assembled post-hoc;
+ *  both finalize their options in memory instead. */
 export async function runTraverse(
     g: GraphTraversalSource,
     ctx: AdapterTraversalContext,
@@ -23,8 +28,11 @@ export async function runTraverse(
     labels: LabelFns,
 ): Promise<AdapterTraversalResult> {
     if (spec.steps !== undefined) {
-        const rows = await runSteps(g, spec, spec.steps, ctx, schemas, labels);
-        return finalize(rows, spec);
+        // paths still finalize in memory; nodes/edges have already had their
+        // options applied in-query, so they're returned as-is.
+        const inQueryOptions = spec.emit !== "paths";
+        const rows = await runSteps(g, spec, spec.steps, ctx, schemas, labels, inQueryOptions);
+        return inQueryOptions ? (rows as AdapterTraversalResult) : finalize(rows, spec);
     }
     if (spec.repeat === undefined) {
         throw new GremlinAdapterInvalidQuery("TraversalSpec requires either steps or repeat");
@@ -39,7 +47,9 @@ export async function runTraverse(
     const pathRows: PathRow[] = [];
     for (let d = min; d <= max; d++) {
         const steps: TraversalStep[] = Array.from({ length: d }, () => ({ ...repeat }));
-        const rows = await runSteps(g, spec, steps, ctx, schemas, labels);
+        // Per-depth results are merged below, so options span all sub-queries
+        // and must be applied in memory — not within each chain.
+        const rows = await runSteps(g, spec, steps, ctx, schemas, labels, false);
         if (spec.emit === "paths") pathRows.push(...(rows as PathRow[]));
         else nodeRows.push(...(rows as Record<string, unknown>[]));
     }

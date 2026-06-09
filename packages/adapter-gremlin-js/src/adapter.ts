@@ -11,7 +11,7 @@ import type {
 } from "@keyma/runtime-js";
 import { __, cardinality, P, t } from "./gremlin.js";
 import type { GraphTraversal, GraphTraversalSource } from "./gremlin.js";
-import { applyOrder, applyWhere, translateSort } from "./filter.js";
+import { applyOrder, applyRange, applyWhere, translateSort } from "./filter.js";
 import { toProps, type PropEntry, type SchemaMap } from "./props.js";
 import { hasPopulate, selectFields } from "./projection.js";
 import { emitProjected, parseProjectedRow } from "./read.js";
@@ -285,15 +285,4 @@ function applyProps(trav: GraphTraversal, props: PropEntry[]): GraphTraversal {
         }
     }
     return t2;
-}
-
-function applyRange(
-    trav: GraphTraversal,
-    skip: number | undefined,
-    limit: number | undefined,
-): GraphTraversal {
-    if (skip === undefined && limit === undefined) return trav;
-    const low = skip ?? 0;
-    const high = limit === undefined ? -1 : low + limit;
-    return trav.range(low, high);
 }
