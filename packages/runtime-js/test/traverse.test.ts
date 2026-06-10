@@ -48,6 +48,39 @@ describe("Keyma.traverse — leaf shape", () => {
         assert.deepEqual(leaf.spec.depth, { min: 1, max: 3 });
     });
 
+    it("project is undefined when omitted", () => {
+        const leaf = Keyma.traverse(Company, {
+            start: { schema: Person, where: { id: "p1" } },
+            steps: [
+                { via: Knows, direction: "out" },
+                { via: WorksAt, direction: "out" },
+            ] as const,
+        });
+        assert.equal(leaf.project, undefined);
+    });
+
+    it("heterogeneous chain stores the projection against the terminal schema", () => {
+        const leaf = Keyma.traverse(Company, {
+            start: { schema: Person, where: { id: "p1" } },
+            steps: [
+                { via: Knows, direction: "out" },
+                { via: WorksAt, direction: "out" },
+            ] as const,
+            project: { id: 1, name: 1 },
+        });
+        assert.deepEqual(leaf.project, { id: 1, name: 1 });
+    });
+
+    it("homogeneous repeat stores the projection", () => {
+        const leaf = Keyma.traverse(Person, {
+            start: { schema: Person, where: { id: "p1" } },
+            repeat: { via: Knows, direction: "out" },
+            depth: { max: 2 },
+            project: { id: 1, name: 1 },
+        });
+        assert.deepEqual(leaf.project, { id: 1, name: 1 });
+    });
+
     it("emit defaults to 'nodes' when omitted", () => {
         const leaf = Keyma.traverse(Person, {
             start: { schema: Person, where: { id: "p1" } },
@@ -128,6 +161,30 @@ describe("Keyma.query — traverse request options", () => {
         const req = captured[0] as { operations: Record<string, { spec: TraversalSpec }> };
         const op = req.operations["friends"]!;
         assert.equal(op.spec.options, undefined);
+    });
+
+    it("forwards the projection onto the wire operation", async () => {
+        const captured: unknown[] = [];
+        const transport = async (req: unknown) => { captured.push(req); return { results: {} }; };
+
+        const q = Keyma.query({
+            companies: Keyma.traverse(Company, {
+                start: { schema: Person, where: { id: "p1" } },
+                steps: [
+                    { via: Knows, direction: "out" },
+                    { via: WorksAt, direction: "out" },
+                ] as const,
+                project: { id: 1, name: 1 },
+            }),
+        });
+        await q.request({}, { inputs: {}, transport });
+
+        const req = captured[0] as {
+            operations: Record<string, { op: string; project?: unknown }>;
+        };
+        const op = req.operations["companies"]!;
+        assert.equal(op.op, "traverse");
+        assert.deepEqual(op.project, { id: 1, name: 1 });
     });
 });
 
@@ -480,13 +537,17 @@ describe("Keyma.traverse — type narrowing", () => {
         // trigger EPC on inline literals — but extracting the typed shape
         // via Parameters<typeof Keyma.traverse<...>> and assigning to it
         // gives us a reliable surface for negative-case assertions.
+        // The trailing `undefined` is the optional projection type param; supplying
+        // it pins this to the heterogeneous overload (the homogeneous overload has
+        // one fewer type parameter, so 4 type args make it arity-incompatible).
         type Args = Parameters<typeof Keyma.traverse<
             typeof Person,
             readonly [
                 { via: typeof Knows; direction: "out" },
                 { via: typeof WorksAt; direction: "out" },
             ],
-            typeof Company
+            typeof Company,
+            undefined
         >>[1];
         type Step0NodeWhere = NonNullable<Args["steps"][0]["nodeWhere"]>;
         type Step1NodeWhere = NonNullable<Args["steps"][1]["nodeWhere"]>;

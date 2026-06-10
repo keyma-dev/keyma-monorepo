@@ -81,9 +81,16 @@ export class KeymaServer {
         return schema;
     }
 
+    /** Release adapter-owned resources (connections). Symmetric with
+     *  `ensureSchemas()`; safe to call even if the adapter manages no connection. */
+    async close(): Promise<void> {
+        await this.opts.adapter.close?.();
+    }
+
     private async ensureInitialized(): Promise<void> {
         if (this.initialized) return;
         this.initialized = true;
+        await this.opts.adapter.connect?.();
         const handle: PluginServerHandle = {
             schemas: this.opts.schemas,
             adapter: this.opts.adapter,

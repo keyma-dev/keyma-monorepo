@@ -573,11 +573,13 @@ type TraverseArgsHeterogeneous<
     StartSchema extends SchemaClass,
     Result extends SchemaClass,
     Steps extends readonly StepInput[],
+    P extends Projection<RecordOf<Result>> | undefined,
 > = {
     start: StartArg<StartSchema>;
     steps: Steps & TypedSteps<RecordOf<StartSchema>, Steps>;
     where?: WhereArg<RecordOf<Result>>;
     emit?: TraversalEmit;
+    project?: P;
     repeat?: never;
     depth?: never;
 };
@@ -585,6 +587,7 @@ type TraverseArgsHeterogeneous<
 type TraverseArgsHomogeneous<
     NodeSchema extends SchemaClass,
     Via extends EdgeBrand<unknown, unknown>,
+    P extends Projection<RecordOf<NodeSchema>> | undefined,
 > = {
     start: StartArg<NodeSchema>;
     repeat: {
@@ -595,6 +598,7 @@ type TraverseArgsHomogeneous<
     depth: { min?: number; max: number };
     where?: WhereArg<RecordOf<NodeSchema>>;
     emit?: TraversalEmit;
+    project?: P;
     steps?: never;
 };
 
@@ -603,18 +607,28 @@ function traverse<
     StartSchema extends SchemaClass,
     const Steps extends readonly StepInput[],
     Result extends SchemaClass<TerminalNode<RecordOf<StartSchema>, Steps>>,
+    P extends Projection<RecordOf<Result>> | undefined = undefined,
 >(
     cls: Result,
-    args: TraverseArgsHeterogeneous<StartSchema, Result, Steps>,
-): TraverseLeaf<RecordOf<Result>, {}, RecordOf<Result>>;
+    args: TraverseArgsHeterogeneous<StartSchema, Result, Steps, P>,
+): TraverseLeaf<
+    P extends undefined ? RecordOf<Result> : Projected<RecordOf<Result>, P>,
+    {},
+    RecordOf<Result>
+>;
 // Overload 2: homogeneous repeat — start and terminal share `cls`.
 function traverse<
     NodeSchema extends SchemaClass,
     Via extends EdgeBrand<unknown, unknown>,
+    P extends Projection<RecordOf<NodeSchema>> | undefined = undefined,
 >(
     cls: NodeSchema,
-    args: TraverseArgsHomogeneous<NodeSchema, Via>,
-): TraverseLeaf<RecordOf<NodeSchema>, {}, RecordOf<NodeSchema>>;
+    args: TraverseArgsHomogeneous<NodeSchema, Via, P>,
+): TraverseLeaf<
+    P extends undefined ? RecordOf<NodeSchema> : Projected<RecordOf<NodeSchema>, P>,
+    {},
+    RecordOf<NodeSchema>
+>;
 function traverse(cls: SchemaClass, args: unknown): TraverseLeaf<unknown, {}, unknown> {
     type RawStep = {
         via: SchemaClass;
@@ -629,6 +643,7 @@ function traverse(cls: SchemaClass, args: unknown): TraverseLeaf<unknown, {}, un
         repeat?: RawStep;
         depth?: { min?: number; max: number };
         where?: Record<string, unknown>;
+        project?: ProjectionSpec;
     };
     const spec: TraversalSpec = {
         start: { schema: a.start.schema.schema.name, where: a.start.where },
@@ -656,6 +671,7 @@ function traverse(cls: SchemaClass, args: unknown): TraverseLeaf<unknown, {}, un
         schemaClass: cls,
         spec,
     };
+    if (a.project !== undefined) (leaf as { project?: ProjectionSpec }).project = a.project;
     return leaf as TraverseLeaf<unknown, {}, unknown>;
 }
 

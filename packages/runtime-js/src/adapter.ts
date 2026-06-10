@@ -81,6 +81,15 @@ export interface KeymaDatabaseAdapter {
     /** Optional capability surface. Adapters opt in by setting flags here. */
     readonly capabilities?: AdapterCapabilities;
 
+    /** Optionally establish the underlying connection. Idempotent. KeymaServer
+     *  calls this during initialization for adapters that own their connection
+     *  (e.g. MongoDB / Gremlin); adapters handed an already-live source omit it. */
+    connect?(): Promise<void>;
+
+    /** Optionally tear down the connection and release resources. Called by
+     *  `KeymaServer.close()`. */
+    close?(): Promise<void>;
+
     ensureSchema(schema: SchemaMetadata): Promise<void>;
 
     create(
