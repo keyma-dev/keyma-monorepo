@@ -263,11 +263,7 @@ export class KeymaServer {
     ): Promise<KeymaLeafResult> {
         let data = { ...op.data };
         await format(schema, data, "save", this.opts.formatters);
-        const writableSchema: SchemaMetadata = {
-            ...schema,
-            fields: schema.fields.filter((f) => f.readonly !== true),
-        };
-        const errors = await validate(writableSchema, data, this.opts.validators);
+        const errors = await validate(schema, data, this.opts.validators);
         if (errors.length > 0) {
             throw new ValidationFailedError(errors);
         }
@@ -286,6 +282,10 @@ export class KeymaServer {
     ): Promise<KeymaLeafResult> {
         let data = { ...op.data };
         await format(schema, data, "save", this.opts.formatters);
+        const errors = await validate(schema, data, this.opts.validators);
+        if (errors.length > 0) {
+            throw new ValidationFailedError(errors);
+        }
         data = await this.runWriteHooks(context, schema, data, "update");
         const where = await this.runFilterHooks(context, schema, op.where, "update");
         let projection = this.buildAdapterProjection(schema, op.project);
