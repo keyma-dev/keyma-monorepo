@@ -47,10 +47,10 @@ describe("keyma gen", () => {
 
         // The JS backend writes both client and server bundles by default.
         const expectedFiles = [
-            "src/generated/client/models/user.js",
-            "src/generated/server/models/user.js",
-            "src/generated/client/index.js",
-            "src/generated/server/index.js",
+            "dist/js/client/models/user.js",
+            "dist/js/server/models/user.js",
+            "dist/js/client/index.js",
+            "dist/js/server/index.js",
         ];
         for (const rel of expectedFiles) {
             assert.ok(existsSync(join(dir, rel)), `expected ${rel} to be emitted`);
