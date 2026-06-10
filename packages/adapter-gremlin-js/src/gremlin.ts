@@ -4,10 +4,31 @@
 import gremlin from "gremlin";
 import type { process as gprocess } from "gremlin";
 
-const { P, statics, order, cardinality, t, column } = gremlin.process;
+const { P, statics, order, cardinality, t, column, AnonymousTraversalSource } = gremlin.process;
 const { DriverRemoteConnection, Client } = gremlin.driver;
 
-export { P, statics as __, order, cardinality, t, column, DriverRemoteConnection, Client };
+export {
+    P,
+    statics as __,
+    order,
+    cardinality,
+    t,
+    column,
+    AnonymousTraversalSource,
+    DriverRemoteConnection,
+    Client,
+};
+
+/** A live remote connection to a Gremlin server. */
+export type DriverRemoteConnectionInstance = InstanceType<typeof DriverRemoteConnection>;
+
+/** Produces a fresh, ready-to-use `DriverRemoteConnection`. Called by the
+ *  adapter on first use and whenever the connection must be rebuilt (after a
+ *  connection-level failure or once the configured max age elapses). Neptune
+ *  consumers compute SigV4-signed headers here so each rebuilt connection
+ *  carries fresh credentials. */
+export type GremlinConnectionFactory =
+    () => DriverRemoteConnectionInstance | Promise<DriverRemoteConnectionInstance>;
 
 /** Live, connected traversal source — the adapter's handle to the graph,
  *  analogous to a MongoDB `Db`. */

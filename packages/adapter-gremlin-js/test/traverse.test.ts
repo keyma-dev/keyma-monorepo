@@ -1,4 +1,4 @@
-import { describe, it, before, after, beforeEach } from "node:test";
+import { describe, it, before, after, beforeEach, afterEach } from "node:test";
 import assert from "node:assert/strict";
 import type { AdapterTraversalContext, SchemaMetadata } from "@keyma/runtime-js";
 import { GremlinAdapter } from "../src/index.js";
@@ -11,7 +11,7 @@ import {
     TAGGING_SCHEMA,
     USER_SCHEMA,
 } from "./fixtures.js";
-import { clean, close, connect, hasServer, type LiveHandle } from "./setup.js";
+import { clean, close, connect, factory, hasServer, type LiveHandle } from "./setup.js";
 
 function makeCtx(
     start: SchemaMetadata,
@@ -42,10 +42,13 @@ describe("GremlinAdapter — traverse", { skip: !hasServer }, () => {
     });
     beforeEach(async () => {
         await clean(h);
-        adapter = new GremlinAdapter(h.g);
+        adapter = new GremlinAdapter(factory());
         for (const s of [USER_SCHEMA, POST_SCHEMA, TAG_SCHEMA, FRIENDSHIP_SCHEMA, AUTHORSHIP_SCHEMA, TAGGING_SCHEMA]) {
             await adapter.ensureSchema(s);
         }
+    });
+    afterEach(async () => {
+        await adapter.close();
     });
 
     async function seedAuthorshipGraph(): Promise<void> {

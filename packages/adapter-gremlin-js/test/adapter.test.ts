@@ -1,8 +1,8 @@
-import { describe, it, before, after, beforeEach } from "node:test";
+import { describe, it, before, after, beforeEach, afterEach } from "node:test";
 import assert from "node:assert/strict";
 import { GremlinAdapter } from "../src/index.js";
 import { ADDRESS_SCHEMA, IDS, ORG_SCHEMA, TAG_SCHEMA, USER_SCHEMA } from "./fixtures.js";
-import { clean, close, connect, hasServer, type LiveHandle } from "./setup.js";
+import { clean, close, connect, factory, hasServer, type LiveHandle } from "./setup.js";
 
 // Integration tests: require a live Gremlin server (GREMLIN_ENDPOINT). Skipped
 // otherwise so the suite stays green in CI without Docker.
@@ -18,11 +18,14 @@ describe("GremlinAdapter — CRUD round-trips", { skip: !hasServer }, () => {
     });
     beforeEach(async () => {
         await clean(h);
-        adapter = new GremlinAdapter(h.g);
+        adapter = new GremlinAdapter(factory());
         await adapter.ensureSchema(ORG_SCHEMA);
         await adapter.ensureSchema(ADDRESS_SCHEMA);
         await adapter.ensureSchema(TAG_SCHEMA);
         await adapter.ensureSchema(USER_SCHEMA);
+    });
+    afterEach(async () => {
+        await adapter.close();
     });
 
     it("create then read returns equivalent record with generated id", async () => {

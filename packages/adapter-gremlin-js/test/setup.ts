@@ -1,5 +1,9 @@
 import gremlin from "gremlin";
-import type { GraphTraversal, GraphTraversalSource } from "../src/gremlin.js";
+import type {
+    GraphTraversal,
+    GraphTraversalSource,
+    GremlinConnectionFactory,
+} from "../src/gremlin.js";
 
 const { DriverRemoteConnection } = gremlin.driver;
 const { AnonymousTraversalSource, GraphTraversalSource, TraversalStrategies, Bytecode, Translator } =
@@ -22,6 +26,13 @@ export async function connect(): Promise<LiveHandle> {
     const conn = new DriverRemoteConnection(ENDPOINT as string, {});
     const g = AnonymousTraversalSource.traversal().withRemote(conn) as GraphTraversalSource;
     return { conn, g };
+}
+
+/** A connection factory for the adapter under test — mints a fresh
+ *  `DriverRemoteConnection` each call, mirroring how a Neptune consumer would
+ *  re-sign credentials per connection. */
+export function factory(): GremlinConnectionFactory {
+    return () => new DriverRemoteConnection(ENDPOINT as string, {});
 }
 
 export async function close(h: LiveHandle): Promise<void> {

@@ -1,5 +1,9 @@
 export { GremlinAdapter } from "./adapter.js";
 export type { GremlinAdapterOptions } from "./adapter.js";
+export type {
+    GremlinConnectionFactory,
+    DriverRemoteConnectionInstance,
+} from "./gremlin.js";
 export {
     GremlinAdapterInternal,
     GremlinAdapterInvalidQuery,

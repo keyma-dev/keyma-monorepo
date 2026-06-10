@@ -6,9 +6,9 @@ TinkerGraph, Amazon Neptune, JanusGraph, and other Gremlin-enabled stores
 `KeymaDatabaseAdapter` contract as `@keyma/adapter-mongodb-js`, so it is a
 drop-in swap in `KeymaServer`.
 
-It talks to the server through a connected `GraphTraversalSource` using
-**bytecode GLV** (the fluent `g.V()…` API) for maximum portability — no Groovy
-script strings or lambdas.
+It talks to the server through a `GraphTraversalSource` using **bytecode GLV**
+(the fluent `g.V()…` API) for maximum portability — no Groovy script strings or
+lambdas.
 
 ## Usage
 
@@ -17,16 +17,38 @@ import gremlin from "gremlin";
 import { KeymaServer, createDirectTransport } from "@keyma/runtime-js";
 import { GremlinAdapter } from "@keyma/adapter-gremlin-js";
 
-const conn = new gremlin.driver.DriverRemoteConnection("ws://localhost:8182/gremlin");
-const g = gremlin.process.AnonymousTraversalSource.traversal().withRemote(conn);
-
-const adapter = new GremlinAdapter(g);
+const adapter = new GremlinAdapter(
+    () => new gremlin.driver.DriverRemoteConnection("ws://localhost:8182/gremlin"),
+);
 const server = new KeymaServer({ schemas, adapter });
 const transport = createDirectTransport(server);
+
+// …on shutdown:
+await server.close(); // delegates to adapter.close()
 ```
 
-The adapter consumes an already-connected source; you own the connection
-lifecycle (`conn.close()`), exactly as the MongoDB adapter takes a connected `Db`.
+The adapter **owns its connection**. You pass a *factory* that builds a
+`DriverRemoteConnection`; the adapter connects lazily on first use, rebuilds the
+connection (retrying the operation once) if it fails with a connection-level
+error, and — if you set `maxConnectionAgeMs` — proactively rebuilds it before
+that age elapses. `connect()` (called by `KeymaServer` during init) and
+`close()` are exposed for explicit lifecycle control.
+
+### Amazon Neptune
+
+Neptune's IAM auth requires SigV4-signed headers computed per connection, and
+those credentials expire. Sign them **inside the factory** so every rebuilt
+connection carries fresh headers, and set `maxConnectionAgeMs` below the
+credential lifetime:
+
+```ts
+const adapter = new GremlinAdapter(
+    () => new gremlin.driver.DriverRemoteConnection(NEPTUNE_WSS_URL, {
+        headers: signSigV4Headers(), // your SigV4 signing, recomputed each call
+    }),
+    { maxConnectionAgeMs: 9 * 60_000 }, // refresh before tokens expire
+);
+```
 
 ### Options
 
@@ -35,6 +57,9 @@ lifecycle (`conn.close()`), exactly as the MongoDB adapter takes a connected `Db
   `schema.name`; must agree across create and traverse).
 - `generateId()` — id generator used when a record is created without an `id`
   (default `crypto.randomUUID()`).
+- `maxConnectionAgeMs` — proactively rebuild the connection once it has been open
+  this long (default: keep one connection until it errors). Use it for Neptune
+  SigV4 expiry.
 
 ## Data model
 
@@ -71,6 +96,12 @@ lifecycle (`conn.close()`), exactly as the MongoDB adapter takes a connected `Db
   TinkerGraph `gremlin.tinkergraph.vertexIdManager=ANY`.
 - **Indexes:** Gremlin has no portable index DDL, so `ensureSchema` performs
   none — configure indexes on the server.
+- **Reconnect retries assume idempotency.** On a detected connection-level
+  failure the adapter rebuilds the connection and retries the operation once.
+  Reads, updates, and deletes are naturally idempotent; `create` resolves the
+  element id once (before the retry) and supplies it as `T.id`, so a retried
+  insert reuses that id rather than minting a new one — and `maxConnectionAgeMs`
+  keeps the window for a mid-write drop small.
 
 ## Testing
 
