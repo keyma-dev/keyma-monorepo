@@ -1,5 +1,5 @@
-import { ObjectId } from "mongodb";
-import type { Db } from "mongodb";
+import { MongoClient, ObjectId } from "mongodb";
+import type { Db, MongoClientOptions } from "mongodb";
 import type {
     AdapterCapabilities,
     AdapterProjection,
@@ -24,12 +24,19 @@ import { runTraverse } from "./traverse.js";
 import { MongoAdapterInternal } from "./errors.js";
 
 export interface MongoAdapterOptions {
+    /** MongoDB connection string (e.g. `mongodb://localhost:27017`). The adapter
+     *  creates and owns the `MongoClient`, connecting lazily on first use. */
+    url: string;
+    /** Database name to operate on. */
+    db: string;
     /** Override how a schema maps to its MongoDB collection name. Defaults to
      *  the schema's `name`. */
     collectionName?: CollectionNameFn;
     /** Override the id generator used when a record is inserted without an
      *  `id`. Defaults to `crypto.randomUUID()`. */
     generateId?: () => string;
+    /** Options forwarded to the `MongoClient` the adapter creates and owns. */
+    client?: MongoClientOptions;
 }
 
 export class MongoAdapter implements KeymaDatabaseAdapter {
@@ -38,12 +45,56 @@ export class MongoAdapter implements KeymaDatabaseAdapter {
     };
 
     private readonly schemas = new Map<string, SchemaMetadata>();
+    private readonly url: string;
+    private readonly dbName: string;
     private readonly collectionName: CollectionNameFn;
     private readonly generateId: () => string;
+    private readonly clientOptions: MongoClientOptions | undefined;
 
-    constructor(private readonly db: Db, opts: MongoAdapterOptions = {}) {
+    // Owned connection state. The adapter connects lazily on first use; the
+    // `mongodb` driver's connection pool / SDAM handles reconnection thereafter.
+    private client: MongoClient | undefined;
+    private dbInstance: Db | undefined;
+    private connecting: Promise<Db> | undefined;
+
+    constructor(opts: MongoAdapterOptions) {
+        this.url = opts.url;
+        this.dbName = opts.db;
         this.collectionName = opts.collectionName ?? ((s) => s.name);
         this.generateId = opts.generateId ?? (() => new ObjectId().toHexString());
+        this.clientOptions = opts.client;
+    }
+
+    /** Resolve the live `Db`, connecting (once) on first use. Concurrent
+     *  first-use callers share a single in-flight connect. */
+    private async db(): Promise<Db> {
+        if (this.dbInstance !== undefined) return this.dbInstance;
+        if (this.connecting !== undefined) return this.connecting;
+        this.connecting = (async () => {
+            const client = new MongoClient(this.url, this.clientOptions);
+            await client.connect();
+            this.client = client;
+            this.dbInstance = client.db(this.dbName);
+            return this.dbInstance;
+        })();
+        try {
+            return await this.connecting;
+        } finally {
+            this.connecting = undefined;
+        }
+    }
+
+    /** Eagerly establish the connection. Idempotent. */
+    async connect(): Promise<void> {
+        await this.db();
+    }
+
+    /** Close the owned client and release cached state. */
+    async close(): Promise<void> {
+        const client = this.client;
+        this.client = undefined;
+        this.dbInstance = undefined;
+        if (client !== undefined) await client.close();
     }
 
     private register(schema: SchemaMetadata): void {
@@ -56,9 +107,10 @@ export class MongoAdapter implements KeymaDatabaseAdapter {
 
     async ensureSchema(schema: SchemaMetadata): Promise<void> {
         this.register(schema);
+        const db = await this.db();
         const name = this.collectionName(schema);
         try {
-            await this.db.createCollection(name);
+            await db.createCollection(name);
         } catch (e) {
             // Namespace already exists — idempotent.
             if (
@@ -72,7 +124,7 @@ export class MongoAdapter implements KeymaDatabaseAdapter {
         }
         const indexes = buildIndexes(schema);
         if (indexes.length > 0) {
-            await this.db.collection(name).createIndexes(indexes);
+            await db.collection(name).createIndexes(indexes);
         }
     }
 
@@ -85,7 +137,8 @@ export class MongoAdapter implements KeymaDatabaseAdapter {
         const withId = { ...data };
         if (withId["id"] === undefined) withId["id"] = this.generateId();
         const doc = fromRecord(withId, schema, this.cachedSchemas());
-        await this.db.collection(this.collectionName(schema)).insertOne(doc);
+        const db = await this.db();
+        await db.collection(this.collectionName(schema)).insertOne(doc);
         const result = await this.fetchOne(schema, { _id: doc["_id"] }, projection);
         if (result === null) throw new MongoAdapterInternal("Created record not found post-insert");
         return result;
@@ -109,7 +162,8 @@ export class MongoAdapter implements KeymaDatabaseAdapter {
         const schemas = this.cachedSchemas();
         const filter = translateWhere(query.where, schema, schemas);
         const sort = translateSort(query.sort);
-        const coll = this.db.collection(this.collectionName(schema));
+        const db = await this.db();
+        const coll = db.collection(this.collectionName(schema));
 
         if (!needsAggregation(query.projection)) {
             const proj = buildMongoProjection(query.projection?.fields);
@@ -154,7 +208,8 @@ export class MongoAdapter implements KeymaDatabaseAdapter {
         const schemas = this.cachedSchemas();
         const filter = translateWhere(where, schema, schemas);
         const set = fromRecord(data, schema, schemas, { excludeId: true });
-        const result = await this.db
+        const db = await this.db();
+        const result = await db
             .collection(this.collectionName(schema))
             .findOneAndUpdate(
                 filter,
@@ -179,7 +234,8 @@ export class MongoAdapter implements KeymaDatabaseAdapter {
     ): Promise<void> {
         this.register(schema);
         const filter = translateWhere(where, schema, this.cachedSchemas());
-        await this.db.collection(this.collectionName(schema)).deleteOne(filter);
+        const db = await this.db();
+        await db.collection(this.collectionName(schema)).deleteOne(filter);
     }
 
     async traverse(
@@ -192,7 +248,7 @@ export class MongoAdapter implements KeymaDatabaseAdapter {
         this.register(ctx.startSchema);
         this.register(ctx.terminalSchema);
         return runTraverse(
-            this.db,
+            await this.db(),
             ctx,
             spec,
             projection,
@@ -207,7 +263,8 @@ export class MongoAdapter implements KeymaDatabaseAdapter {
         projection?: AdapterProjection,
     ): Promise<Record<string, unknown> | null> {
         const schemas = this.cachedSchemas();
-        const coll = this.db.collection(this.collectionName(schema));
+        const db = await this.db();
+        const coll = db.collection(this.collectionName(schema));
 
         if (!needsAggregation(projection)) {
             const proj = buildMongoProjection(projection?.fields);

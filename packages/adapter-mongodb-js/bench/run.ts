@@ -11,19 +11,23 @@ async function clean(db: Db): Promise<void> {
     }
 }
 
+const DB_NAME = "keyma_bench";
+
 async function main(): Promise<void> {
-    const uri = process.env["KEYMA_BENCH_MONGO_URI"];
+    const envUri = process.env["KEYMA_BENCH_MONGO_URI"];
     let memory: MongoMemoryServer | undefined;
-    let client: MongoClient;
-    if (uri !== undefined && uri.length > 0) {
-        client = new MongoClient(uri);
+    let uri: string;
+    if (envUri !== undefined && envUri.length > 0) {
+        uri = envUri;
     } else {
         memory = await MongoMemoryServer.create();
-        client = new MongoClient(memory.getUri());
+        uri = memory.getUri();
     }
+    // The adapter owns its own connection; this client is only used for reset.
+    const client = new MongoClient(uri);
     await client.connect();
-    const db = client.db("keyma_bench");
-    const adapter = new MongoAdapter(db);
+    const db = client.db(DB_NAME);
+    const adapter = new MongoAdapter({ url: uri, db: DB_NAME });
 
     const datasetSize = Number(process.env["KEYMA_BENCH_N"] ?? 10_000);
     const only = process.env["KEYMA_BENCH_ONLY"]?.split(",").map((s) => s.trim()).filter(Boolean);
@@ -49,6 +53,7 @@ async function main(): Promise<void> {
         printTable(result);
         process.stderr.write("\nwrote " + fpath + "\n");
     } finally {
+        await adapter.close();
         await client.close();
         if (memory !== undefined) await memory.stop();
     }

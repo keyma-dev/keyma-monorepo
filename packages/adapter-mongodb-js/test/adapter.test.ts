@@ -1,8 +1,8 @@
-import { describe, it, before, after, beforeEach } from "node:test";
+import { describe, it, before, after, beforeEach, afterEach } from "node:test";
 import assert from "node:assert/strict";
 import { MongoAdapter } from "../src/index.js";
 import { ADDRESS_SCHEMA, OIDS, ORG_SCHEMA, USER_SCHEMA } from "./fixtures.js";
-import { clean, startMongo, stopMongo, type TestHandle } from "./setup.js";
+import { clean, startMongo, stopMongo, DB_NAME, type TestHandle } from "./setup.js";
 
 describe("MongoAdapter — CRUD round-trips", () => {
     let h: TestHandle;
@@ -18,10 +18,14 @@ describe("MongoAdapter — CRUD round-trips", () => {
 
     beforeEach(async () => {
         await clean(h);
-        adapter = new MongoAdapter(h.db);
+        adapter = new MongoAdapter({ url: h.uri, db: DB_NAME });
         await adapter.ensureSchema(ORG_SCHEMA);
         await adapter.ensureSchema(ADDRESS_SCHEMA);
         await adapter.ensureSchema(USER_SCHEMA);
+    });
+
+    afterEach(async () => {
+        await adapter.close();
     });
 
     it("create then read returns equivalent record with generated id", async () => {

@@ -1,18 +1,24 @@
 import { MongoMemoryServer } from "mongodb-memory-server";
 import { MongoClient, type Db } from "mongodb";
 
+export const DB_NAME = "keyma_test";
+
 export type TestHandle = {
     mongo: MongoMemoryServer;
+    uri: string;
+    /** A client owned by the test harness, used only for cleanup between tests.
+     *  The adapter under test owns its own client (built from `uri`/`DB_NAME`). */
     client: MongoClient;
     db: Db;
 };
 
 export async function startMongo(): Promise<TestHandle> {
     const mongo = await MongoMemoryServer.create();
-    const client = new MongoClient(mongo.getUri());
+    const uri = mongo.getUri();
+    const client = new MongoClient(uri);
     await client.connect();
-    const db = client.db("keyma_test");
-    return { mongo, client, db };
+    const db = client.db(DB_NAME);
+    return { mongo, uri, client, db };
 }
 
 export async function stopMongo(h: TestHandle): Promise<void> {

@@ -1,8 +1,8 @@
-import { describe, it, before, after, beforeEach } from "node:test";
+import { describe, it, before, after, beforeEach, afterEach } from "node:test";
 import assert from "node:assert/strict";
 import { MongoAdapter } from "../src/index.js";
 import { AUTHORSHIP_SCHEMA, OIDS, USER_SCHEMA } from "./fixtures.js";
-import { clean, startMongo, stopMongo, type TestHandle } from "./setup.js";
+import { clean, startMongo, stopMongo, DB_NAME, type TestHandle } from "./setup.js";
 
 describe("MongoAdapter — indexes", () => {
     let h: TestHandle;
@@ -17,7 +17,11 @@ describe("MongoAdapter — indexes", () => {
 
     beforeEach(async () => {
         await clean(h);
-        adapter = new MongoAdapter(h.db);
+        adapter = new MongoAdapter({ url: h.uri, db: DB_NAME });
+    });
+
+    afterEach(async () => {
+        await adapter.close();
     });
 
     it("creates unique index from field-level metadata; rejects duplicates", async () => {

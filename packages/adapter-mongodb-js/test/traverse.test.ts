@@ -1,4 +1,4 @@
-import { describe, it, before, after, beforeEach } from "node:test";
+import { describe, it, before, after, beforeEach, afterEach } from "node:test";
 import assert from "node:assert/strict";
 import type { AdapterTraversalContext, SchemaMetadata } from "@keyma/runtime-js";
 import { MongoAdapter } from "../src/index.js";
@@ -12,7 +12,7 @@ import {
     TAGGING_SCHEMA,
     USER_SCHEMA,
 } from "./fixtures.js";
-import { clean, startMongo, stopMongo, type TestHandle } from "./setup.js";
+import { clean, startMongo, stopMongo, DB_NAME, type TestHandle } from "./setup.js";
 
 function makeCtx(
     start: SchemaMetadata,
@@ -41,7 +41,7 @@ describe("MongoAdapter — traverse", () => {
 
     beforeEach(async () => {
         await clean(h);
-        adapter = new MongoAdapter(h.db);
+        adapter = new MongoAdapter({ url: h.uri, db: DB_NAME });
         for (const s of [
             ORG_SCHEMA,
             USER_SCHEMA,
@@ -53,6 +53,10 @@ describe("MongoAdapter — traverse", () => {
         ]) {
             await adapter.ensureSchema(s);
         }
+    });
+
+    afterEach(async () => {
+        await adapter.close();
     });
 
     async function seedAuthorshipGraph(): Promise<void> {
