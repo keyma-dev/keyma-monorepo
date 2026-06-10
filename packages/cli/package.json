@@ -29,5 +29,6 @@
         "@keyma/dsl": "*",
         "@types/node": "*",
         "typescript": "*"
-    }
+    },
+    "license": "MIT"
 }

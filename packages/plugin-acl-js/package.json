@@ -16,5 +16,6 @@
         "@keyma/runtime-js": "*",
         "@types/node": "*",
         "typescript": "*"
-    }
+    },
+    "license": "MIT"
 }
