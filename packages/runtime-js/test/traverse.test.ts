@@ -256,6 +256,7 @@ function makeFakeAdapter(
         list: async () => [],
         update: async () => ({}),
         delete: async () => {},
+        count: async () => 0,
         ...overrides,
     };
 }

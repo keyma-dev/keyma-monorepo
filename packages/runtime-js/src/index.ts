@@ -75,6 +75,7 @@ export type {
     UpdateLeaf,
     DeleteLeaf,
     TraverseLeaf,
+    CountLeaf,
     TerminalNode,
     QueryDocument,
     MutationDocument,

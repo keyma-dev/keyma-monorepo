@@ -198,6 +198,13 @@ export class MongoAdapter implements KeymaDatabaseAdapter {
         return docs.map((d) => toRecord(d as Record<string, unknown>, schema, schemas));
     }
 
+    async count(schema: SchemaMetadata, where?: Record<string, unknown>): Promise<number> {
+        this.register(schema);
+        const filter = translateWhere(where ?? {}, schema, this.cachedSchemas());
+        const db = await this.db();
+        return db.collection(this.collectionName(schema)).countDocuments(filter);
+    }
+
     async update(
         schema: SchemaMetadata,
         where: Record<string, unknown>,

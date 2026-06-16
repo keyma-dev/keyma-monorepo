@@ -24,7 +24,8 @@ type AdapterCall =
     | { kind: "read"; schema: string; where: Record<string, unknown> }
     | { kind: "create"; schema: string; data: Record<string, unknown> }
     | { kind: "update"; schema: string; where: Record<string, unknown>; data: Record<string, unknown> }
-    | { kind: "delete"; schema: string; where: Record<string, unknown> };
+    | { kind: "delete"; schema: string; where: Record<string, unknown> }
+    | { kind: "count"; schema: string; where: Record<string, unknown> };
 
 class RecordingAdapter implements KeymaDatabaseAdapter {
     public stores = new Map<string, Map<string, Record<string, unknown>>>();
@@ -116,6 +117,10 @@ class RecordingAdapter implements KeymaDatabaseAdapter {
         const store = this.storeFor(schema);
         const id = where["id"] as string;
         store.delete(id);
+    }
+    async count(schema: SchemaMetadata, where?: Record<string, unknown>): Promise<number> {
+        this.calls.push({ kind: "count", schema: schema.name, where: where ?? {} });
+        return 0;
     }
 }
 

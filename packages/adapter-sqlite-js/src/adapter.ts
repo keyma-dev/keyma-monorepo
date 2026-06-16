@@ -105,6 +105,18 @@ export class SqliteAdapter implements KeymaDatabaseAdapter {
         return rows.map((r) => decodeRow(r as Record<string, unknown>, schema, schemas, query.projection));
     }
 
+    async count(schema: SchemaMetadata, where?: Record<string, unknown>): Promise<number> {
+        this.register(schema);
+        const schemas = this.cachedSchemas();
+        const table = this.tableName(schema);
+        let qb = this.db.selectFrom(table).select((eb) => eb.fn.countAll<number>().as("count"));
+        if (where !== undefined && Object.keys(where).length > 0) {
+            qb = translateWhereInto(qb, where, schema, schemas, table) as typeof qb;
+        }
+        const row = await qb.executeTakeFirstOrThrow();
+        return Number(row.count);
+    }
+
     async update(
         schema: SchemaMetadata,
         where: Record<string, unknown>,

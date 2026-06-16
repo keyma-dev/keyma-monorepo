@@ -2,7 +2,7 @@ import type { SchemaMetadata } from "./types.js";
 import type { AdapterProjection, KeymaDatabaseAdapter } from "./adapter.js";
 import type { KeymaOperation, KeymaLeafResult } from "./protocol.js";
 
-export type KeymaReadAction = "read" | "list" | "traverse";
+export type KeymaReadAction = "read" | "list" | "traverse" | "count";
 export type KeymaWriteAction = "create" | "update" | "delete";
 export type KeymaAction = KeymaReadAction | KeymaWriteAction;
 

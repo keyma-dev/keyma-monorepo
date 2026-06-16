@@ -271,6 +271,16 @@ export class GremlinAdapter implements KeymaDatabaseAdapter {
         });
     }
 
+    async count(schema: SchemaMetadata, where?: Record<string, unknown>): Promise<number> {
+        this.register(schema);
+        const schemas = this.cachedSchemas();
+        return this.run(async (g) => {
+            const trav = applyWhere(this.base(g, schema), where ?? {}, schema, schemas);
+            const res = await trav.count().next();
+            return Number(res.value ?? 0);
+        });
+    }
+
     async update(
         schema: SchemaMetadata,
         where: Record<string, unknown>,

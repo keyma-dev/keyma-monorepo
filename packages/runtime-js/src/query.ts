@@ -134,13 +134,19 @@ export interface TraverseLeaf<T, I = {}, R = unknown> extends BaseLeaf {
     readonly [LEAF_BRAND]: { kind: "traverse"; out: T[]; inputs: I; record: R };
 }
 
+export interface CountLeaf<I = {}> extends BaseLeaf {
+    readonly op: "count";
+    readonly [LEAF_BRAND]: { kind: "count"; out: number; inputs: I };
+}
+
 export type AnyLeaf =
     | ListLeaf<unknown, unknown, unknown>
     | ReadLeaf<unknown, unknown>
     | CreateLeaf<unknown, unknown>
     | UpdateLeaf<unknown, unknown>
     | DeleteLeaf<unknown>
-    | TraverseLeaf<unknown, unknown, unknown>;
+    | TraverseLeaf<unknown, unknown, unknown>
+    | CountLeaf;
 
 export type QueryLeaf =
     | ListLeaf<unknown, unknown, unknown>
@@ -192,7 +198,7 @@ export interface RequestResponse<Tmpl extends Record<string, AnyLeaf>> {
 
 // ── Document interfaces ──────────────────────────────────────────────────────
 
-export interface QueryDocument<Tmpl extends Record<string, QueryLeaf>> {
+export interface QueryDocument<Tmpl extends Record<string, QueryLeaf | CountLeaf>> {
     /** Phantom type property — use `typeof doc.inputs` to annotate the inputs shape. */
     readonly inputs: DocumentInputs<Tmpl>;
     request(
@@ -240,6 +246,7 @@ function makeDocument<Tmpl extends Record<string, AnyLeaf>>(template: Tmpl): nev
 function hydrate(leaf: AnyLeaf, result: KeymaLeafResult): KeymaLeafResult {
     if (!result.ok) return result;
     if (leaf.op === "delete") return result;
+    if (leaf.op === "count") return result;
     const data = result.data;
     if (data === null || data === undefined) return result;
     const Class = leaf.schemaClass as unknown as new (value?: Record<string, unknown>) => unknown;
@@ -339,6 +346,11 @@ function buildOperation(
             }
             const op: KeymaOperation = { op: "traverse", schema: schemaName, spec };
             if (leaf.project !== undefined) op.project = leaf.project;
+            return op;
+        }
+        case "count": {
+            const op: KeymaOperation = { op: "count", schema: schemaName };
+            if (leaf.where !== undefined) op.where = substitute(leaf.where, leafInputs);
             return op;
         }
     }
@@ -675,8 +687,21 @@ function traverse(cls: SchemaClass, args: unknown): TraverseLeaf<unknown, {}, un
     return leaf as TraverseLeaf<unknown, {}, unknown>;
 }
 
-function query<Tmpl extends Record<string, QueryLeaf>>(template: Tmpl): QueryDocument<Tmpl> {
-    return makeDocument(template) as QueryDocument<Tmpl>;
+function count<C extends SchemaClass, W extends WhereArg<RecordOf<C>>>(
+    cls: C,
+    where?: W,
+): CountLeaf<InputsIn<RecordOf<C>, W>> {
+    return {
+        op: "count",
+        schemaClass: cls as unknown as SchemaClass<unknown>,
+        where: where as Record<string, unknown> | undefined,
+    } as CountLeaf<InputsIn<RecordOf<C>, W>>;
+}
+
+function query<Tmpl extends Record<string, QueryLeaf>>(template: Tmpl): QueryDocument<Tmpl>;
+function query<Tmpl extends Record<string, QueryLeaf | CountLeaf>>(template: Tmpl): QueryDocument<Tmpl>;
+function query<Tmpl extends Record<string, QueryLeaf | CountLeaf>>(template: Tmpl): QueryDocument<Tmpl> {
+    return makeDocument(template as unknown as Record<string, AnyLeaf>) as QueryDocument<Tmpl>;
 }
 
 function mutation<Tmpl extends Record<string, MutationLeaf>>(
@@ -698,6 +723,7 @@ export const Keyma = {
     update,
     delete: del,
     traverse,
+    count,
     input,
 } as const;
 

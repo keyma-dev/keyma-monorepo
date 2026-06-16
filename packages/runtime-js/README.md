@@ -14,21 +14,6 @@ Beyond `@keyma/dsl` (which is type-only at runtime), this package has zero produ
 
 Generated code embeds static `SchemaMetadata` and consumes the runtime through the `@keyma/runtime-js` import. Adapters (e.g. `@keyma/adapter-mongodb-js`, `@keyma/adapter-sqlite-js`) implement `KeymaDatabaseAdapter` and plug into `KeymaServer`.
 
-## Exports
-
-| Concern | Exports |
-|---|---|
-| Schema metadata | `SchemaMetadata`, `FieldMetadata`, `EdgeMetadata`, `FieldType`, `FieldIndex`, `SchemaIndex`, `ValidatorSpec`, `FormatterSpec`, `SchemaClass`, `RecordOf`, `brandSchema` |
-| Wire protocol | `KeymaRequest`, `KeymaBatchResponse`, `KeymaLeafResult`, `KeymaLeafSuccess`, `KeymaLeafFailure`, `KeymaOperation`, `ProjectionSpec`, `ListOptions`, `Transport`, `TraversalSpec`, `TraversalStep`, `TraversalDirection`, `TraversalEmit` |
-| Query builder | `Keyma.query`, `Keyma.mutation`, `Keyma.list`, `Keyma.read`, `Keyma.create`, `Keyma.update`, `Keyma.delete`, `Keyma.traverse`, `Keyma.input`; plus leaf and document types (`AnyLeaf`, `QueryDocument`, `MutationDocument`, `RequestResults`, `DocumentInputs`, …) |
-| Server | `KeymaServer`, `createDirectTransport` |
-| Adapter contract | `KeymaDatabaseAdapter`, `ListQuery`, `AdapterProjection`, `AdapterFieldSpec`, `PopulateSpec`, `PopulateNode`, `AdapterCapabilities`, `AdapterTraversalContext`, `AdapterTraversalResult` |
-| Plugin contract | `KeymaServerPlugin`, `PluginServerHandle`, `RequestContext`, `AclAction` |
-| Validation | `validate`, `createDefaultValidatorRegistry`, `ValidatorFn`, `ValidatorRegistry`, `ValidatorContext` |
-| Formatting | `format`, `createDefaultFormatterRegistry`, `FormatterFn`, `FormatterRegistry`, `FormatterContext` |
-| Serialization | `serialize`, `deserialize`, `SerializeTarget`, `applyMaterializers`, `MaterializerFn` |
-| Errors | `KeymaError`, `KeymaRuntimeError`, `KeymaPluginError`, `KeymaAdapterError`, `ErrorSource`, `isPluginFailure`, `isAdapterFailure`, `isRuntimeFailure` |
-
 ## Minimal server
 
 ```ts
@@ -46,36 +31,6 @@ const transport = createDirectTransport(server);
 ```
 
 `createDirectTransport` accepts an optional `contextFactory` that runs per request — wire it to `AsyncLocalStorage` (or whatever your framework uses) to surface a `RequestContext` with `identity` to plugins.
-
-## Custom validators and formatters
-
-The default registries cover the built-in markers from `@keyma/dsl` (`required`, `minLength`, `isEmailAddress`, `trim`, `normalizeEmail`, …). Extend them with project-specific rules and pass the registry to `KeymaServer`:
-
-```ts
-import {
-    KeymaServer,
-    createDefaultValidatorRegistry,
-    createDefaultFormatterRegistry,
-    type ValidatorFn,
-    type FormatterFn,
-} from "@keyma/runtime-js";
-
-const validators = createDefaultValidatorRegistry();
-const isShortSlug: ValidatorFn = (value, _spec, field) =>
-    typeof value === "string" && /^[a-z0-9-]{1,32}$/.test(value)
-        ? null
-        : { field, kind: "isShortSlug", message: `${field} must be a short slug` };
-validators.set("isShortSlug", isShortSlug);
-
-const formatters = createDefaultFormatterRegistry();
-const stripDiacritics: FormatterFn = (value) =>
-    typeof value === "string" ? value.normalize("NFD").replace(/\p{Diacritic}/gu, "") : value;
-formatters.set("stripDiacritics", stripDiacritics);
-
-const server = new KeymaServer({ schemas, adapter, validators, formatters });
-```
-
-Validators and formatters reference each other through the `kind` field on the spec; the names you register here must match the marker names emitted by the compiler.
 
 ## Writing a database adapter
 

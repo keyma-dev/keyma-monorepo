@@ -87,6 +87,10 @@ class InMemoryAdapter implements KeymaDatabaseAdapter {
         this.storeFor(s).delete(where["id"] as string);
     }
 
+    async count(s: SchemaMetadata, where: Record<string, unknown>): Promise<number> {
+        return this.storeFor(s).size;
+    }
+
     private applyProjection(
         record: Record<string, unknown>,
         projection: AdapterProjection,

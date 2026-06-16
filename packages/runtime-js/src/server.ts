@@ -141,6 +141,9 @@ export class KeymaServer {
                 case "traverse":
                     result = await this.handleTraverse(schema, op, context);
                     break;
+                case "count":
+                    result = await this.handleCount(schema, op, context);
+                    break;
             }
         } catch (err) {
             result = errorToResult(err);
@@ -263,7 +266,11 @@ export class KeymaServer {
     ): Promise<KeymaLeafResult> {
         let data = { ...op.data };
         await format(schema, data, "save", this.opts.formatters);
-        const errors = await validate(schema, data, this.opts.validators);
+        const writableSchema: SchemaMetadata = {
+            ...schema,
+            fields: schema.fields.filter((f) => f.name !== 'id'),
+        };
+        const errors = await validate(writableSchema, data, this.opts.validators);
         if (errors.length > 0) {
             throw new ValidationFailedError(errors);
         }
@@ -303,6 +310,16 @@ export class KeymaServer {
         const where = await this.runFilterHooks(context, schema, op.where, "delete");
         await this.opts.adapter.delete(schema, where);
         return { ok: true, data: null };
+    }
+
+    private async handleCount(
+        schema: SchemaMetadata,
+        op: Extract<KeymaOperation, { op: "count" }>,
+        context: RequestContext,
+    ): Promise<KeymaLeafResult> {
+        const where = await this.runFilterHooks(context, schema, op.where ?? {}, "count");
+        let n: number = await this.opts.adapter.count(schema, where);
+        return { ok: true, data: n };
     }
 
     // ── Hook folds ───────────────────────────────────────────────────────────

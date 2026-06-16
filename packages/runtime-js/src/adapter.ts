@@ -121,6 +121,12 @@ export interface KeymaDatabaseAdapter {
         where: Record<string, unknown>,
     ): Promise<void>;
 
+    /** Native document count with an optional filter */
+    count(
+        schema: SchemaMetadata,
+        where?: Record<string, unknown>
+    ): Promise<number>;
+
     /** Optional graph traversal. Implementations are responsible for honoring
      *  the spec's `start`, `steps`/`repeat`+`depth`, `where`, and `emit`. */
     traverse?(
@@ -128,4 +134,6 @@ export interface KeymaDatabaseAdapter {
         spec: TraversalSpec,
         projection?: AdapterProjection,
     ): Promise<AdapterTraversalResult>;
+
+
 }

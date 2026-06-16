@@ -80,7 +80,8 @@ export type KeymaOperation =
           schema: string;
           spec: TraversalSpec;
           project?: ProjectionSpec;
-      };
+      }
+    | { op: "count"; schema: string; where?: Record<string, unknown> };
 
 export type KeymaRequest = {
     operations: Record<string, KeymaOperation>;
