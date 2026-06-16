@@ -112,11 +112,16 @@ export async function loadRulesFor(
 }
 
 /** Map a runtime operation action onto the ACL action vocabulary. The runtime
- *  dispatches `list`, `read`, and `traverse` as distinct actions, but they are
- *  all reads as far as ACL is concerned, so they collapse to `read`. Write
- *  actions pass through unchanged. */
+ *  dispatches `list`, `read`, `traverse`, and `count` as distinct actions, but
+ *  they are all reads as far as ACL is concerned, so they collapse to `read`.
+ *  Write actions pass through unchanged. */
 export function normalizeAction(action: KeymaAction): AclAction {
-    if (action === "list" || action === "read" || action === "traverse") {
+    if (
+        action === "list" ||
+        action === "read" ||
+        action === "traverse" ||
+        action === "count"
+    ) {
         return "read";
     }
     return action;

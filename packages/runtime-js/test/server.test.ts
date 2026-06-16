@@ -1,14 +1,8 @@
 import { describe, it } from "node:test";
 import assert from "node:assert/strict";
 import { KeymaServer } from "../src/server.js";
-import type {
-    KeymaDatabaseAdapter,
-    ListQuery,
-    AdapterProjection,
-    AdapterFieldSpec,
-} from "../src/adapter.js";
+import { InMemoryAdapter } from "../src/testing.js";
 import type { KeymaRequest, KeymaLeafFailure, KeymaLeafSuccess } from "../src/protocol.js";
-import type { SchemaMetadata } from "../src/types.js";
 import type { ValidatorRegistry } from "../src/validate.js";
 import type { FormatterRegistry } from "../src/format.js";
 import {
@@ -17,142 +11,6 @@ import {
     ADDRESS_SCHEMA,
     SECRET_SCHEMA,
 } from "./fixtures.js";
-
-// ─── In-memory adapter ───────────────────────────────────────────────────────
-
-class InMemoryAdapter implements KeymaDatabaseAdapter {
-    public stores = new Map<string, Map<string, Record<string, unknown>>>();
-    private counter = 0;
-
-    private storeFor(schema: SchemaMetadata): Map<string, Record<string, unknown>> {
-        let s = this.stores.get(schema.name);
-        if (s === undefined) {
-            s = new Map();
-            this.stores.set(schema.name, s);
-        }
-        return s;
-    }
-
-    async ensureSchema(schema: SchemaMetadata): Promise<void> {
-        this.storeFor(schema);
-    }
-
-    async create(
-        schema: SchemaMetadata,
-        data: Record<string, unknown>,
-        projection?: AdapterProjection,
-    ): Promise<Record<string, unknown>> {
-        const store = this.storeFor(schema);
-        const id = (data["id"] as string | undefined) ?? `${schema.name}-${++this.counter}`;
-        const record = { ...data, id };
-        store.set(id, record);
-        return projection !== undefined ? this.applyProjection(record, projection) : record;
-    }
-
-    async read(
-        schema: SchemaMetadata,
-        where: Record<string, unknown>,
-        projection?: AdapterProjection,
-    ): Promise<Record<string, unknown> | null> {
-        const store = this.storeFor(schema);
-        const id = where["id"] as string;
-        const record = store.get(id) ?? null;
-        if (record === null || projection === undefined) return record;
-        return this.applyProjection(record, projection);
-    }
-
-    async list(
-        schema: SchemaMetadata,
-        query: ListQuery,
-    ): Promise<Record<string, unknown>[]> {
-        let results = [...this.storeFor(schema).values()];
-        if (query.skip !== undefined) results = results.slice(query.skip);
-        if (query.limit !== undefined) results = results.slice(0, query.limit);
-        if (query.projection !== undefined) {
-            const proj = query.projection;
-            results = results.map((r) => this.applyProjection(r, proj));
-        }
-        return results;
-    }
-
-    async update(
-        schema: SchemaMetadata,
-        where: Record<string, unknown>,
-        data: Record<string, unknown>,
-        projection?: AdapterProjection,
-    ): Promise<Record<string, unknown>> {
-        const store = this.storeFor(schema);
-        const id = where["id"] as string;
-        const existing = store.get(id) ?? {};
-        const updated = { ...existing, ...data, id };
-        store.set(id, updated);
-        return projection !== undefined ? this.applyProjection(updated, projection) : updated;
-    }
-
-    async delete(schema: SchemaMetadata, where: Record<string, unknown>): Promise<void> {
-        const store = this.storeFor(schema);
-        const id = where["id"] as string;
-        store.delete(id);
-    }
-
-    async count(schema: SchemaMetadata, where?: Record<string, unknown>): Promise<number> {
-        const store = this.storeFor(schema);
-        return store.size;
-    }
-
-    private applyProjection(
-        record: Record<string, unknown>,
-        projection: AdapterProjection,
-    ): Record<string, unknown> {
-        const result: Record<string, unknown> = {};
-        for (const [key, spec] of Object.entries(projection.fields ?? {})) {
-            if (spec === 1) {
-                result[key] = record[key];
-            } else {
-                const value = record[key];
-                result[key] =
-                    typeof value === "object" && value !== null
-                        ? this.applyEmbeddedSpec(value as Record<string, unknown>, spec)
-                        : null;
-            }
-        }
-        for (const [field, node] of Object.entries(projection.populate ?? {})) {
-            const value = record[field];
-            if (typeof value !== "string") {
-                result[field] = null;
-                continue;
-            }
-            const referenced = this.storeFor(node.schema).get(value) ?? null;
-            if (referenced === null) {
-                result[field] = null;
-            } else if (node.projection !== undefined) {
-                result[field] = this.applyProjection(referenced, node.projection);
-            } else {
-                result[field] = referenced;
-            }
-        }
-        return result;
-    }
-
-    private applyEmbeddedSpec(
-        value: Record<string, unknown>,
-        spec: { [key: string]: AdapterFieldSpec },
-    ): Record<string, unknown> {
-        const result: Record<string, unknown> = {};
-        for (const [key, sub] of Object.entries(spec)) {
-            if (sub === 1) {
-                result[key] = value[key];
-            } else {
-                const nested = value[key];
-                result[key] =
-                    typeof nested === "object" && nested !== null
-                        ? this.applyEmbeddedSpec(nested as Record<string, unknown>, sub)
-                        : null;
-            }
-        }
-        return result;
-    }
-}
 
 function makeServer(opts: {
     validators?: ValidatorRegistry;

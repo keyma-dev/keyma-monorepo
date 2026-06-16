@@ -3,13 +3,7 @@ import assert from "node:assert/strict";
 import { Keyma } from "../src/query.js";
 import { KeymaServer } from "../src/server.js";
 import { createDirectTransport } from "../src/client.js";
-import type {
-    KeymaDatabaseAdapter,
-    ListQuery,
-    AdapterProjection,
-    AdapterFieldSpec,
-} from "../src/adapter.js";
-import type { SchemaMetadata } from "../src/types.js";
+import { InMemoryAdapter } from "../src/testing.js";
 import type { ValidatorRegistry } from "../src/validate.js";
 import {
     User,
@@ -18,132 +12,6 @@ import {
     ORGANIZATION_SCHEMA,
     ADDRESS_SCHEMA,
 } from "./fixtures.js";
-
-class InMemoryAdapter implements KeymaDatabaseAdapter {
-    public stores = new Map<string, Map<string, Record<string, unknown>>>();
-    private counter = 0;
-
-    private storeFor(s: SchemaMetadata): Map<string, Record<string, unknown>> {
-        let st = this.stores.get(s.name);
-        if (st === undefined) {
-            st = new Map();
-            this.stores.set(s.name, st);
-        }
-        return st;
-    }
-
-    async ensureSchema(s: SchemaMetadata): Promise<void> {
-        this.storeFor(s);
-    }
-
-    async create(
-        s: SchemaMetadata,
-        data: Record<string, unknown>,
-        projection?: AdapterProjection,
-    ): Promise<Record<string, unknown>> {
-        const store = this.storeFor(s);
-        const id = (data["id"] as string | undefined) ?? `${s.name}-${++this.counter}`;
-        const record = { ...data, id };
-        store.set(id, record);
-        return projection !== undefined ? this.applyProjection(record, projection) : record;
-    }
-
-    async read(
-        s: SchemaMetadata,
-        where: Record<string, unknown>,
-        projection?: AdapterProjection,
-    ): Promise<Record<string, unknown> | null> {
-        const record = this.storeFor(s).get(where["id"] as string) ?? null;
-        if (record === null || projection === undefined) return record;
-        return this.applyProjection(record, projection);
-    }
-
-    async list(s: SchemaMetadata, q: ListQuery): Promise<Record<string, unknown>[]> {
-        let r = [...this.storeFor(s).values()];
-        if (q.skip !== undefined) r = r.slice(q.skip);
-        if (q.limit !== undefined) r = r.slice(0, q.limit);
-        if (q.projection !== undefined) {
-            const proj = q.projection;
-            r = r.map((record) => this.applyProjection(record, proj));
-        }
-        return r;
-    }
-
-    async update(
-        s: SchemaMetadata,
-        where: Record<string, unknown>,
-        data: Record<string, unknown>,
-        projection?: AdapterProjection,
-    ): Promise<Record<string, unknown>> {
-        const store = this.storeFor(s);
-        const id = where["id"] as string;
-        const existing = store.get(id) ?? {};
-        const updated = { ...existing, ...data, id };
-        store.set(id, updated);
-        return projection !== undefined ? this.applyProjection(updated, projection) : updated;
-    }
-
-    async delete(s: SchemaMetadata, where: Record<string, unknown>): Promise<void> {
-        this.storeFor(s).delete(where["id"] as string);
-    }
-
-    async count(s: SchemaMetadata, where: Record<string, unknown>): Promise<number> {
-        return this.storeFor(s).size;
-    }
-
-    private applyProjection(
-        record: Record<string, unknown>,
-        projection: AdapterProjection,
-    ): Record<string, unknown> {
-        const result: Record<string, unknown> = {};
-        for (const [key, spec] of Object.entries(projection.fields ?? {})) {
-            if (spec === 1) {
-                result[key] = record[key];
-            } else {
-                const value = record[key];
-                result[key] =
-                    typeof value === "object" && value !== null
-                        ? this.applyEmbeddedSpec(value as Record<string, unknown>, spec)
-                        : null;
-            }
-        }
-        for (const [field, node] of Object.entries(projection.populate ?? {})) {
-            const value = record[field];
-            if (typeof value !== "string") {
-                result[field] = null;
-                continue;
-            }
-            const referenced = this.storeFor(node.schema).get(value) ?? null;
-            if (referenced === null) {
-                result[field] = null;
-            } else if (node.projection !== undefined) {
-                result[field] = this.applyProjection(referenced, node.projection);
-            } else {
-                result[field] = referenced;
-            }
-        }
-        return result;
-    }
-
-    private applyEmbeddedSpec(
-        value: Record<string, unknown>,
-        spec: { [key: string]: AdapterFieldSpec },
-    ): Record<string, unknown> {
-        const result: Record<string, unknown> = {};
-        for (const [key, sub] of Object.entries(spec)) {
-            if (sub === 1) {
-                result[key] = value[key];
-            } else {
-                const nested = value[key];
-                result[key] =
-                    typeof nested === "object" && nested !== null
-                        ? this.applyEmbeddedSpec(nested as Record<string, unknown>, sub)
-                        : null;
-            }
-        }
-        return result;
-    }
-}
 
 const EMAIL_RE = /^[^\s@]+@[^\s@]+\.[^\s@]{2,}$/;
 
