@@ -86,7 +86,9 @@ export class AclServerPlugin implements KeymaServerPlugin {
 		op: KeymaOperation,
 	) {
 		if (ctx.identity?.isSystem === true) return;
-		if (op.op === "traverse") return; // transformOperation handles traversals
+		if (op.op === "traverse" && this.options.allowUserTraverse !== true) {
+			throw new AclDenied("User-initiated traversals are not allowed");
+		}
 	}
 
 	/** Rewrite the where clause for list/read/update/delete. Return undefined

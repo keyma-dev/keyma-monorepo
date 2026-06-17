@@ -35,11 +35,17 @@ export type AclRule = {
 };
 
 export type AclPluginOptions = {
+
+    /** Allow traversals by non-system users. Default: false */
+    allowUserTraverse?: boolean;
+
     /** Silent-strip disallowed write fields instead of throwing FIELD_FORBIDDEN. */
     stripWrites?: boolean;
+
     /** If true, ACL-stripped reads return null with a structured FORBIDDEN
      *  error instead of NOT_FOUND. v1 default is false (don't leak existence). */
     leakExistence?: boolean;
+
     /** Optional logger for plugin-level diagnostics (rule load failures, etc.). */
     logger?: (level: "warn" | "error", message: string, details?: unknown) => void;
 };

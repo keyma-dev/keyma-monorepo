@@ -11,6 +11,8 @@
     "declaration": true,
     "declarationMap": true,
     "sourceMap": true,
-    "skipLibCheck": true
+    "skipLibCheck": false,
+    "types": ["node"]
+
   }
 }

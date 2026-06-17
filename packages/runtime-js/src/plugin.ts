@@ -61,7 +61,7 @@ export interface KeymaServerPlugin {
         action: KeymaAction,
     ): Promise<AdapterProjection | undefined> | AdapterProjection | undefined;
 
-    /** Validate/strip a write payload for create/update/delete. Throw a KeymaPluginError
+    /** Validate/strip a payload for create/update/delete. Throw a KeymaPluginError
      *  for hard reject. Return data (possibly mutated) or void. */
     checkWrite?(
         ctx: RequestContext,

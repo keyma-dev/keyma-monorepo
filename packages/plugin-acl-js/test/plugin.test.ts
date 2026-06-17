@@ -278,6 +278,7 @@ describe("ACL plugin — read", () => {
         assert.equal(a.ok, true);
         assert.equal(a.data["id"], "p1");
     });
+
 });
 
 describe("ACL plugin — read consolidation", () => {

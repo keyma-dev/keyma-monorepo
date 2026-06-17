@@ -55,6 +55,7 @@ export class MyAdapter implements KeymaDatabaseAdapter {
     async list(schema: SchemaMetadata, query: ListQuery) { /* … */ }
     async update(schema: SchemaMetadata, where: Record<string, unknown>, data: Record<string, unknown>, projection?: AdapterProjection) { /* … */ }
     async delete(schema: SchemaMetadata, where: Record<string, unknown>): Promise<void> { /* … */ }
+	async count(schema: SchemaMetadata, where: Record<string, unknown>): Promise<number> { /* … */ }
 }
 ```
 
@@ -84,7 +85,7 @@ Plugins implement `KeymaServerPlugin`. See the "Server plugins" section in the r
 Throwing any subclass of `KeymaError` from a plugin or adapter produces a structured `KeymaLeafFailure` on the wire:
 
 ```ts
-{ ok: false, code: "FORBIDDEN", error: "...", source: "plugin", origin: "@keyma/my-plugin", /* extras */ }
+const error = { ok: false, code: "FORBIDDEN", error: "...", source: "plugin", origin: "@keyma/my-plugin", /* extras */ }
 ```
 
 - `KeymaRuntimeError` — `source: "runtime"`; raised by the server (validation, missing schema, NOT_FOUND, …).
