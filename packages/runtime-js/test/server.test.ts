@@ -10,6 +10,7 @@ import {
     ORGANIZATION_SCHEMA,
     ADDRESS_SCHEMA,
     SECRET_SCHEMA,
+    LOGIN_INPUT_SCHEMA,
 } from "./fixtures.js";
 
 function makeServer(opts: {
@@ -241,6 +242,39 @@ describe("KeymaServer — private schema visibility", () => {
         const a = resp.results["a"] as KeymaLeafSuccess<Record<string, unknown>>;
         assert.equal(a.ok, true);
         assert.equal(a.data["value"], "shh");
+    });
+});
+
+describe("KeymaServer — ephemeral schemas", () => {
+    function makeServerWithEphemeral(): { server: KeymaServer; adapter: InMemoryAdapter } {
+        const adapter = new InMemoryAdapter();
+        const server = new KeymaServer({
+            schemas: [USER_SCHEMA, LOGIN_INPUT_SCHEMA],
+            adapter,
+        });
+        return { server, adapter };
+    }
+
+    it("ensureSchemas does not provision a store for an ephemeral schema", async () => {
+        const { server, adapter } = makeServerWithEphemeral();
+        await server.ensureSchemas();
+        assert.equal(adapter.stores.has("loginInput"), false);
+        assert.equal(adapter.stores.has("user"), true);
+    });
+
+    it("rejects CRUD ops targeting an ephemeral schema with NOT_PERSISTED", async () => {
+        const { server } = makeServerWithEphemeral();
+        const resp = await server.handle({
+            operations: {
+                a: { op: "create", schema: "loginInput", data: { email: "a@b.com", password: "x" } },
+                b: { op: "list", schema: "loginInput" },
+            },
+        });
+        const a = resp.results["a"] as KeymaLeafFailure;
+        const b = resp.results["b"] as KeymaLeafFailure;
+        assert.equal(a.ok, false);
+        assert.equal(a.code, "NOT_PERSISTED");
+        assert.equal(b.code, "NOT_PERSISTED");
     });
 });
 

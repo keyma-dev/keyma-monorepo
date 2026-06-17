@@ -18,10 +18,11 @@ export type DiscoveredSchema = {
     classNode: ts.ClassDeclaration;
     className: string;
     sourceFile: ts.SourceFile;
-    /** Options from @Schema({ name, private, description }). */
+    /** Options from @Schema({ name, private, ephemeral, description }). */
     schemaOptions: {
         name?: string;
         private?: boolean;
+        ephemeral?: boolean;
         description?: string;
     };
     /** Source name of the direct parent @Schema class, if any. */
@@ -145,6 +146,9 @@ function extractSchemaOptions(
         } else if (key === "private") {
             if (val.kind === ts.SyntaxKind.TrueKeyword) opts.private = true;
             if (val.kind === ts.SyntaxKind.FalseKeyword) opts.private = false;
+        } else if (key === "ephemeral") {
+            if (val.kind === ts.SyntaxKind.TrueKeyword) opts.ephemeral = true;
+            if (val.kind === ts.SyntaxKind.FalseKeyword) opts.ephemeral = false;
         } else if (key === "description" && ts.isStringLiteral(val)) {
             opts.description = val.text;
         }

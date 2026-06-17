@@ -60,6 +60,22 @@ describe("validateIR", () => {
         assert.ok(result.errors.some(e => e.path === "schemas"));
     });
 
+    it("accepts an ephemeral schema and an ephemeral field", () => {
+        const doc = {
+            ...goldenIR,
+            schemas: [
+                {
+                    ...minimalSchema,
+                    ephemeral: true,
+                    fields: [{ ...minimalField, ephemeral: true }],
+                },
+            ],
+        };
+        const result = validateIR(doc);
+        assert.equal(result.valid, true, JSON.stringify(result.errors));
+        assert.deepEqual(result.errors, []);
+    });
+
     it("rejects invalid schema visibility", () => {
         const doc = {
             ...goldenIR,

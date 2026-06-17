@@ -116,6 +116,9 @@ export function extractSchema(
         source: discovered.source,
     };
 
+    if (schemaOptions.ephemeral === true) {
+        schema.ephemeral = true;
+    }
     if (schemaOptions.description !== undefined) {
         schema.description = schemaOptions.description;
     }

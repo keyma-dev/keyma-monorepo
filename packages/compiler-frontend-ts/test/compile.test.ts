@@ -205,6 +205,30 @@ describe("compile visibility", () => {
     });
 });
 
+// ─── Golden IR — ephemeral ────────────────────────────────────────────────────
+
+describe("compile ephemeral", () => {
+    const result = compile({ files: [fixture("ephemeral.ts")] });
+
+    it("produces no errors", () => {
+        assert.deepEqual(errorCodes(result), [], `Errors: ${JSON.stringify(result.diagnostics)}`);
+    });
+
+    it("LoginInput schema is ephemeral", () => {
+        const input = schemaByName(result, "LoginInput");
+        assert.equal(input.ephemeral, true);
+    });
+
+    it("persisted AuditEntry is not ephemeral", () => {
+        const audit = schemaByName(result, "AuditEntry");
+        assert.notEqual(audit.ephemeral, true);
+    });
+
+    it("embedding an ephemeral schema is allowed (no KEYMA035)", () => {
+        assert.ok(!hasError(result, CODES.KEYMA035), `Unexpected KEYMA035. Got: ${JSON.stringify(result.diagnostics)}`);
+    });
+});
+
 // ─── Golden IR — computed getters ────────────────────────────────────────────
 
 describe("compile computed getters", () => {
@@ -338,6 +362,57 @@ describe("KEYMA031 — public schema leaks private schema", () => {
             `,
         });
         assert.ok(hasError(result, CODES.KEYMA031), `Expected KEYMA031. Got: ${JSON.stringify(result.diagnostics)}`);
+    });
+});
+
+describe("KEYMA035 — persisted schema references ephemeral schema", () => {
+    it("emits KEYMA035 when a persisted schema holds a Reference to an ephemeral schema", () => {
+        const result = cv({
+            "schema.ts": `
+                import { Schema } from "@keyma/dsl";
+                import type { ID, Reference } from "@keyma/dsl";
+                @Schema({ name: "token", ephemeral: true }) class Token {
+                    declare id: ID;
+                }
+                @Schema({ name: "session" }) class Session {
+                    declare id: ID;
+                    declare token: Reference<Token>;
+                }
+            `,
+        });
+        assert.ok(hasError(result, CODES.KEYMA035), `Expected KEYMA035. Got: ${JSON.stringify(result.diagnostics)}`);
+    });
+
+    it("does not emit KEYMA035 for Embedded of an ephemeral schema", () => {
+        const result = cv({
+            "schema.ts": `
+                import { Schema } from "@keyma/dsl";
+                import type { ID, Embedded } from "@keyma/dsl";
+                @Schema({ name: "token", ephemeral: true }) class Token {
+                    declare id: ID;
+                }
+                @Schema({ name: "session" }) class Session {
+                    declare id: ID;
+                    declare token: Embedded<Token>;
+                }
+            `,
+        });
+        assert.ok(!hasError(result, CODES.KEYMA035), `Unexpected KEYMA035. Got: ${JSON.stringify(result.diagnostics)}`);
+    });
+});
+
+describe("KEYMA036 — indexes on ephemeral schema (warning)", () => {
+    it("warns when an ephemeral schema declares a field index", () => {
+        const result = cv({
+            "schema.ts": `
+                import { Schema, Indexed } from "@keyma/dsl";
+                @Schema({ name: "payload", ephemeral: true }) class Payload {
+                    @Indexed() declare key: string;
+                }
+            `,
+        });
+        const hasWarn = result.diagnostics.some((d) => d.code === CODES.KEYMA036 && d.severity === "warning");
+        assert.ok(hasWarn, `Expected KEYMA036 warning. Got: ${JSON.stringify(result.diagnostics)}`);
     });
 });
 

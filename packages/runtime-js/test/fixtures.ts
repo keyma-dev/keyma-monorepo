@@ -247,6 +247,16 @@ export const SECRET_SCHEMA: SchemaMetadata = {
     ],
 };
 
+export const LOGIN_INPUT_SCHEMA: SchemaMetadata = {
+    name: "loginInput",
+    sourceName: "LoginInput",
+    ephemeral: true,
+    fields: [
+        { name: "email", type: { kind: "string" }, validators: [{ name: "required" }] },
+        { name: "password", type: { kind: "string" }, validators: [{ name: "required" }] },
+    ],
+};
+
 export const PRIVATE_EDGE_SCHEMA: SchemaMetadata = {
     name: "privateEdge",
     sourceName: "PrivateEdge",

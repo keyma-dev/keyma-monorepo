@@ -112,6 +112,24 @@ const PRIVATE_SCHEMA_IR: KeymaIR = {
     diagnostics: [],
 };
 
+const EPHEMERAL_SCHEMA_IR: KeymaIR = {
+    irVersion: "1.0.0",
+    compilerVersion: "0.1.0",
+    schemas: [
+        {
+            id: "schema:login_input",
+            name: "login_input",
+            sourceName: "LoginInput",
+            ephemeral: true,
+            visibility: "public",
+            fields: [{ name: "email", type: { kind: "string" }, visibility: "public", readonly: false, required: true, validators: [], formatters: [], indexes: [], source: SRC }],
+            indexes: [],
+            source: SRC,
+        },
+    ],
+    diagnostics: [],
+};
+
 const REFS_IR: KeymaIR = {
     irVersion: "1.0.0",
     compilerVersion: "0.1.0",
@@ -550,6 +568,40 @@ describe("emitJs — private schema visibility", () => {
     it("private schema model is not emitted in client bundle", () => {
         const clientPaths = files.filter((f) => f.path.startsWith("dist/js/client/")).map((f) => f.path);
         assert.ok(!clientPaths.includes("dist/js/client/models/credentials.js"), "private schema should not appear in client");
+    });
+});
+
+// ─── Ephemeral schemas ───────────────────────────────────────────────────────
+
+describe("emitJs — ephemeral schema", () => {
+    let files: { path: string; content: string | Uint8Array }[];
+
+    before(async () => {
+        const result = await emitJs(EPHEMERAL_SCHEMA_IR, bothTarget(), RESOLVED_CONFIG);
+        files = result.files;
+    });
+
+    it("ephemeral schema is emitted into BOTH client and server bundles", () => {
+        const clientPaths = files.filter((f) => f.path.includes("client/")).map((f) => f.path);
+        const serverPaths = files.filter((f) => f.path.includes("server/")).map((f) => f.path);
+        assert.ok(clientPaths.some((p) => p.includes("login_input")), "ephemeral schema model should be in client");
+        assert.ok(serverPaths.some((p) => p.includes("login_input")), "ephemeral schema model should be in server");
+    });
+
+    it("ephemeral schema appears in the client index", () => {
+        const content = fileContent(files, "dist/js/client/index.js");
+        assert.ok(content.includes("LoginInput"), "ephemeral schema should appear in client index");
+    });
+
+    it("ephemeral schema metadata carries the ephemeral flag in both bundles", () => {
+        for (const bundle of ["client", "server"]) {
+            const content = fileContent(files, `dist/js/${bundle}/models/login_input.js`);
+            assert.match(
+                content,
+                /"ephemeral":\s*true/,
+                `${bundle}-emitted ephemeral schema must include ephemeral: true so the runtime skips persistence`,
+            );
+        }
     });
 });
 

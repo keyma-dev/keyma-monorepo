@@ -24,6 +24,8 @@ export const KEYMA031 = "KEYMA031"; // Public schema leaks private schema
 export const KEYMA032 = "KEYMA032"; // Public schema extends private parent
 export const KEYMA033 = "KEYMA033"; // Child extends a non-@Schema-decorated class
 export const KEYMA034 = "KEYMA034"; // Child field overrides parent with incompatible type
+export const KEYMA035 = "KEYMA035"; // Persisted schema references an ephemeral schema via Reference<T>
+export const KEYMA036 = "KEYMA036"; // Indexes declared on an ephemeral schema have no effect
 
 // Index errors
 export const KEYMA016 = "KEYMA016"; // Invalid @Indexed direction value (must be 1, -1, or "text")

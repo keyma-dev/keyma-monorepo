@@ -57,6 +57,7 @@
         "name": { "type": "string", "minLength": 1 },
         "sourceName": { "type": "string", "minLength": 1 },
         "visibility": { "type": "string", "enum": ["public", "private"] },
+        "ephemeral": { "type": "boolean" },
         "description": { "type": "string" },
         "fields": {
           "type": "array",
@@ -93,6 +94,7 @@
           "items": { "$ref": "#/$defs/IRFieldIndex" }
         },
         "computed": { "$ref": "#/$defs/IRComputed" },
+        "ephemeral": { "type": "boolean" },
         "source": { "$ref": "#/$defs/IRSourceLocation" }
       }
     },

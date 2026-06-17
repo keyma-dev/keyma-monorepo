@@ -151,6 +151,8 @@ export type IRSchema = {
     name: string;
     sourceName: string;
     visibility: "public" | "private";
+    /** When true, this schema is never persisted to the database. */
+    ephemeral?: boolean;
     description?: string;
     fields: IRField[];
     indexes: IRIndex[];

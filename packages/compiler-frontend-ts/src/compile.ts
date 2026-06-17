@@ -10,8 +10,11 @@ import { extractSchema } from "./extract-schema.js";
 import { flattenAll } from "./flatten.js";
 import {
     mkError,
+    mkWarning,
     KEYMA001,
     KEYMA031,
+    KEYMA035,
+    KEYMA036,
     KEYMA060,
     KEYMA061,
     KEYMA062,
@@ -115,6 +118,10 @@ function compileProgram(program: ts.Program, config: FrontendConfig): CompileRes
     // Post-processing: public schema leaks private schema
     checkVisibilityLeaks(schemas, diagnostics);
 
+    // Post-processing: persisted schemas must not reference ephemeral schemas;
+    // indexes on ephemeral schemas have no effect.
+    checkEphemeralUsage(schemas, diagnostics);
+
     // Post-processing: edge schema structural checks (from/to fields/indexes/refs)
     checkEdgeSchemas(schemas, diagnostics);
 
@@ -175,6 +182,43 @@ function checkVisibilityLeaks(schemas: import("@keyma/ir").IRSchema[], diagnosti
                     )
                 );
             }
+        }
+    }
+}
+
+function checkEphemeralUsage(schemas: import("@keyma/ir").IRSchema[], diagnostics: IRDiagnostic[]): void {
+    const ephemeralSchemas = new Set(schemas.filter((s) => s.ephemeral === true).map((s) => s.sourceName));
+
+    for (const schema of schemas) {
+        // KEYMA035: a persisted (non-ephemeral) schema cannot hold a Reference<T>
+        // to an ephemeral schema — a foreign key to data that is never stored.
+        // Embedded<T> of an ephemeral schema is fine (the data is inlined).
+        if (schema.ephemeral !== true) {
+            for (const field of schema.fields) {
+                const inner = unwrap(field.type);
+                if (inner.kind === "reference" && ephemeralSchemas.has(inner.schema)) {
+                    diagnostics.push(
+                        mkError(
+                            KEYMA035,
+                            `Persisted schema "${schema.sourceName}" references ephemeral schema "${inner.schema}" via field "${field.name}" — ephemeral schemas are never stored and cannot be a reference target`,
+                            field.source,
+                        ),
+                    );
+                }
+            }
+            continue;
+        }
+
+        // KEYMA036: indexes on an ephemeral schema have no effect (nothing is persisted).
+        const hasFieldIndex = schema.fields.some((f) => f.indexes.length > 0);
+        if (schema.indexes.length > 0 || hasFieldIndex) {
+            diagnostics.push(
+                mkWarning(
+                    KEYMA036,
+                    `Ephemeral schema "${schema.sourceName}" declares indexes, which have no effect — ephemeral schemas are never persisted`,
+                    schema.source,
+                ),
+            );
         }
     }
 }

@@ -51,6 +51,8 @@ export class KeymaServer {
     async ensureSchemas(): Promise<void> {
         await this.ensureInitialized();
         for (const schema of this.opts.schemas) {
+            // Ephemeral schemas are never persisted — no collection/table to ensure.
+            if (schema.ephemeral) continue;
             await this.opts.adapter.ensureSchema(schema);
         }
     }
@@ -97,6 +99,8 @@ export class KeymaServer {
             schema: (name) => this.schemaMap.get(name),
             addSchema: async (schema) => {
                 this.schemaMap.set(schema.name, schema);
+                // Ephemeral schemas are never persisted — skip table/collection creation.
+                if (schema.ephemeral) return;
                 // Ensure the adapter creates necessary tables/collections for the new schema
                 await this.opts.adapter.ensureSchema(schema);
             },
@@ -119,6 +123,14 @@ export class KeymaServer {
                 }
             }
             const schema = this.resolveSchema(op.schema, context);
+            // Ephemeral schemas are never persisted and cannot be queried through
+            // the server — they exist only for validation/serialization.
+            if (schema.ephemeral) {
+                throw new KeymaRuntimeError(
+                    "NOT_PERSISTED",
+                    `Schema "${op.schema}" is ephemeral and cannot be queried`,
+                );
+            }
             for (const p of this.plugins) {
                 if (p.beforeOperation !== undefined) await p.beforeOperation(context, op);
             }

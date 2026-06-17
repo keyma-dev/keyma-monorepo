@@ -5,6 +5,9 @@ export type SchemaOptions = {
     name?: string;
     /** When true, this schema is excluded from client-side bundles. */
     private?: boolean;
+    /** When true, this schema is never persisted to the database. Used for
+     *  wire payloads and function-call inputs/outputs. */
+    ephemeral?: boolean;
     /** Human-readable description of this schema. */
     description?: string;
 };

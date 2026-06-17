@@ -69,6 +69,10 @@ export type SchemaMetadata = {
     sourceName: string;
     /** Omitted ≡ "public". Private schemas are emitted only into server bundles. */
     visibility?: "public" | "private";
+    /** When true, this schema is never persisted to the database. It exists only
+     *  for validation/serialization of wire payloads and function I/O, and cannot
+     *  be queried through the server. */
+    ephemeral?: boolean;
     fields: FieldMetadata[];
     indexes?: SchemaIndex[];
     refs?: ReadonlyMap<string, SchemaClass>;

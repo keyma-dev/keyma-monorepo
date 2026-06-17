@@ -137,6 +137,27 @@ class PlainBase {}
 
 A child schema's field overrides a parent field with a different, incompatible type.
 
+### KEYMA035 — Persisted schema references an ephemeral schema
+
+A persisted (non-ephemeral) schema holds a `Reference<T>` to an ephemeral schema. Ephemeral schemas (`@Schema({ ephemeral: true })`) are never stored, so they cannot be a reference (foreign-key) target. `Embedded<T>` of an ephemeral schema is allowed, since the data is inlined rather than referenced.
+
+```typescript
+@Schema({ ephemeral: true }) class Token { declare id: ID; }
+@Schema() class Session {
+    declare token: Reference<Token>; // KEYMA035
+}
+```
+
+### KEYMA036 — Indexes on an ephemeral schema (warning)
+
+An ephemeral schema declares field or composite indexes. Indexes only affect persisted data, so they have no effect on an ephemeral schema.
+
+```typescript
+@Schema({ ephemeral: true }) class Payload {
+    @Indexed() declare key: string; // KEYMA036 (warning)
+}
+```
+
 ---
 
 ## Naming and duplication errors (0040–0049)
