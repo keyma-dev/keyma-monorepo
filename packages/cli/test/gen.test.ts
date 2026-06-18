@@ -63,4 +63,19 @@ describe("keyma gen", () => {
         runGen({ name: "post", cwd: dir });
         assert.throws(() => runGen({ name: "post", cwd: dir }), /already exists/);
     });
+
+    it("can generate a schema in a subfolder", async () => {
+        const dir = join(projectDir, "app-sub");
+        runNew({ name: "app-sub", dir });
+
+        const { path } = runGen({ name: "auth/user", cwd: dir });
+
+        const expectedSubPath = join("src", "auth", "user.ts");
+        assert.ok(path.endsWith(expectedSubPath), `Expected path ${path} to end with ${expectedSubPath}`);
+        assert.ok(existsSync(path), `File ${path} should exist`);
+
+        const content = readFileSync(path, "utf-8");
+        assert.match(content, /@Schema\({ name: "auth-user" }\)/);
+        assert.match(content, /export class AuthUser/);
+    });
 });

@@ -25,6 +25,8 @@ import {
 export type FrontendConfig = {
     /** Absolute paths to user schema TypeScript source files. */
     files: readonly string[];
+    /** Base directory for source files. Used to calculate relative paths in the IR. */
+    baseDir?: string;
     /** TypeScript compiler options (defaults to strict + experimentalDecorators). */
     compilerOptions?: ts.CompilerOptions;
     /** Module name of the Keyma DSL. Defaults to "@keyma/dsl". */
@@ -44,7 +46,13 @@ export type CompileResult = {
 export function compile(config: FrontendConfig): CompileResult {
     const options = { ...DEFAULT_COMPILER_OPTIONS, ...(config.compilerOptions ?? {}) };
     const program = createProgram(config.files, options);
-    return compileProgram(program, config);
+
+    const baseDir = config.baseDir ?? findCommonBase(config.files);
+
+    return compileProgram(program, {
+        ...config,
+        ...(baseDir !== undefined ? { baseDir } : {}),
+    });
 }
 
 /**
@@ -68,7 +76,11 @@ export function compileVirtual(
 
     const options = { ...DEFAULT_COMPILER_OPTIONS, ...(config.compilerOptions ?? {}) };
     const program = createProgram(rootFileNames, options, virtualFiles as VirtualFiles);
-    return compileProgram(program, { ...config, files: rootFileNames });
+    return compileProgram(program, {
+        ...config,
+        ...(baseDir !== undefined ? { baseDir } : {}),
+        files: rootFileNames,
+    });
 }
 
 function compileProgram(program: ts.Program, config: FrontendConfig): CompileResult {
@@ -141,6 +153,7 @@ function compileProgram(program: ts.Program, config: FrontendConfig): CompileRes
     const ir: KeymaIR = {
         irVersion: config.irVersion ?? "1.0.0",
         compilerVersion: config.compilerVersion ?? "0.1.0",
+        ...(config.baseDir !== undefined ? { sourceRoot: config.baseDir } : {}),
         schemas,
         diagnostics,
     };
@@ -367,4 +380,30 @@ function unwrap(type: import("@keyma/ir").IRType): import("@keyma/ir").IRType {
 function defaultBaseDir(): string {
     const thisFile = fileURLToPath(import.meta.url);
     return path.dirname(thisFile);
+}
+
+function findCommonBase(files: readonly string[]): string | undefined {
+    if (files.length === 0) return undefined;
+    const first = files[0];
+    if (first === undefined) return undefined;
+    if (files.length === 1) return path.dirname(first);
+
+    const dirs = files.map((f) => path.dirname(path.resolve(f)).split(path.sep));
+    let common: string[] = dirs[0]!;
+
+    for (let i = 1; i < dirs.length; i++) {
+        let j = 0;
+        const dir = dirs[i]!;
+        while (j < common.length && j < dir.length && common[j] === dir[j]) {
+            j++;
+        }
+        common = common.slice(0, j);
+        if (common.length === 0) break;
+    }
+
+    if (common.length === 0) {
+        return path.isAbsolute(first) ? path.sep : ".";
+    }
+
+    return common.join(path.sep);
 }

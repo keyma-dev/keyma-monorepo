@@ -11,6 +11,8 @@ export type KeymaTargetConfig = {
 export type KeymaUserConfig = {
     /** Source glob(s) for schema files. */
     source?: string | string[];
+    /** Base directory for source files. Used to calculate relative paths. */
+    baseDir?: string;
     /** Root output directory. */
     outDir?: string;
     /** Path to write the IR JSON file. Omit to skip. */
@@ -22,6 +24,7 @@ export type KeymaUserConfig = {
 /** Resolved configuration with all defaults applied. Passed to frontend and backend plugins. */
 export type ResolvedConfig = {
     source: string[];
+    baseDir?: string;
     outDir: string;
     irOutFile?: string;
     targets: KeymaTargetConfig[];

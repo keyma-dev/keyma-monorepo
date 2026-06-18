@@ -1,3 +1,4 @@
+import path from "node:path";
 import type { IRSchema, IRField, IRType } from "@keyma/ir";
 import { exprToJs } from "./emit-expression.js";
 import { irTypeToTs } from "./ir-type-to-ts.js";
@@ -12,8 +13,8 @@ type ModelEmitOptions = {
     emitMaterializers: boolean;
     /** Client-only: restrict formatters in the embedded schema literal to form phases. */
     formPhasesOnly: boolean;
-    /** Map from schema sourceName → schema file name (e.g. "User" → "user"). */
-    schemaFileNames: ReadonlyMap<string, string>;
+    /** Map from schema sourceName → schema file path relative to models dir (e.g. "User" → "auth/user"). */
+    schemaPaths: ReadonlyMap<string, string>;
     /** Map from schema sourceName → TypeScript type name (for embedded types in .d.ts). */
     embeddedTypeNames: ReadonlyMap<string, string>;
 };
@@ -27,21 +28,24 @@ const REFS_SENTINEL = "__KEYMA_REFS_PLACEHOLDER__";
  */
 export function emitModelJs(schema: IRSchema, opts: ModelEmitOptions): string {
     const fields = visibleFields(schema, opts.includePrivate);
-    const refs = schemaRefImports(fields, opts.schemaFileNames);
+    const refs = schemaRefImports(fields, opts.schemaPaths);
     const lines: string[] = [];
+
+    const currentPath = opts.schemaPaths.get(schema.sourceName)!;
 
     // Import parent class for inheritance.
     if (schema.extends !== undefined) {
-        const parentFileName = opts.schemaFileNames.get(schema.extends);
-        if (parentFileName !== undefined) {
-            lines.push(`import { ${schema.extends} } from "./${parentFileName}.js";`);
+        const parentPath = opts.schemaPaths.get(schema.extends);
+        if (parentPath !== undefined) {
+            lines.push(`import { ${schema.extends} } from "${relImport(currentPath, parentPath)}";`);
         }
     }
 
     // Import embedded and reference types (needed for refs and embedded constructors).
     for (const ref of refs) {
-        if (!lines.some((l) => l.includes(`"./${ref.fileName}.js"`))) {
-            lines.push(`import { ${ref.className} } from "./${ref.fileName}.js";`);
+        const importPath = relImport(currentPath, ref.fileName);
+        if (!lines.some((l) => l.includes(`"${importPath}"`))) {
+            lines.push(`import { ${ref.className} } from "${importPath}";`);
         }
     }
 
@@ -104,6 +108,8 @@ export function emitModelDts(schema: IRSchema, opts: ModelEmitOptions): string {
     const fields = visibleFields(schema, opts.includePrivate);
     const lines: string[] = [];
 
+    const currentPath = opts.schemaPaths.get(schema.sourceName)!;
+
     lines.push(`import type { SchemaMetadata } from "@keyma/runtime-js";`);
 
     // Edge schemas need EdgeBrand for type-level traversal narrowing.
@@ -113,16 +119,17 @@ export function emitModelDts(schema: IRSchema, opts: ModelEmitOptions): string {
 
     // Import parent type.
     if (schema.extends !== undefined) {
-        const parentFileName = opts.schemaFileNames.get(schema.extends);
-        if (parentFileName !== undefined) {
-            lines.push(`import type { ${schema.extends} } from "./${parentFileName}.js";`);
+        const parentPath = opts.schemaPaths.get(schema.extends);
+        if (parentPath !== undefined) {
+            lines.push(`import type { ${schema.extends} } from "${relImport(currentPath, parentPath)}";`);
         }
     }
 
     // Import embedded and reference types.
-    for (const ref of schemaRefImports(fields, opts.schemaFileNames)) {
-        if (!lines.some((l) => l.includes(`"./${ref.fileName}.js"`))) {
-            lines.push(`import type { ${ref.className} } from "./${ref.fileName}.js";`);
+    for (const ref of schemaRefImports(fields, opts.schemaPaths)) {
+        const importPath = relImport(currentPath, ref.fileName);
+        if (!lines.some((l) => l.includes(`"${importPath}"`))) {
+            lines.push(`import type { ${ref.className} } from "${importPath}";`);
         }
     }
 
@@ -131,9 +138,12 @@ export function emitModelDts(schema: IRSchema, opts: ModelEmitOptions): string {
     // are Reference<...> typed). Belt-and-suspenders:
     if (schema.edge !== undefined) {
         for (const className of [schema.edge.from, schema.edge.to]) {
-            const fileName = opts.schemaFileNames.get(className);
-            if (fileName !== undefined && !lines.some((l) => l.includes(`"./${fileName}.js"`))) {
-                lines.push(`import type { ${className} } from "./${fileName}.js";`);
+            const targetPath = opts.schemaPaths.get(className);
+            if (targetPath !== undefined) {
+                const importPath = relImport(currentPath, targetPath);
+                if (!lines.some((l) => l.includes(`"${importPath}"`))) {
+                    lines.push(`import type { ${className} } from "${importPath}";`);
+                }
             }
         }
     }
@@ -239,4 +249,10 @@ function formatSchemaLiteral(schemaData: object, refs: SchemaRefImport[]): strin
     const entries = refs.map((r) => `[${JSON.stringify(r.className)}, ${r.className}]`).join(", ");
     const refsExpr = `new Map([${entries}])`;
     return json.replace(`"${REFS_SENTINEL}"`, refsExpr);
+}
+
+function relImport(from: string, to: string): string {
+    let rel = path.posix.relative(path.posix.dirname(from), to);
+    if (!rel.startsWith(".")) rel = "./" + rel;
+    return rel + ".js";
 }

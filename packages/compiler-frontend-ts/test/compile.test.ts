@@ -95,6 +95,11 @@ describe("compile basic schema", () => {
         assert.deepEqual(f.type, { kind: "number" });
         assert.equal(f.required, false);
     });
+
+    it("calculates sourceRoot as the directory of the single input file", () => {
+        const file = fixture("basic.ts");
+        assert.equal(result.ir.sourceRoot, path.dirname(file));
+    });
 });
 
 // ─── Golden IR — all types ────────────────────────────────────────────────────
@@ -788,5 +793,14 @@ describe("Reference target validation", () => {
             !hasError(r, CODES.KEYMA070),
             `Unexpected KEYMA070; diagnostics: ${JSON.stringify(r.diagnostics)}`,
         );
+    });
+});
+
+describe("compileVirtual sourceRoot", () => {
+    it("uses provided baseDir as sourceRoot", () => {
+        const result = compileVirtual({
+            "User.ts": "import { Schema } from '@keyma/dsl'; @Schema class User {}"
+        }, { baseDir: "/tmp/project" });
+        assert.equal(result.ir.sourceRoot, "/tmp/project");
     });
 });

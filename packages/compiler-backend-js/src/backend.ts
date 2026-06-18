@@ -20,9 +20,12 @@ export async function emitJs(
     const jsTarget = resolveJsTarget(target as JsTargetConfig);
     const files: EmitFile[] = [];
 
-    // sourceName → file name (schema.name), e.g. "User" → "user"
-    const schemaFileNames = new Map<string, string>(
-        ir.schemas.map((s) => [s.sourceName, s.name])
+    // sourceName → file path relative to models dir, e.g. "User" → "auth/user"
+    const schemaPaths = new Map<string, string>(
+        ir.schemas.map((s) => [
+            s.sourceName,
+            path.posix.join(getRelativeModelDir(s.source.file, ir.sourceRoot), s.name),
+        ])
     );
 
     // sourceName → TypeScript class name (for embedded type references in .d.ts)
@@ -31,7 +34,7 @@ export async function emitJs(
     );
 
     if (jsTarget.emitClient) {
-        files.push(...emitBundle(ir, path.posix.join(jsTarget.outDir, "client"), schemaFileNames, embeddedTypeNames, {
+        files.push(...emitBundle(ir, path.posix.join(jsTarget.outDir, "client"), schemaPaths, embeddedTypeNames, {
             includePrivate: false,
             includeIndexes: false,
             emitMaterializers: false,
@@ -40,7 +43,7 @@ export async function emitJs(
     }
 
     if (jsTarget.emitServer) {
-        files.push(...emitBundle(ir, path.posix.join(jsTarget.outDir, "server"), schemaFileNames, embeddedTypeNames, {
+        files.push(...emitBundle(ir, path.posix.join(jsTarget.outDir, "server"), schemaPaths, embeddedTypeNames, {
             includePrivate: true,
             includeIndexes: true,
             emitMaterializers: true,
@@ -49,7 +52,7 @@ export async function emitJs(
     }
 
     if (jsTarget.emitLibrary) {
-        files.push(...emitBundle(ir, jsTarget.outDir, schemaFileNames, embeddedTypeNames, {
+        files.push(...emitBundle(ir, jsTarget.outDir, schemaPaths, embeddedTypeNames, {
             includePrivate: true,
             includeIndexes: true,
             emitMaterializers: true,
@@ -100,7 +103,7 @@ type BundleOptions = {
 function emitBundle(
     ir: KeymaIR,
     bundleDir: string,
-    schemaFileNames: ReadonlyMap<string, string>,
+    schemaPaths: ReadonlyMap<string, string>,
     embeddedTypeNames: ReadonlyMap<string, string>,
     opts: BundleOptions
 ): EmitFile[] {
@@ -115,18 +118,19 @@ function emitBundle(
         includeIndexes: opts.includeIndexes,
         emitMaterializers: opts.emitMaterializers,
         formPhasesOnly: opts.formPhasesOnly,
-        schemaFileNames,
+        schemaPaths,
         embeddedTypeNames,
     };
 
     // One model file per schema — each file owns its class, schema metadata, and materializer.
     for (const schema of visibleSchemas) {
+        const relPath = schemaPaths.get(schema.sourceName)!;
         files.push({
-            path: path.posix.join(bundleDir, "models", `${schema.name}.js`),
+            path: path.posix.join(bundleDir, "models", `${relPath}.js`),
             content: emitModelJs(schema, modelOpts),
         });
         files.push({
-            path: path.posix.join(bundleDir, "models", `${schema.name}.d.ts`),
+            path: path.posix.join(bundleDir, "models", `${relPath}.d.ts`),
             content: emitModelDts(schema, modelOpts),
         });
     }
@@ -141,12 +145,22 @@ function emitBundle(
     // index.js + index.d.ts
     files.push({
         path: path.posix.join(bundleDir, "index.js"),
-        content: emitIndexJs(ir.schemas, schemaFileNames, indexOpts),
+        content: emitIndexJs(ir.schemas, schemaPaths, indexOpts),
     });
     files.push({
         path: path.posix.join(bundleDir, "index.d.ts"),
-        content: emitIndexDts(ir.schemas, schemaFileNames, indexOpts),
+        content: emitIndexDts(ir.schemas, schemaPaths, indexOpts),
     });
 
     return files;
+}
+
+function getRelativeModelDir(sourceFile: string, sourceRoot?: string): string {
+    if (!sourceRoot) return "";
+    // path.relative uses platform separators.
+    const rel = path.relative(sourceRoot, sourceFile);
+    const dirname = path.dirname(rel);
+    if (dirname === ".") return "";
+    // Convert to POSIX for consistency in EmitFile paths.
+    return dirname.split(path.sep).join(path.posix.sep);
 }

@@ -52,6 +52,7 @@ export function resolveConfig(user: KeymaUserConfig): ResolvedConfig {
 
     return {
         source,
+        ...(user.baseDir !== undefined ? { baseDir: resolve(user.baseDir) } : {}),
         outDir: user.outDir ?? "dist",
         ...(user.irOutFile !== undefined ? { irOutFile: user.irOutFile } : {}),
         targets: user.targets ?? [],

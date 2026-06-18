@@ -10,7 +10,7 @@ const USAGE = `keyma — declarative schema compiler
 
 Usage:
   keyma new <name>          Scaffold a new project in ./<name>
-  keyma gen <schema>        Generate a schema file under src/schemas/
+  keyma gen <schema>        Generate a schema file under src/
   keyma build               Run the compiler pipeline
   keyma watch               Watch sources and rebuild on change
   keyma inspect [--out F]   Print (or write) the IR for the current project

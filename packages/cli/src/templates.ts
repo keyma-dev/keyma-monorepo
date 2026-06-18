@@ -24,8 +24,7 @@ export function projectFiles(projectName: string): ProjectFile[] {
         { relativePath: "package.json", content: packageJsonTemplate(projectName) },
         { relativePath: "tsconfig.json", content: TSCONFIG_TEMPLATE },
         { relativePath: "keyma.config.ts", content: KEYMA_CONFIG_TEMPLATE },
-        { relativePath: "src/index.ts", content: INDEX_TS_TEMPLATE },
-        { relativePath: "src/schemas/.gitkeep", content: "" },
+        { relativePath: "src/index.ts", content: INDEX_TS_TEMPLATE }
     ];
 }
 
@@ -33,20 +32,23 @@ export function projectFiles(projectName: string): ProjectFile[] {
 export function schemaTemplate(name: string): { relativePath: string; content: string } {
     const className = pascalCase(name);
     const schemaName = kebabCase(name) || name.toLowerCase();
-    const content = `import { Schema, Validate, Indexed } from "@keyma/dsl";
+
+    const parts = name.split(/[/\\]/).filter((p) => p.length > 0);
+    const lastPart = parts.pop() || name;
+    const fileName = kebabCase(lastPart) || lastPart.toLowerCase();
+    const relativePath = ["src", ...parts, `${fileName}.ts`].join("/");
+
+    const content = `import { ID, Schema, Validate, Indexed } from "@keyma/dsl";
 import { required } from "@keyma/validators";
-import type { ID } from "@keyma/dsl";
 
 @Schema({ name: "${schemaName}" })
 export class ${className} {
 
     declare readonly id: ID;
-
-    @Validate(required())
-    declare name: string;
+    
 }
 `;
-    return { relativePath: `src/schemas/${schemaName}.ts`, content };
+    return { relativePath, content };
 }
 
 function packageJsonTemplate(projectName: string): string {
@@ -61,12 +63,12 @@ function packageJsonTemplate(projectName: string): string {
             inspect: "keyma inspect",
         },
         dependencies: {
-            "@keyma/dsl": "*",
-            "@keyma/validators": "*",
-            "@keyma/runtime-js": "*",
         },
         devDependencies: {
             "@keyma/cli": "*",
+            "@keyma/dsl": "*",
+            "@keyma/validators": "*",
+            "@keyma/formatters": "*",
             typescript: "^5.7.0",
         },
     };
@@ -90,7 +92,7 @@ const TSCONFIG_TEMPLATE = `{
 const KEYMA_CONFIG_TEMPLATE = `import type { KeymaUserConfig } from "@keyma/compiler";
 
 const config: KeymaUserConfig = {
-    source: "src/schemas/**/*.ts",
+    source: "src/**/*.ts",
     targets: [
         { language: "js", outDir: "dist/js" },
     ],
@@ -100,6 +102,6 @@ export default config;
 `;
 
 const INDEX_TS_TEMPLATE = `// Entry point for your application.
-// Schemas live under src/schemas/ and the compiler emits generated code into src/generated/.
+// Schemas live under src/ and the compiler emits generated code into dist/{targetLang}/.
 export {};
 `;

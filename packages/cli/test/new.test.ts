@@ -34,7 +34,6 @@ describe("keyma new", () => {
             "tsconfig.json",
             "keyma.config.ts",
             "src/index.ts",
-            "src/schemas/.gitkeep",
         ];
         for (const rel of expected) {
             assert.ok(existsSync(join(dir, rel)), `expected ${rel} to exist`);
@@ -44,11 +43,11 @@ describe("keyma new", () => {
         const pkg = JSON.parse(readFileSync(join(dir, "package.json"), "utf-8")) as {
             name: string;
             scripts: Record<string, string>;
-            dependencies: Record<string, string>;
+            devDependencies: Record<string, string>;
         };
         assert.equal(pkg.name, "my-app");
         assert.equal(pkg.scripts["build"], "keyma build");
-        assert.ok(pkg.dependencies["@keyma/dsl"], "should depend on @keyma/dsl");
+        assert.ok(pkg.devDependencies["@keyma/dsl"], "should depend on @keyma/dsl");
     });
 
     it("scaffolded project builds successfully (empty schemas)", async () => {

@@ -165,6 +165,7 @@ export type IRSchema = {
 export type KeymaIR = {
     irVersion: string;
     compilerVersion: string;
+    sourceRoot?: string;
     schemas: IRSchema[];
     validatorDeclarations?: IRValidatorDeclaration[];
     formatterDeclarations?: IRFormatterDeclaration[];

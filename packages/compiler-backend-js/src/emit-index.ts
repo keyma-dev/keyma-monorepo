@@ -13,7 +13,7 @@ type IndexEmitOptions = {
  */
 export function emitIndexJs(
     schemas: IRSchema[],
-    schemaFileNames: ReadonlyMap<string, string>,
+    schemaPaths: ReadonlyMap<string, string>,
     opts: IndexEmitOptions
 ): string {
     const visible = opts.includePrivate
@@ -23,13 +23,13 @@ export function emitIndexJs(
     const lines: string[] = [];
 
     for (const schema of visible) {
-        const fileName = schemaFileNames.get(schema.sourceName);
-        if (fileName === undefined) continue;
+        const fullPath = schemaPaths.get(schema.sourceName);
+        if (fullPath === undefined) continue;
         const exports: string[] = [schema.sourceName];
         if (opts.emitMaterializers && schema.fields.some((f) => f.computed !== undefined)) {
             exports.push(`materialize${schema.sourceName}`);
         }
-        lines.push(`export { ${exports.join(", ")} } from "./models/${fileName}.js";`);
+        lines.push(`export { ${exports.join(", ")} } from "./models/${fullPath}.js";`);
     }
 
     if (opts.hasValidators) {
@@ -50,7 +50,7 @@ export function emitIndexJs(
  */
 export function emitIndexDts(
     schemas: IRSchema[],
-    schemaFileNames: ReadonlyMap<string, string>,
+    schemaPaths: ReadonlyMap<string, string>,
     opts: IndexEmitOptions
 ): string {
     const visible = opts.includePrivate
@@ -60,11 +60,11 @@ export function emitIndexDts(
     const lines: string[] = [];
 
     for (const schema of visible) {
-        const fileName = schemaFileNames.get(schema.sourceName);
-        if (fileName === undefined) continue;
-        lines.push(`export type { ${schema.sourceName} } from "./models/${fileName}.js";`);
+        const fullPath = schemaPaths.get(schema.sourceName);
+        if (fullPath === undefined) continue;
+        lines.push(`export type { ${schema.sourceName} } from "./models/${fullPath}.js";`);
         if (opts.emitMaterializers && schema.fields.some((f) => f.computed !== undefined)) {
-            lines.push(`export { materialize${schema.sourceName} } from "./models/${fileName}.js";`);
+            lines.push(`export { materialize${schema.sourceName} } from "./models/${fullPath}.js";`);
         }
     }
 

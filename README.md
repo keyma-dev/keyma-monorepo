@@ -2,7 +2,7 @@
 
 A declarative schema compiler for full-stack applications.
 
-You define data models, validation rules, formatting behavior, indexes, computed fields, relationships, and **edges** in TypeScript. Keyma compiles those schemas into small, dependency-light target libraries for runtimes such as JavaScript and C++.
+You define data models, validation rules, formatting behavior, indexes, computed fields, relationships, and **edges** in TypeScript. Keyma compiles those schemas into small, dependency-free target libraries for runtimes such as JavaScript, Python, and C++.
 
 Keyma is **database-agnostic** and **transport-agnostic** by design:
 
