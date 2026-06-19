@@ -18,10 +18,6 @@ export type Props = {
     nulls: string[];
 };
 
-function unwrapNullable(type: FieldType): FieldType {
-    return type.kind === "nullable" ? unwrapNullable(type.of) : type;
-}
-
 // ── Scalar coercion ─────────────────────────────────────────────────────────
 // Gremlin property values must be primitives for portability across TinkerGraph
 // / Neptune / JanusGraph. bigint and decimal are stored as strings (lossless,
@@ -30,7 +26,7 @@ function unwrapNullable(type: FieldType): FieldType {
 
 function toGremlin(value: unknown, type: FieldType): unknown {
     if (value === null || value === undefined) return value;
-    const t = unwrapNullable(type);
+    const t = type;
     switch (t.kind) {
         case "bigint":
             return typeof value === "bigint" ? value.toString() : String(value);
@@ -55,7 +51,7 @@ function toGremlin(value: unknown, type: FieldType): unknown {
 
 function fromGremlin(value: unknown, type: FieldType): unknown {
     if (value === null || value === undefined) return value;
-    const t = unwrapNullable(type);
+    const t = type;
     switch (t.kind) {
         case "bigint":
             return BigInt(value as string | number);
@@ -115,7 +111,7 @@ function emitField(
     multiProperty: boolean,
     out: PropEntry[],
 ): void {
-    const t = unwrapNullable(type);
+    const t = type;
     if (t.kind === "embedded") {
         const sub = schemas.get(t.schema);
         if (sub === undefined || typeof value !== "object" || value === null) {
@@ -151,7 +147,7 @@ function emitField(
 // Array elements that are themselves embedded/complex can't be flattened to
 // dotted keys (a list has no single path), so they are JSON-encoded per element.
 function scalarOrJson(value: unknown, type: FieldType, schemas: SchemaMap): unknown {
-    const t = unwrapNullable(type);
+    const t = type;
     if (t.kind === "embedded" || t.kind === "array" || t.kind === "json") {
         return JSON.stringify(value);
     }
@@ -174,7 +170,7 @@ export function fromProps(
             }
             continue;
         }
-        const t = unwrapNullable(field.type);
+        const t = field.type;
         if (t.kind === "embedded") {
             const sub = schemas.get(t.schema);
             const nested = sub === undefined ? undefined : readEmbedded(plain, field.name, sub, schemas);
@@ -205,7 +201,7 @@ function readEmbedded(
     let found = false;
     for (const f of sub.fields) {
         if (f.name === "id") continue;
-        const t = unwrapNullable(f.type);
+        const t = f.type;
         const key = `${prefix}.${f.name}`;
         if (t.kind === "embedded") {
             const deeper = schemas.get(t.schema);
@@ -231,7 +227,7 @@ function readEmbedded(
 }
 
 function readArrayElem(value: unknown, type: FieldType): unknown {
-    const t = unwrapNullable(type);
+    const t = type;
     if (t.kind === "embedded" || t.kind === "array" || t.kind === "json") {
         return typeof value === "string" ? JSON.parse(value) : value;
     }
@@ -242,7 +238,7 @@ function readArrayElem(value: unknown, type: FieldType): unknown {
  *  coercion) so `where` comparisons match what `toProps` persisted. */
 export function valueToGremlin(value: unknown, type: FieldType | undefined): unknown {
     if (type === undefined) return value;
-    return toGremlin(value, unwrapNullable(type));
+    return toGremlin(value, type);
 }
 
 /** Normalize a `valueMap(true)` / `elementMap()` result (a JS `Map` whose

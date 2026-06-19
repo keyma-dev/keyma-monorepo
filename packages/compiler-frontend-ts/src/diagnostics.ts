@@ -10,7 +10,9 @@ export const KEYMA011 = "KEYMA011"; // Non-literal decorator argument
 export const KEYMA012 = "KEYMA012"; // Validator/formatter incompatible with field type
 export const KEYMA013 = "KEYMA013"; // Missing required option on parameterized marker
 export const KEYMA014 = "KEYMA014"; // Unsupported computed getter expression
-export const KEYMA015 = "KEYMA015"; // Computed getter must have no setter
+export const KEYMA015 = "KEYMA015"; // (obsolete) Computed getter must have no setter — a getter/setter pair is now allowed (getter = computed field, setter = behavior)
+export const KEYMA018 = "KEYMA018"; // Computed getter dependency cycle (incl. self-reference)
+export const KEYMA019 = "KEYMA019"; // Getter without @Computed is ignored / @Computed on a non-getter
 
 // Validator / formatter errors
 export const KEYMA020 = "KEYMA020"; // Unknown validator
@@ -18,6 +20,7 @@ export const KEYMA021 = "KEYMA021"; // Unknown formatter
 export const KEYMA022 = "KEYMA022"; // Unknown custom validator (not registered)
 export const KEYMA023 = "KEYMA023"; // Unknown custom formatter (not registered)
 export const KEYMA024 = "KEYMA024"; // Empty enum values list
+export const KEYMA025 = "KEYMA025"; // Unsupported enum member (numeric/heterogeneous/computed)
 
 // Visibility and inheritance errors
 export const KEYMA031 = "KEYMA031"; // Public schema leaks private schema
@@ -32,7 +35,7 @@ export const KEYMA016 = "KEYMA016"; // Invalid @Indexed direction value (must be
 export const KEYMA017 = "KEYMA017"; // Composite index key has conflicting unique/sparse across fields
 
 // Naming and duplication errors
-export const KEYMA040 = "KEYMA040"; // Duplicate field name
+export const KEYMA040 = "KEYMA040"; // Duplicate member name (field, method, or setter)
 
 // Generics and unsupported language features
 export const KEYMA050 = "KEYMA050"; // Unsupported generic type parameter
@@ -48,6 +51,7 @@ export const KEYMA066 = "KEYMA066"; // Edge schema declares more than one @From(
 
 // Reference errors
 export const KEYMA070 = "KEYMA070"; // Reference<T> target schema has no `id: ID` field
+export const KEYMA071 = "KEYMA071"; // Bare @Schema class field — must be explicit Reference<T> or Embedded<T>
 
 // Validator/formatter declaration compilation errors
 export const KEYMA080 = "KEYMA080"; // @Validator/@Formatter applied to non-exported or non-function declaration
@@ -58,6 +62,13 @@ export const KEYMA084 = "KEYMA084"; // Validator/formatter input (value) param m
 export const KEYMA085 = "KEYMA085"; // String/array method (or member) is not a supported intrinsic, or its receiver type is unresolved
 export const KEYMA086 = "KEYMA086"; // Referenced utility function cannot be compiled (not project-local, untyped, or unsupported body)
 export const KEYMA087 = "KEYMA087"; // Unsupported `instanceof` right-hand constructor (outside the portable set)
+
+// Default value errors
+export const KEYMA090 = "KEYMA090"; // @Default value incompatible with the field type
+export const KEYMA091 = "KEYMA091"; // Unsupported @Default form (not a literal or named generator)
+
+// Method / setter behavior errors
+export const KEYMA092 = "KEYMA092"; // Method/setter parameter or return type must be explicitly annotated (portable subset)
 
 export function mkError(
     code: string,

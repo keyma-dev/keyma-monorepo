@@ -15,9 +15,8 @@ export type FieldType =
     | { kind: "id" }
     | { kind: "regexp" }
     | { kind: "enum"; values: string[] }
-    | { kind: "nullable"; of: FieldType }
-    | { kind: "array"; of: FieldType }
-    | { kind: "reference"; schema: string }
+    | { kind: "array"; of: FieldType; elementNullable?: boolean }
+    | { kind: "reference"; schema: string; idType?: FieldType }
     | { kind: "embedded"; schema: string };
 
 export type ValidatorSpec = { name: string } & Record<string, unknown>;
@@ -42,17 +41,38 @@ export type SchemaIndex = {
     name?: string;
 };
 
+export type FieldDefault =
+    | { kind: "literal"; value: unknown }
+    | { kind: "generator"; name: "now" | "uuid" }
+    | { kind: "expression"; expression: unknown };
+
+export type FormFieldMeta = {
+    title?: string;
+    hint?: string;
+    placeholder?: string;
+    group?: string;
+    order?: number;
+};
+
 export type FieldMetadata = {
     name: string;
     type: FieldType;
     visibility?: "public" | "private";
     readonly?: boolean;
     required?: boolean;
+    /** Whether the value may be `null` (orthogonal to `required`). */
+    nullable?: boolean;
     validators?: ValidatorSpec[];
     formatters?: FormatterEntry[];
     indexes?: FieldIndex[];
     computed?: true;
     ephemeral?: boolean;
+    /** Default value applied on create when the key is absent. */
+    default?: FieldDefault;
+    /** Presentational metadata for form generation. */
+    form?: FormFieldMeta;
+    /** Deprecation marker — `true`, or a reason string. */
+    deprecated?: boolean | string;
 };
 
 /** Edge metadata recorded by the compiler from `@Edge` + the `@From()`/`@To()`

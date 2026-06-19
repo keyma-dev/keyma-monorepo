@@ -82,11 +82,12 @@ describe("deserialize", () => {
         assert.equal((out["when"] as Date).toISOString(), iso);
     });
 
-    it("passes null/undefined through nullable dateTime", () => {
+    it("passes null/undefined through a nullable dateTime", () => {
         const schema = withRefs([
             {
                 name: "when",
-                type: { kind: "nullable", of: { kind: "dateTime" } },
+                type: { kind: "dateTime" },
+                nullable: true,
                 required: false,
             },
         ]);

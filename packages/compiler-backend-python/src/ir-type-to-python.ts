@@ -26,11 +26,12 @@ export function irTypeToPython(
         case "enum":
             return `Literal[${type.values.map((v) => JSON.stringify(v)).join(", ")}]`; // Requires from typing import Literal
 
-        case "nullable":
-            return `Optional[${irTypeToPython(type.of, embeddedNames)}]`; // Requires from typing import Optional
-
-        case "array":
-            return `List[${irTypeToPython(type.of, embeddedNames)}]`; // Requires from typing import List
+        case "array": {
+            const el = irTypeToPython(type.of, embeddedNames);
+            return type.elementNullable
+                ? `List[Optional[${el}]]` // Requires from typing import List, Optional
+                : `List[${el}]`; // Requires from typing import List
+        }
 
         case "reference":
             return embeddedNames?.get(type.schema) ?? type.schema;
@@ -70,10 +71,6 @@ export function irTypeGuard(type: IRType, value: string): string | null {
             return `${value} in (${type.values.map((v) => JSON.stringify(v)).join(", ")})`;
         case "array":
             return `isinstance(${value}, list)`;
-        case "nullable": {
-            const inner = irTypeGuard(type.of, value);
-            return inner === null ? null : `${value} is None or (${inner})`;
-        }
         case "json":
         case "reference":
         case "embedded":
@@ -84,7 +81,6 @@ export function irTypeGuard(type: IRType, value: string): string | null {
 /** A short human label for a type, used in runtime mismatch messages. */
 export function irTypeLabel(type: IRType): string {
     switch (type.kind) {
-        case "nullable": return `${irTypeLabel(type.of)} or None`;
         case "array":    return `list of ${irTypeLabel(type.of)}`;
         case "enum":     return `one of ${type.values.map((v) => JSON.stringify(v)).join(", ")}`;
         case "reference":

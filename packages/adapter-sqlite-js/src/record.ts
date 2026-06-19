@@ -11,8 +11,6 @@ export function toSqlite(
 ): unknown {
     if (value === null || value === undefined) return value;
     switch (type.kind) {
-        case "nullable":
-            return toSqlite(value, type.of, schemas);
         case "boolean":
             return value ? 1 : 0;
         case "bigint":
@@ -51,8 +49,6 @@ export function fromSqlite(
 ): unknown {
     if (value === null || value === undefined) return value;
     switch (type.kind) {
-        case "nullable":
-            return fromSqlite(value, type.of, schemas);
         case "boolean":
             return value === 1 || value === true || value === "1";
         case "bigint":
@@ -131,8 +127,6 @@ function prepareJsonElement(
 ): unknown {
     if (value === null || value === undefined) return value;
     switch (type.kind) {
-        case "nullable":
-            return prepareJsonElement(value, type.of, schemas);
         case "boolean":
             return value === true;
         case "bigint":
@@ -169,8 +163,6 @@ function readJsonElement(
 ): unknown {
     if (value === null || value === undefined) return value;
     switch (type.kind) {
-        case "nullable":
-            return readJsonElement(value, type.of, schemas);
         case "bigint":
             return typeof value === "string" ? BigInt(value) : value;
         case "date":

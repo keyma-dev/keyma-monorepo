@@ -13,16 +13,16 @@ class Company {
     declare name: string;
 }
 
-// Endpoints typed with bare node classes; @From()/@To() are auto-indexed.
+// Endpoints typed with Reference<T>; @From()/@To() are auto-indexed.
 @Edge({ name: "knows", directed: false })
 class Knows {
     declare readonly id: ID;
-    @From() declare from: Person;
-    @To() declare to: Person;
+    @From() declare from: Reference<Person>;
+    @To() declare to: Reference<Person>;
     declare since: string;
 }
 
-// Endpoints typed with Reference<T> (still accepted); label defaults to name.
+// Endpoints typed with Reference<T>; label defaults to name.
 @Edge()
 class WorksAt {
     declare readonly id: ID;

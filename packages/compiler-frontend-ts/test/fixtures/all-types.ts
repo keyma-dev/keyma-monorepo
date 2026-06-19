@@ -26,5 +26,5 @@ class AllTypes {
     declare nullableStr: string | null;
     declare addr: Reference<Address>;
     declare embedded: Embedded<Address>;
-    declare nullableRef: Nullable<Address>;
+    declare nullableRef: Nullable<Reference<Address>>;
 }

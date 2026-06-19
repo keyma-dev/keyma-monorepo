@@ -10,13 +10,12 @@ import type { SchemaMap } from "./record.js";
 export type CollectionNameFn = (schema: SchemaMetadata) => string;
 
 function coreType(type: FieldType): FieldType {
-    if (type.kind === "nullable" || type.kind === "array") return coreType(type.of);
+    if (type.kind === "array") return coreType(type.of);
     return type;
 }
 
 function isArrayField(type: FieldType): boolean {
     if (type.kind === "array") return true;
-    if (type.kind === "nullable") return isArrayField(type.of);
     return false;
 }
 

@@ -1,4 +1,4 @@
-import { Schema, Validate } from "@keyma/dsl";
+import { Schema, Validate, Computed } from "@keyma/dsl";
 function isRequired() { return { __validatorName: "required" } as const; }
 
 @Schema({ name: "product" })
@@ -12,15 +12,15 @@ class Product {
     @Validate(isRequired())
     declare taxRate: number;
 
-    get displayTitle(): string {
+    @Computed() get displayTitle(): string {
         return `${this.title}`;
     }
 
-    get priceWithTax(): number {
+    @Computed() get priceWithTax(): number {
         return this.price * (1 + this.taxRate);
     }
 
-    get isExpensive(): boolean {
+    @Computed() get isExpensive(): boolean {
         return this.price > 100;
     }
 }

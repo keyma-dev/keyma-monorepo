@@ -40,16 +40,48 @@ export function buildMaterializer(schema: IRSchema, includePrivate: boolean): st
     const computedFields = visibleFields(schema, includePrivate).filter((f) => f.computed !== undefined);
     if (computedFields.length === 0) return null;
 
+    // Assign in dependency order so a computed field that reads another computed
+    // field sees the already-materialized value. Cycles are rejected upstream
+    // (KEYMA018), so a valid topological order always exists.
+    const ordered = topoSortComputed(computedFields);
+
     const lines: string[] = [];
     lines.push(`export function materialize${schema.sourceName}(value) {`);
-    for (const field of computedFields) {
+    for (const field of ordered) {
         if (field.computed === undefined) continue;
-        const jsExpr = exprToJs(field.computed.expression).replace(/\bthis\./g, "value.");
+        const jsExpr = exprToJs(field.computed.expression, { fieldAccess: (name) => `value.${name}` });
         lines.push(`    value.${field.name} = ${jsExpr};`);
     }
     lines.push(`    return value;`);
     lines.push(`}`);
     return lines.join("\n");
+}
+
+/** Order computed fields so each comes after the computed fields it depends on. */
+function topoSortComputed(fields: IRField[]): IRField[] {
+    const computedNames = new Set(fields.map((f) => f.name));
+    const byName = new Map(fields.map((f) => [f.name, f]));
+    const ordered: IRField[] = [];
+    const visited = new Set<string>();
+    const onPath = new Set<string>();
+
+    const visit = (field: IRField): void => {
+        if (visited.has(field.name)) return;
+        if (onPath.has(field.name)) return; // cycle guard (already rejected upstream)
+        onPath.add(field.name);
+        for (const dep of field.computed?.dependsOn ?? []) {
+            if (computedNames.has(dep)) {
+                const depField = byName.get(dep);
+                if (depField !== undefined) visit(depField);
+            }
+        }
+        onPath.delete(field.name);
+        visited.add(field.name);
+        ordered.push(field);
+    };
+
+    for (const field of fields) visit(field);
+    return ordered;
 }
 
 /** Whether a schema has any visible computed fields. */
@@ -78,6 +110,7 @@ function buildFieldData(field: IRField, opts: SchemaDataOptions): object {
     if (field.visibility === "private") base["visibility"] = "private";
     if (field.readonly) base["readonly"] = true;
     if (!field.required) base["required"] = false;
+    if (field.nullable) base["nullable"] = true;
     if (field.validators.length > 0) base["validators"] = field.validators;
     if (formatters.length > 0) base["formatters"] = formatters;
     if (indexes.length > 0) base["indexes"] = indexes;
@@ -87,6 +120,15 @@ function buildFieldData(field: IRField, opts: SchemaDataOptions): object {
     }
     if (field.ephemeral) {
         base["ephemeral"] = true;
+    }
+    if (field.default !== undefined) {
+        base["default"] = field.default;
+    }
+    if (field.form !== undefined) {
+        base["form"] = field.form;
+    }
+    if (field.deprecated !== undefined) {
+        base["deprecated"] = field.deprecated;
     }
 
     return base;

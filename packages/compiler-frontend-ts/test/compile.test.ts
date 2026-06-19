@@ -143,11 +143,20 @@ describe("compile all-types schema", () => {
         assert.deepEqual(byName("tags").type, { kind: "array", of: { kind: "string" } });
         assert.deepEqual(byName("status").type, { kind: "enum", values: ["draft", "published", "archived"] });
         assert.deepEqual(byName("maybe").type, { kind: "string" });
-        assert.equal(byName("maybe").required, false); // optional
-        assert.deepEqual(byName("nullableStr").type, { kind: "nullable", of: { kind: "string" } });
-        assert.deepEqual(byName("addr").type, { kind: "reference", schema: "Address" });
+        assert.equal(byName("maybe").required, false); // optional (key may be absent)
+        assert.equal(byName("maybe").nullable, undefined); // but not nullable
+
+        // nullable is now a field-level axis, orthogonal to optionality
+        assert.deepEqual(byName("nullableStr").type, { kind: "string" });
+        assert.equal(byName("nullableStr").nullable, true);
+        assert.equal(byName("nullableStr").required, true); // present, but may be null
+
+        // references carry the resolved id type of their target
+        assert.deepEqual(byName("addr").type, { kind: "reference", schema: "Address", idType: { kind: "id" } });
         assert.deepEqual(byName("embedded").type, { kind: "embedded", schema: "Address" });
-        assert.deepEqual(byName("nullableRef").type, { kind: "nullable", of: { kind: "reference", schema: "Address" } });
+
+        assert.deepEqual(byName("nullableRef").type, { kind: "reference", schema: "Address", idType: { kind: "id" } });
+        assert.equal(byName("nullableRef").nullable, true);
     });
 });
 
@@ -170,15 +179,60 @@ describe("compile inheritance", () => {
         assert.ok(fieldNames.includes("salary"), "own field salary");
     });
 
-    it("Employee.extends is set to Person", () => {
+    it("Employee drops `extends` after flattening but records provenance", () => {
         const emp = schemaByName(result, "Employee");
-        assert.equal(emp.extends, "Person");
+        assert.equal(emp.extends, undefined, "post-flatten IR must not carry `extends`");
+        assert.equal(emp.extendsSource, "Person");
     });
 
-    it("Person schema has no extends field", () => {
+    it("Employee has each inherited field exactly once", () => {
+        const emp = schemaByName(result, "Employee");
+        const counts = new Map<string, number>();
+        for (const f of emp.fields) counts.set(f.name, (counts.get(f.name) ?? 0) + 1);
+        for (const [name, n] of counts) assert.equal(n, 1, `field "${name}" appears ${n} times`);
+    });
+
+    it("Person schema has no extends/extendsSource field", () => {
         const person = schemaByName(result, "Person");
         assert.equal(person.extends, undefined);
+        assert.equal(person.extendsSource, undefined);
     });
+});
+
+// ─── KEYMA034 — override subtype compatibility ───────────────────────────────
+
+describe("KEYMA034 — field override compatibility", () => {
+    function overrides(parentType: string, childType: string): ReturnType<typeof compile> {
+        return cv({
+            "schema.ts": `
+                import { Schema } from "@keyma/dsl";
+                @Schema({ name: "base" }) class Base { declare x: ${parentType}; }
+                @Schema({ name: "child" }) class Child extends Base { declare x: ${childType}; }
+            `,
+        });
+    }
+
+    const ok: Array<[string, string]> = [
+        ["number", "number"],
+        ["string | null", "string"],          // narrowing: drop null
+        ['"a" | "b" | "c"', '"a" | "b"'],      // enum subset
+    ];
+    for (const [p, c] of ok) {
+        it(`allows ${p} → ${c}`, () => {
+            assert.ok(!hasError(overrides(p, c), CODES.KEYMA034), JSON.stringify(overrides(p, c).diagnostics));
+        });
+    }
+
+    const bad: Array<[string, string]> = [
+        ["string", "number"],                  // unrelated
+        ["string", "string | null"],           // widening: add null
+        ['"a" | "b"', '"a" | "b" | "c"'],      // enum superset
+    ];
+    for (const [p, c] of bad) {
+        it(`rejects ${p} → ${c}`, () => {
+            assert.ok(hasError(overrides(p, c), CODES.KEYMA034), JSON.stringify(overrides(p, c).diagnostics));
+        });
+    }
 });
 
 // ─── Golden IR — visibility ───────────────────────────────────────────────────
@@ -318,19 +372,22 @@ describe("KEYMA011 — non-literal decorator argument", () => {
     });
 });
 
-describe("KEYMA015 — computed getter with setter", () => {
-    it("emits KEYMA015 when a getter has a matching setter", () => {
+describe("getter/setter pair — no longer a KEYMA015 error", () => {
+    it("accepts a matching getter/setter pair (computed field + setter behavior)", () => {
         const result = cv({
             "schema.ts": `
-                import { Schema } from "@keyma/dsl";
+                import { Schema, Computed } from "@keyma/dsl";
                 @Schema() class Foo {
-                    private _x: string = "";
-                    get name(): string { return this._x; }
-                    set name(v: string) { this._x = v; }
+                    declare firstName: string;
+                    @Computed() get name(): string { return this.firstName; }
+                    set name(v: string) { this.firstName = v; }
                 }
             `,
         });
-        assert.ok(hasError(result, CODES.KEYMA015), `Expected KEYMA015. Got: ${JSON.stringify(result.diagnostics)}`);
+        assert.deepEqual(errorCodes(result), [], `Errors: ${JSON.stringify(result.diagnostics)}`);
+        const foo = result.ir.schemas.find((s) => s.sourceName === "Foo")!;
+        assert.ok(foo.fields.some((f) => f.name === "name" && f.computed !== undefined));
+        assert.ok((foo.methods ?? []).some((m) => m.name === "name" && m.kind === "setter"));
     });
 });
 
@@ -358,11 +415,12 @@ describe("KEYMA031 — public schema leaks private schema", () => {
         const result = cv({
             "schema.ts": `
                 import { Schema } from "@keyma/dsl";
+                import type { Embedded } from "@keyma/dsl";
                 @Schema({ name: "secret", private: true }) class Secret {
                     declare token: string;
                 }
                 @Schema({ name: "public" }) class Public {
-                    declare secret: Secret;
+                    declare secret: Embedded<Secret>;
                 }
             `,
         });
@@ -634,13 +692,13 @@ describe("@Edge diagnostics", () => {
         const r = cv({
             "s.ts": `
                 import { Edge, Schema, From, To } from "@keyma/dsl";
-                import type { ID } from "@keyma/dsl";
+                import type { ID, Reference } from "@keyma/dsl";
                 @Schema() class Node { declare readonly id: ID; }
-                @Edge() class Knows { declare readonly id: ID; @From() declare from: Node; @To() declare to: Node; }
+                @Edge() class Knows { declare readonly id: ID; @From() declare from: Reference<Node>; @To() declare to: Reference<Node>; }
                 @Edge() class Meta {
                     declare readonly id: ID;
-                    @From() declare from: Knows;
-                    @To() declare to: Node;
+                    @From() declare from: Reference<Knows>;
+                    @To() declare to: Reference<Node>;
                 }
             `,
         });
@@ -650,7 +708,21 @@ describe("@Edge diagnostics", () => {
         );
     });
 
-    it("accepts both bare node types and Reference<T> on endpoints", () => {
+    it("rejects a bare node endpoint (KEYMA071) and requires Reference<T>", () => {
+        const bare = cv({
+            "s.ts": `
+                import { Edge, Schema, From, To } from "@keyma/dsl";
+                import type { ID } from "@keyma/dsl";
+                @Schema() class Node { declare readonly id: ID; }
+                @Edge() class Bad {
+                    declare readonly id: ID;
+                    @From() declare from: Node;
+                    @To() declare to: Node;
+                }
+            `,
+        });
+        assert.ok(hasError(bare, CODES.KEYMA071), `Expected KEYMA071; got ${JSON.stringify(errorCodes(bare))}`);
+
         const r = cv({
             "s.ts": `
                 import { Edge, Schema, From, To } from "@keyma/dsl";
@@ -658,7 +730,7 @@ describe("@Edge diagnostics", () => {
                 @Schema() class Node { declare readonly id: ID; }
                 @Edge() class Mixed {
                     declare readonly id: ID;
-                    @From() declare from: Node;
+                    @From() declare from: Reference<Node>;
                     @To() declare to: Reference<Node>;
                 }
             `,
@@ -799,5 +871,121 @@ describe("compileVirtual sourceRoot", () => {
             "User.ts": "import { Schema } from '@keyma/dsl'; @Schema class User {}"
         }, { baseDir: "/tmp/project" });
         assert.equal(result.ir.sourceRoot, "/tmp/project");
+    });
+});
+
+// ─── Authoring features (Phase, @Default, named enums, @FormField/@Deprecated) ──
+
+describe("authoring features", () => {
+    it("resolves @Format(Phase.Save, ...) to the 'save' phase", () => {
+        const r = cv({ "schema.ts": `
+            import { Schema, Format, Phase } from "@keyma/dsl";
+            function trim() { return { __formatterName: "trim" } as const; }
+            @Schema() class Foo { @Format(Phase.Save, trim()) declare name: string; }
+        `});
+        assert.deepEqual(errorCodes(r), [], JSON.stringify(r.diagnostics));
+        const name = schemaByName(r, "Foo").fields.find((f) => f.name === "name");
+        assert.equal(name?.formatters[0]?.phase, "save");
+    });
+
+    it("lowers a literal @Default", () => {
+        const r = cv({ "schema.ts": `
+            import { Schema, Default } from "@keyma/dsl";
+            @Schema() class Foo { @Default("active") declare status: string; }
+        `});
+        assert.deepEqual(errorCodes(r), [], JSON.stringify(r.diagnostics));
+        const status = schemaByName(r, "Foo").fields.find((f) => f.name === "status");
+        assert.deepEqual(status?.default, { kind: "literal", value: "active" });
+    });
+
+    it("lowers @Default(Now) to a generator", () => {
+        const r = cv({ "schema.ts": `
+            import { Schema, Default, Now } from "@keyma/dsl";
+            import type { DateTime } from "@keyma/dsl";
+            @Schema() class Foo { @Default(Now) declare createdOn: DateTime; }
+        `});
+        assert.deepEqual(errorCodes(r), [], JSON.stringify(r.diagnostics));
+        const f = schemaByName(r, "Foo").fields.find((x) => x.name === "createdOn");
+        assert.deepEqual(f?.default, { kind: "generator", name: "now" });
+    });
+
+    it("rejects a type-incompatible @Default (KEYMA090)", () => {
+        const r = cv({ "schema.ts": `
+            import { Schema, Default } from "@keyma/dsl";
+            @Schema() class Foo { @Default(5) declare status: string; }
+        `});
+        assert.ok(hasError(r, CODES.KEYMA090), JSON.stringify(r.diagnostics));
+    });
+
+    it("recognizes a named TS enum and records it in ir.enums", () => {
+        const r = cv({ "schema.ts": `
+            import { Schema } from "@keyma/dsl";
+            enum Status { Active = "active", Archived = "archived" }
+            @Schema() class Foo { declare status: Status; }
+        `});
+        assert.deepEqual(errorCodes(r), [], JSON.stringify(r.diagnostics));
+        const status = schemaByName(r, "Foo").fields.find((x) => x.name === "status");
+        assert.deepEqual(status?.type, { kind: "enum", name: "Status", values: ["active", "archived"] });
+        assert.equal(r.ir.enums?.[0]?.name, "Status");
+        assert.deepEqual(r.ir.enums?.[0]?.members, [
+            { name: "Active", value: "active" },
+            { name: "Archived", value: "archived" },
+        ]);
+    });
+
+    it("rejects a non-portable (numeric) enum with KEYMA025", () => {
+        const r = cv({ "schema.ts": `
+            import { Schema } from "@keyma/dsl";
+            enum Level { Low, High }
+            @Schema() class Foo { declare level: Level; }
+        `});
+        assert.ok(hasError(r, CODES.KEYMA025), JSON.stringify(r.diagnostics));
+    });
+
+    it("captures @FormField and @Deprecated metadata", () => {
+        const r = cv({ "schema.ts": `
+            import { Schema, FormField, Deprecated } from "@keyma/dsl";
+            @Schema() class Foo {
+                @FormField({ title: "Email", hint: "kept private", order: 1 }) declare email: string;
+                @Deprecated("use email") declare username: string;
+            }
+        `});
+        assert.deepEqual(errorCodes(r), [], JSON.stringify(r.diagnostics));
+        const foo = schemaByName(r, "Foo");
+        const email = foo.fields.find((x) => x.name === "email");
+        const username = foo.fields.find((x) => x.name === "username");
+        assert.deepEqual(email?.form, { title: "Email", hint: "kept private", order: 1 });
+        assert.equal(username?.deprecated, "use email");
+    });
+});
+
+// ─── Validator/formatter name inference (single-arg form) ─────────────────────
+
+describe("validator name inference", () => {
+    it("infers the validator name from the const binding", () => {
+        const r = cv({ "schema.ts": `
+            import { Schema, Validate, Validator } from "@keyma/dsl";
+            export const minLen = Validator((n: number) => (value: string) =>
+                value.length >= n ? null : { field: "x", code: "MIN", message: "too short" });
+            @Schema() class Foo { @Validate(minLen(2)) declare name: string; }
+        `});
+        assert.deepEqual(errorCodes(r), [], JSON.stringify(r.diagnostics));
+        assert.equal(r.ir.validatorDeclarations?.[0]?.name, "minLen");
+        const name = schemaByName(r, "Foo").fields.find((f) => f.name === "name");
+        assert.deepEqual(name?.validators[0], { name: "minLen", params: { n: 2 } });
+    });
+
+    it("still supports the explicit two-arg form", () => {
+        const r = cv({ "schema.ts": `
+            import { Schema, Validate, Validator } from "@keyma/dsl";
+            export const tooShort = Validator("minLength", (n: number) => (value: string) =>
+                value.length >= n ? null : { field: "x", code: "MIN", message: "too short" });
+            @Schema() class Foo { @Validate(tooShort(2)) declare name: string; }
+        `});
+        assert.deepEqual(errorCodes(r), [], JSON.stringify(r.diagnostics));
+        // the registered name is the explicit "minLength", not the binding "tooShort"
+        assert.equal(r.ir.validatorDeclarations?.[0]?.name, "minLength");
+        const name = schemaByName(r, "Foo").fields.find((f) => f.name === "name");
+        assert.deepEqual(name?.validators[0], { name: "minLength", params: { n: 2 } });
     });
 });

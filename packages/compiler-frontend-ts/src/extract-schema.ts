@@ -1,23 +1,30 @@
 import ts from "typescript";
 import type {
-    IRSchema, IRField, IRType, IRValidator, IRFormatter, IRFieldIndex, IRIndex, IRDiagnostic, IREdge,
+    IRSchema, IRField, IRType, IRValidator, IRFormatter, IRFieldIndex, IRIndex, IRDiagnostic, IREdge, IRDefault, IRFormField, IRMethod,
 } from "@keyma/ir";
-import { mkError, mkWarning, KEYMA015, KEYMA017, KEYMA040, KEYMA061, KEYMA065, KEYMA066 } from "./diagnostics.js";
-import { getLocation, isFromModule } from "./util.js";
+import { mkError, mkWarning, KEYMA017, KEYMA019, KEYMA040, KEYMA061, KEYMA065, KEYMA066 } from "./diagnostics.js";
+import { getLocation, isFromModule, stringLiteralValue } from "./util.js";
 import { mapTypeNode } from "./map-type.js";
-import { lowerValidateArgs, lowerFormatArgs, lowerIndexedArgs } from "./lower-decorator.js";
+import { lowerValidateArgs, lowerFormatArgs, lowerIndexedArgs, lowerDefaultArg, lowerFormFieldArg } from "./lower-decorator.js";
 import { lowerGetterBody } from "./lower-expression.js";
+import { lowerMethod, lowerSetter, type MethodLowerCtx } from "./lower-method.js";
+import type { FnRefVerdict } from "./lower-portable-expr.js";
 import type { DiscoveredSchema } from "./discover.js";
+import type { EnumInfo } from "./discover-enums.js";
 
 type ExtractContext = {
     checker: ts.TypeChecker;
     dslModuleName: string;
     schemaClassNames: ReadonlySet<string>;
+    /** Named TS enum declarations, keyed by name. */
+    enums?: ReadonlyMap<string, EnumInfo>;
     diagnostics: IRDiagnostic[];
     /** Optional: maps function name → validator name from @Validator-decorated declarations. */
     discoveredValidators?: Map<string, string>;
     /** Optional: maps function name → formatter name from @Formatter-decorated declarations. */
     discoveredFormatters?: Map<string, string>;
+    /** Classify a call target in method bodies so project-local utilities compile. */
+    classifyFunction?: (ident: ts.Identifier) => FnRefVerdict;
 };
 
 /**
@@ -36,17 +43,25 @@ export function extractSchema(
     // derived from the @From()/@To() decorators (rather than @Edge options).
     const endpoints: EndpointAccumulator = { fromFields: [], toFields: [] };
 
-    const fieldCtx = {
-        checker: ctx.checker,
-        dslModuleName: ctx.dslModuleName,
-        schemaClassNames: ctx.schemaClassNames,
-        diagnostics: ctx.diagnostics,
+    const fieldCtx: FieldExtractContext = {
+        ...ctx,
         sourceFile,
         endpoints,
     };
 
+    const methodCtx: MethodLowerCtx = {
+        checker: ctx.checker,
+        dslModuleName: ctx.dslModuleName,
+        schemaClassNames: ctx.schemaClassNames,
+        ...(ctx.enums !== undefined && { enums: ctx.enums }),
+        diagnostics: ctx.diagnostics,
+        sourceFile,
+        ...(ctx.classifyFunction !== undefined ? { classifyFunction: ctx.classifyFunction } : {}),
+    };
+
     const seenNames = new Set<string>();
     const fields: IRField[] = [];
+    const rawMethods: IRMethod[] = [];
 
     for (const member of classNode.members) {
         if (ts.isPropertyDeclaration(member) || ts.isGetAccessorDeclaration(member)) {
@@ -63,9 +78,19 @@ export function extractSchema(
 
             const field = extractField(member, fieldCtx);
             if (field) fields.push(field);
+        } else if (ts.isMethodDeclaration(member)) {
+            if (!member.name || !ts.isIdentifier(member.name)) continue;
+            const m = lowerMethod(member, member.name.text, memberVisibility(member), methodCtx);
+            if (m) rawMethods.push(m);
+        } else if (ts.isSetAccessorDeclaration(member)) {
+            if (!member.name || !ts.isIdentifier(member.name)) continue;
+            const m = lowerSetter(member, member.name.text, memberVisibility(member), methodCtx);
+            if (m) rawMethods.push(m);
         }
-        // Skip MethodDeclaration, SetAccessorDeclaration, constructor, etc.
+        // Skip the constructor, get accessors handled as fields, static members, etc.
     }
+
+    const methods = dedupeMethods(rawMethods, fields, ctx, sourceFile);
 
     // Group keyed field indexes into schema-level composite IRIndex entries.
     // Fields appear in declaration order, so the iteration order is already correct.
@@ -121,6 +146,9 @@ export function extractSchema(
         source: discovered.source,
     };
 
+    if (methods.length > 0) {
+        schema.methods = methods;
+    }
     if (schemaOptions.ephemeral === true) {
         schema.ephemeral = true;
     }
@@ -140,10 +168,10 @@ export function extractSchema(
 
 type EndpointAccumulator = { fromFields: string[]; toFields: string[] };
 
-/** Core (nullable/array-unwrapped) reference target schema of a field type. */
+/** Core (array-unwrapped) reference target schema of a field type. */
 function referenceTargetOf(type: IRType): string | undefined {
     let t: IRType = type;
-    while (t.kind === "nullable" || t.kind === "array") t = t.of;
+    while (t.kind === "array") t = t.of;
     return t.kind === "reference" || t.kind === "embedded" ? t.schema : undefined;
 }
 
@@ -207,6 +235,42 @@ type FieldExtractContext = ExtractContext & {
     endpoints?: EndpointAccumulator;
 };
 
+/** Public/private visibility of a class member from its TS modifiers. */
+function memberVisibility(member: ts.ClassElement): "public" | "private" {
+    const flags = ts.getCombinedModifierFlags(member);
+    return (flags & ts.ModifierFlags.Private) || (flags & ts.ModifierFlags.Protected) ? "private" : "public";
+}
+
+/**
+ * Resolve member-name collisions among methods/setters. A setter may legitimately
+ * share a name with a field (a stored field or a `@Computed` getter — the get/set
+ * pair); a method may not. Duplicate method/setter names collide regardless. Drops
+ * conflicting behaviors with KEYMA040.
+ */
+function dedupeMethods(
+    rawMethods: IRMethod[],
+    fields: IRField[],
+    ctx: ExtractContext,
+    sourceFile: ts.SourceFile,
+): IRMethod[] {
+    const fieldNames = new Set(fields.map((f) => f.name));
+    const seen = new Set<string>();
+    const result: IRMethod[] = [];
+    for (const m of rawMethods) {
+        if (seen.has(m.name)) {
+            ctx.diagnostics.push(mkError(KEYMA040, `Duplicate member name "${m.name}"`, m.source));
+            continue;
+        }
+        if (m.kind === "method" && fieldNames.has(m.name)) {
+            ctx.diagnostics.push(mkError(KEYMA040, `Method "${m.name}" conflicts with a field of the same name`, m.source));
+            continue;
+        }
+        seen.add(m.name);
+        result.push(m);
+    }
+    return result;
+}
+
 function extractField(
     member: ts.PropertyDeclaration | ts.GetAccessorDeclaration,
     ctx: FieldExtractContext
@@ -220,15 +284,40 @@ function extractField(
     const isReadonly = !!(modFlags & ts.ModifierFlags.Readonly);
     const visibility: "public" | "private" = isPrivate ? "private" : "public";
 
-    // Is it optional? (has ?)
+    // Is the key optional? (`?` modifier — the presence axis; `| undefined` in the
+    // type also feeds this, captured from the mapped type below)
     const isOptional = "questionToken" in member && member.questionToken !== undefined;
-    const required = !isOptional;
 
-    // Computed getter vs. regular property
+    // Computed getter vs. regular property. Computed fields must be opted in with
+    // `@Computed()` so the intent is explicit.
     const isGetter = ts.isGetAccessorDeclaration(member);
+    const hasComputed = (ts.getDecorators(member) ?? []).some(
+        (d) => ts.isCallExpression(d.expression) && getDecoratorIdentifierName(d.expression, ctx) === "Computed",
+    );
 
     if (isGetter) {
-        return extractComputedField(member as ts.GetAccessorDeclaration, fieldName, visibility, required, ctx);
+        if (!hasComputed) {
+            ctx.diagnostics.push(
+                mkWarning(
+                    KEYMA019,
+                    `Getter "${fieldName}" is ignored — decorate it with @Computed() to expose it as a computed field`,
+                    getLocation(member, sf),
+                ),
+            );
+            return null;
+        }
+        return extractComputedField(member as ts.GetAccessorDeclaration, fieldName, visibility, isOptional, ctx);
+    }
+
+    if (hasComputed) {
+        ctx.diagnostics.push(
+            mkError(
+                KEYMA019,
+                `@Computed() can only be applied to a getter — field "${fieldName}" is a plain property`,
+                getLocation(member, sf),
+            ),
+        );
+        return null;
     }
 
     const prop = member as ts.PropertyDeclaration;
@@ -246,6 +335,7 @@ function extractField(
         checker: ctx.checker,
         dslModuleName: ctx.dslModuleName,
         schemaClassNames: ctx.schemaClassNames,
+        ...(ctx.enums !== undefined && { enums: ctx.enums }),
         diagnostics: ctx.diagnostics,
         sourceFile: sf,
     });
@@ -264,6 +354,9 @@ function extractField(
     const fieldIndexes: IRFieldIndex[] = [];
     let ephemeral = false;
     let isEndpoint = false;
+    let defaultValue: IRDefault | undefined;
+    let form: IRFormField | undefined;
+    let deprecated: boolean | string | undefined;
 
     const lowerCtx = {
         checker: ctx.checker,
@@ -294,6 +387,14 @@ function extractField(
             if (idx !== null) fieldIndexes.push(idx);
         } else if (decoName === "Ephemeral") {
             ephemeral = true;
+        } else if (decoName === "Default") {
+            const d = lowerDefaultArg(expr.arguments, irType, lowerCtx);
+            if (d !== null) defaultValue = d;
+        } else if (decoName === "FormField") {
+            form = lowerFormFieldArg(expr.arguments, lowerCtx);
+        } else if (decoName === "Deprecated") {
+            const reasonNode = expr.arguments[0];
+            deprecated = reasonNode !== undefined ? (stringLiteralValue(reasonNode) ?? true) : true;
         } else if (decoName === "From" || decoName === "To") {
             isEndpoint = true;
             const bucket = decoName === "From" ? ctx.endpoints?.fromFields : ctx.endpoints?.toFields;
@@ -317,13 +418,17 @@ function extractField(
         type: irType,
         visibility,
         readonly: isReadonly,
-        required,
+        required: !(isOptional || typeResult.optional === true),
         validators,
         formatters,
         indexes: fieldIndexes,
         source: getLocation(prop, sf),
     };
+    if (typeResult.nullable === true) field.nullable = true;
     if (ephemeral) field.ephemeral = true;
+    if (defaultValue !== undefined) field.default = defaultValue;
+    if (form !== undefined) field.form = form;
+    if (deprecated !== undefined) field.deprecated = deprecated;
 
     return field;
 }
@@ -332,27 +437,15 @@ function extractComputedField(
     getter: ts.GetAccessorDeclaration,
     fieldName: string,
     visibility: "public" | "private",
-    required: boolean,
+    isOptional: boolean,
     ctx: FieldExtractContext
 ): IRField | null {
     const sf = ctx.sourceFile;
+    let typeNullable = false;
+    let typeOptional = false;
 
-    // Must not have a setter
-    const parentClass = getter.parent;
-    if (ts.isClassDeclaration(parentClass) || ts.isClassExpression(parentClass)) {
-        const hasSetter = parentClass.members.some(
-            (m): m is ts.SetAccessorDeclaration =>
-                ts.isSetAccessorDeclaration(m) &&
-                ts.isIdentifier(m.name) &&
-                m.name.text === fieldName
-        );
-        if (hasSetter) {
-            ctx.diagnostics.push(
-                mkError(KEYMA015, `Computed getter "${fieldName}" must not have a setter`, getLocation(getter, sf))
-            );
-            return null;
-        }
-    }
+    // A getter/setter pair is allowed: the getter becomes a computed field and the
+    // setter is collected separately as a behavior (see dedupeMethods).
 
     // Determine type from the getter's return type annotation (if present)
     let irType: import("@keyma/ir").IRType = { kind: "string" }; // default
@@ -361,6 +454,7 @@ function extractComputedField(
             checker: ctx.checker,
             dslModuleName: ctx.dslModuleName,
             schemaClassNames: ctx.schemaClassNames,
+            ...(ctx.enums !== undefined && { enums: ctx.enums }),
             diagnostics: ctx.diagnostics,
             sourceFile: sf,
         });
@@ -368,18 +462,27 @@ function extractComputedField(
             ctx.diagnostics.push(typeResult.diag);
         } else {
             irType = typeResult.type;
+            typeNullable = typeResult.nullable === true;
+            typeOptional = typeResult.optional === true;
         }
     }
 
-    // Lower the getter body to an expression
-    const exprResult = lowerGetterBody(getter, { diagnostics: ctx.diagnostics, sourceFile: sf });
-    if ("diag" in exprResult) {
-        ctx.diagnostics.push(exprResult.diag);
+    // Lower the getter body to an expression (shared portable engine, field mode)
+    const expr = lowerGetterBody(getter, {
+        diagnostics: ctx.diagnostics,
+        sourceFile: sf,
+        checker: ctx.checker,
+        dslModuleName: ctx.dslModuleName,
+        schemaClassNames: ctx.schemaClassNames,
+    });
+    if (expr === null) {
         return null;
     }
 
-    // Read @Indexed decorator from the getter
+    // Read @Indexed / @FormField / @Deprecated decorators from the getter
     const fieldIndexes: IRFieldIndex[] = [];
+    let form: IRFormField | undefined;
+    let deprecated: boolean | string | undefined;
     const lowerCtx = {
         checker: ctx.checker,
         diagnostics: ctx.diagnostics,
@@ -397,6 +500,11 @@ function extractComputedField(
         if (decoName === "Indexed") {
             const idx = lowerIndexedArgs(expr.arguments, lowerCtx);
             if (idx !== null) fieldIndexes.push(idx);
+        } else if (decoName === "FormField") {
+            form = lowerFormFieldArg(expr.arguments, lowerCtx);
+        } else if (decoName === "Deprecated") {
+            const reasonNode = expr.arguments[0];
+            deprecated = reasonNode !== undefined ? (stringLiteralValue(reasonNode) ?? true) : true;
         }
     }
 
@@ -405,13 +513,16 @@ function extractComputedField(
         type: irType,
         visibility,
         readonly: true,
-        required,
+        required: !(isOptional || typeOptional),
         validators: [],
         formatters: [],
         indexes: fieldIndexes,
-        computed: { expression: exprResult.expr },
+        computed: { expression: expr },
         source: getLocation(getter, sf),
     };
+    if (typeNullable) field.nullable = true;
+    if (form !== undefined) field.form = form;
+    if (deprecated !== undefined) field.deprecated = deprecated;
 
     return field;
 }

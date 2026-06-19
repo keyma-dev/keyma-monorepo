@@ -139,16 +139,24 @@ describe("validateIR", () => {
         assert.equal(validateIR(doc).valid, false);
     });
 
-    it("accepts nullable and array types", () => {
-        const nullable = { kind: "nullable", of: { kind: "string" } };
+    it("accepts array types, with and without nullable elements", () => {
         const array = { kind: "array", of: { kind: "number" } };
-        for (const type of [nullable, array]) {
+        const nullableElems = { kind: "array", of: { kind: "number" }, elementNullable: true };
+        for (const type of [array, nullableElems]) {
             const doc = {
                 ...goldenIR,
                 schemas: [{ ...minimalSchema, fields: [{ ...minimalField, type }] }],
             };
             assert.equal(validateIR(doc).valid, true);
         }
+    });
+
+    it("accepts a field-level nullable flag", () => {
+        const doc = {
+            ...goldenIR,
+            schemas: [{ ...minimalSchema, fields: [{ ...minimalField, nullable: true }] }],
+        };
+        assert.equal(validateIR(doc).valid, true);
     });
 
     it("accepts reference and embedded types", () => {
@@ -162,6 +170,65 @@ describe("validateIR", () => {
             };
             assert.equal(validateIR(doc).valid, true);
         }
+    });
+
+    it("rejects an unknown intrinsic op in a computed expression", () => {
+        const doc = {
+            ...goldenIR,
+            schemas: [{
+                ...minimalSchema,
+                fields: [{
+                    ...minimalField,
+                    computed: {
+                        expression: { kind: "intrinsic", op: "string.bogus", receiver: { kind: "field", name: "x" }, args: [] },
+                    },
+                }],
+            }],
+        };
+        const result = validateIR(doc);
+        assert.equal(result.valid, false);
+        assert.ok(result.errors.some((e) => e.message.includes("unknown intrinsic op")));
+    });
+
+    it("accepts a known intrinsic op", () => {
+        const doc = {
+            ...goldenIR,
+            schemas: [{
+                ...minimalSchema,
+                fields: [{
+                    ...minimalField,
+                    computed: {
+                        expression: { kind: "intrinsic", op: "array.length", receiver: { kind: "field", name: "x" }, args: [] },
+                    },
+                }],
+            }],
+        };
+        assert.equal(validateIR(doc).valid, true);
+    });
+
+    it('accepts a "text" direction on a field index but rejects a bad one', () => {
+        const ok = {
+            ...goldenIR,
+            schemas: [{ ...minimalSchema, fields: [{ ...minimalField, indexes: [{ direction: "text" }] }] }],
+        };
+        assert.equal(validateIR(ok).valid, true);
+
+        const bad = {
+            ...goldenIR,
+            schemas: [{ ...minimalSchema, fields: [{ ...minimalField, indexes: [{ direction: 5 }] }] }],
+        };
+        assert.equal(validateIR(bad).valid, false);
+    });
+
+    it('accepts a "text" direction on a composite index', () => {
+        const doc = {
+            ...goldenIR,
+            schemas: [{
+                ...minimalSchema,
+                indexes: [{ fields: [{ name: "x", direction: "text" }] }],
+            }],
+        };
+        assert.equal(validateIR(doc).valid, true);
     });
 
     it("accepts all scalar validators", () => {
@@ -392,6 +459,79 @@ describe("validateIR — intrinsics & declarations", () => {
                 returnType: { kind: "boolean" },
                 statements: [],
                 source: minimalSource,
+            }],
+        };
+        assert.equal(validateIR(doc).valid, false);
+    });
+
+    it("accepts a schema with method and setter behaviors (incl. assign statement)", () => {
+        const doc = {
+            ...goldenIR,
+            schemas: [{
+                ...minimalSchema,
+                fields: [minimalField, { ...minimalField, name: "email", type: { kind: "string" } }],
+                methods: [
+                    {
+                        name: "greeting",
+                        kind: "method",
+                        params: [{ name: "prefix", type: { kind: "string" } }],
+                        returnType: { kind: "string" },
+                        statements: [{ kind: "return", value: { kind: "field", name: "email" } }],
+                        visibility: "public",
+                        source: minimalSource,
+                    },
+                    {
+                        name: "primaryEmail",
+                        kind: "setter",
+                        params: [{ name: "value", type: { kind: "string" } }],
+                        statements: [{
+                            kind: "assign",
+                            target: { kind: "field", name: "email" },
+                            value: { kind: "identifier", name: "value" },
+                        }],
+                        visibility: "public",
+                        source: minimalSource,
+                    },
+                ],
+            }],
+        };
+        const result = validateIR(doc);
+        assert.equal(result.valid, true, JSON.stringify(result.errors));
+    });
+
+    it("rejects a method with an invalid kind", () => {
+        const doc = {
+            ...goldenIR,
+            schemas: [{
+                ...minimalSchema,
+                methods: [{
+                    name: "m",
+                    kind: "lambda",
+                    params: [],
+                    statements: [],
+                    visibility: "public",
+                    source: minimalSource,
+                }],
+            }],
+        };
+        const result = validateIR(doc);
+        assert.equal(result.valid, false);
+        assert.ok(result.errors.some((e) => e.path.includes("methods[0].kind")));
+    });
+
+    it("rejects an assign statement with a malformed target", () => {
+        const doc = {
+            ...goldenIR,
+            schemas: [{
+                ...minimalSchema,
+                methods: [{
+                    name: "s",
+                    kind: "setter",
+                    params: [{ name: "v", type: { kind: "string" } }],
+                    statements: [{ kind: "assign", target: { kind: "field" }, value: { kind: "literal", value: 1 } }],
+                    visibility: "public",
+                    source: minimalSource,
+                }],
             }],
         };
         assert.equal(validateIR(doc).valid, false);

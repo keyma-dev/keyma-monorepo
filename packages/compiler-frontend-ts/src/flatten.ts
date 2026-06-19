@@ -1,4 +1,4 @@
-import type { IRSchema, IRField, IRIndex, IRDiagnostic } from "@keyma/ir";
+import type { IRSchema, IRField, IRType, IRIndex, IRMethod, IRDiagnostic } from "@keyma/ir";
 import { mkError, KEYMA032, KEYMA033, KEYMA034 } from "./diagnostics.js";
 
 type FlattenContext = {
@@ -60,11 +60,31 @@ function flattenSchema(
     // Merge composite indexes: concatenate and deduplicate
     const mergedIndexes = mergeIndexes(flatParent.indexes, schema.indexes);
 
-    return {
-        ...schema,
+    // Inherited behaviors flatten in alongside fields: parent methods first, child
+    // methods override by name.
+    const mergedMethods = mergeMethods(flatParent.methods ?? [], schema.methods ?? []);
+
+    // The flattened schema is self-contained: drop `extends` so backends don't
+    // re-apply inheritance (which would double-assign inherited fields), and keep
+    // the parent name only as provenance.
+    const { extends: _dropped, ...rest } = schema;
+    const out: IRSchema = {
+        ...rest,
+        extendsSource: parentName,
         fields: mergedFields,
         indexes: mergedIndexes,
     };
+    if (mergedMethods.length > 0) out.methods = mergedMethods;
+    else delete out.methods;
+    return out;
+}
+
+/** Merge inherited and own behaviors; a child behavior overrides a parent's by name. */
+function mergeMethods(parentMethods: IRMethod[], childMethods: IRMethod[]): IRMethod[] {
+    const result = new Map<string, IRMethod>();
+    for (const m of parentMethods) result.set(m.name, m);
+    for (const m of childMethods) result.set(m.name, m);
+    return [...result.values()];
 }
 
 function mergeFields(
@@ -82,12 +102,14 @@ function mergeFields(
     for (const f of childFields) {
         const existing = result.get(f.name);
         if (existing) {
-            // Type compatibility check: child must not change the type in an incompatible way.
-            if (!typesCompatible(existing.type, f.type)) {
+            // A child override must be a SUBTYPE of the parent field, so existing
+            // readers of the parent type stay valid.
+            if (!fieldOverrideCompatible(existing, f)) {
                 ctx.diagnostics.push(
                     mkError(
                         KEYMA034,
-                        `Field "${f.name}" in "${childSchema.sourceName}" overrides parent field with incompatible type`,
+                        `Field "${f.name}" in "${childSchema.sourceName}" narrows incompatibly: ` +
+                        `parent ${fieldLabel(existing)}, child ${fieldLabel(f)}`,
                         f.source
                     )
                 );
@@ -99,22 +121,54 @@ function mergeFields(
     return [...result.values()];
 }
 
+/** A child field override must be a subtype of the parent field. */
+function fieldOverrideCompatible(parent: IRField, child: IRField): boolean {
+    // A child cannot introduce null a parent reader does not expect (widening).
+    if (!(parent.nullable ?? false) && (child.nullable ?? false)) return false;
+    return typesCompatible(parent.type, child.type);
+}
+
 /**
- * A simplified type-compatibility check.
- * For Milestone 2, we only require that both types have the same `kind`.
+ * Whether `child` is a subtype of `parent` (assignable where the parent is
+ * expected). Allows safe narrowing: `number ⊇ integer`, enum value-set subset,
+ * array covariance; rejects widening in the other direction.
  */
-function typesCompatible(
-    parent: import("@keyma/ir").IRType,
-    child: import("@keyma/ir").IRType
-): boolean {
+function typesCompatible(parent: IRType, child: IRType): boolean {
+    // Numeric tower: integer is a subtype of number.
+    if (parent.kind === "number" && child.kind === "integer") return true;
+
     if (parent.kind !== child.kind) return false;
+
     if (parent.kind === "reference" || parent.kind === "embedded") {
         return parent.schema === (child as typeof parent).schema;
     }
-    if (parent.kind === "enum") {
-        return true; // Allow enum value changes
+    if (parent.kind === "enum" && child.kind === "enum") {
+        // Narrowing the allowed set is fine; widening it is not.
+        const allowed = new Set(parent.values);
+        return child.values.every((v) => allowed.has(v));
+    }
+    if (parent.kind === "array" && child.kind === "array") {
+        // A child cannot make elements nullable when the parent's are not.
+        if (!(parent.elementNullable ?? false) && (child.elementNullable ?? false)) return false;
+        return typesCompatible(parent.of, child.of);
     }
     return true;
+}
+
+/** A short, message-friendly label for a field's type + nullability. */
+function fieldLabel(field: IRField): string {
+    return field.nullable ? `${irTypeLabel(field.type)} | null` : irTypeLabel(field.type);
+}
+
+/** A short human label for an IRType (local — the backend has its own copy). */
+function irTypeLabel(type: IRType): string {
+    switch (type.kind) {
+        case "array": return `${irTypeLabel(type.of)}[]`;
+        case "enum": return `enum(${type.values.join("|")})`;
+        case "reference": return `Reference<${type.schema}>`;
+        case "embedded": return `Embedded<${type.schema}>`;
+        default: return type.kind;
+    }
 }
 
 function mergeIndexes(parentIndexes: IRIndex[], childIndexes: IRIndex[]): IRIndex[] {

@@ -122,27 +122,34 @@ function tryDiscoverCall(
         return null;
     }
 
-    // Arg 0: string literal name.
-    const nameArg = call.arguments[0];
-    if (!nameArg || !ts.isStringLiteral(nameArg)) {
+    // Two forms:
+    //   Validator("name", factory)  — explicit name
+    //   Validator(factory)          — name inferred from the const binding
+    const arg0 = call.arguments[0];
+    let registeredName: string;
+    let factoryArg: ts.Expression | undefined;
+    if (arg0 !== undefined && ts.isStringLiteral(arg0)) {
+        registeredName = arg0.text;
+        factoryArg = call.arguments[1];
+    } else if (arg0 !== undefined && (ts.isArrowFunction(arg0) || ts.isFunctionExpression(arg0))) {
+        registeredName = funcName; // inferred from the exported const binding
+        factoryArg = arg0;
+    } else {
         ctx.diagnostics.push(
             mkError(
                 KEYMA080,
-                `${which}() first argument must be a string literal name`,
+                `${which}() takes (name, factory) or (factory) — the first argument must be a string-literal name or a factory function`,
                 getLocation(call, sourceFile),
             ),
         );
         return null;
     }
-    const registeredName = nameArg.text;
 
-    // Arg 1: arrow function or function expression.
-    const factoryArg = call.arguments[1];
     if (!factoryArg || (!ts.isArrowFunction(factoryArg) && !ts.isFunctionExpression(factoryArg))) {
         ctx.diagnostics.push(
             mkError(
                 KEYMA080,
-                `${which}() second argument must be an arrow function or function expression`,
+                `${which}() factory must be an arrow function or function expression`,
                 getLocation(call, sourceFile),
             ),
         );

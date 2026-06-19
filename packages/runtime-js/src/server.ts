@@ -22,6 +22,7 @@ import type {
 } from "./protocol.js";
 import { validate, type ValidatorRegistry } from "./validate.js";
 import { format, type FormatterRegistry } from "./format.js";
+import { applyDefaults } from "./defaults.js";
 import {
     type KeymaAction,
     type KeymaServerPlugin,
@@ -277,6 +278,7 @@ export class KeymaServer {
         context: RequestContext,
     ): Promise<KeymaLeafResult> {
         let data = extractEdgeEndpointIds(schema, { ...op.data });
+        applyDefaults(schema, data);
         await format(schema, data, "save", this.opts.formatters);
         const writableSchema: SchemaMetadata = {
             ...schema,
@@ -500,7 +502,7 @@ function buildEmbeddedSpec(spec: ProjectionSpec): { [key: string]: AdapterFieldS
 }
 
 function coreType(type: FieldType): FieldType {
-    if (type.kind === "nullable" || type.kind === "array") return coreType(type.of);
+    if (type.kind === "array") return coreType(type.of);
     return type;
 }
 

@@ -1,6 +1,6 @@
 import path from "node:path";
-import type { IRSchema, IRField, IRType } from "@keyma/ir";
-import { exprToJs } from "./emit-expression.js";
+import type { IRSchema, IRField, IRType, IRMethod } from "@keyma/ir";
+import { exprToJs, stmtToJs } from "./emit-expression.js";
 import { irTypeToTs } from "./ir-type-to-ts.js";
 import { buildSchemaData, buildMaterializer, hasComputedFields } from "./schema-data.js";
 
@@ -33,16 +33,11 @@ export function emitModelJs(schema: IRSchema, opts: ModelEmitOptions): string {
 
     const currentPath = opts.schemaPaths.get(schema.sourceName)!;
 
-    // Import parent class for inheritance.
-    if (schema.extends !== undefined) {
-        const parentPath = opts.schemaPaths.get(schema.extends);
-        if (parentPath !== undefined) {
-            lines.push(`import { ${schema.extends} } from "${relImport(currentPath, parentPath)}";`);
-        }
-    }
-
     // Import embedded and reference types (needed for refs and embedded constructors).
+    // A self-reference (e.g. `Reference<User>` inside User) resolves to the class
+    // declared in this very file — importing it would shadow that declaration.
     for (const ref of refs) {
+        if (ref.className === schema.sourceName) continue;
         const importPath = relImport(currentPath, ref.fileName);
         if (!lines.some((l) => l.includes(`"${importPath}"`))) {
             lines.push(`import { ${ref.className} } from "${importPath}";`);
@@ -51,14 +46,10 @@ export function emitModelJs(schema: IRSchema, opts: ModelEmitOptions): string {
 
     if (lines.length > 0) lines.push("");
 
-    const extendsClause = schema.extends !== undefined ? ` extends ${schema.extends}` : "";
-    lines.push(`export class ${schema.sourceName}${extendsClause} {`);
+    // Inheritance is fully flattened in the IR — emit a flat class with every
+    // (inherited + own) field assigned exactly once. No `extends`/`super`.
+    lines.push(`export class ${schema.sourceName} {`);
     lines.push(`    constructor(value) {`);
-
-    if (schema.extends !== undefined) {
-        lines.push(`        super(value);`);
-    }
-
     lines.push(`        if (value) {`);
     for (const field of fields) {
         if (field.computed !== undefined) continue;
@@ -73,6 +64,21 @@ export function emitModelJs(schema: IRSchema, opts: ModelEmitOptions): string {
         lines.push("");
         lines.push(`    get ${field.name}() {`);
         lines.push(`        return ${exprToJs(field.computed.expression)};`);
+        lines.push(`    }`);
+    }
+
+    // Methods and setters (portable behaviors). `this.<field>` reads/writes the
+    // record's fields; `stmtToJs`'s default field-access renders `this.<name>`.
+    for (const method of visibleMethods(schema, opts.includePrivate)) {
+        lines.push("");
+        const params = method.params.map((p) => p.name).join(", ");
+        const signature = method.kind === "setter"
+            ? `    set ${method.name}(${params}) {`
+            : `    ${method.name}(${params}) {`;
+        lines.push(signature);
+        for (const stmt of method.statements) {
+            lines.push(stmtToJs(stmt, "        "));
+        }
         lines.push(`    }`);
     }
 
@@ -117,16 +123,10 @@ export function emitModelDts(schema: IRSchema, opts: ModelEmitOptions): string {
         lines.push(`import type { EdgeBrand } from "@keyma/dsl";`);
     }
 
-    // Import parent type.
-    if (schema.extends !== undefined) {
-        const parentPath = opts.schemaPaths.get(schema.extends);
-        if (parentPath !== undefined) {
-            lines.push(`import type { ${schema.extends} } from "${relImport(currentPath, parentPath)}";`);
-        }
-    }
-
-    // Import embedded and reference types.
+    // Import embedded and reference types. Skip a self-reference — the class is
+    // already declared in this file (see the .js emitter for the same guard).
     for (const ref of schemaRefImports(fields, opts.schemaPaths)) {
+        if (ref.className === schema.sourceName) continue;
         const importPath = relImport(currentPath, ref.fileName);
         if (!lines.some((l) => l.includes(`"${importPath}"`))) {
             lines.push(`import type { ${ref.className} } from "${importPath}";`);
@@ -157,30 +157,47 @@ export function emitModelDts(schema: IRSchema, opts: ModelEmitOptions): string {
     const declName = isEdge ? `_${className}` : className;
     const declKeyword = isEdge ? "declare class" : "export declare class";
 
-    const extendsClause = schema.extends !== undefined ? ` extends ${schema.extends}` : "";
-    lines.push(`${declKeyword} ${declName}${extendsClause} {`);
+    // Flat class — inheritance is flattened into the field list upstream.
+    lines.push(`${declKeyword} ${declName} {`);
     lines.push(`    static readonly schema: SchemaMetadata;`);
 
-    // Regular fields.
+    // Regular fields. `| null` is the nullability axis; `| undefined` is the
+    // optionality (key-absent) axis — they compose independently.
     for (const field of fields) {
         if (field.computed !== undefined) continue;
-        const tsType = irTypeToTs(field.type, opts.embeddedTypeNames);
+        const nul = field.nullable ? " | null" : "";
         const optional = !field.required ? " | undefined" : "";
         const ro = field.readonly ? "readonly " : "";
-        lines.push(`    ${ro}${field.name}: ${tsType}${optional};`);
+        for (const jsdoc of fieldJsDoc(field)) lines.push(jsdoc);
+        lines.push(`    ${ro}${field.name}: ${irTypeToTs(field.type, opts.embeddedTypeNames)}${nul}${optional};`);
     }
 
     // Computed getters.
     for (const field of fields) {
         if (field.computed === undefined) continue;
+        const nul = field.nullable ? " | null" : "";
         const tsType = irTypeToTs(field.type, opts.embeddedTypeNames);
-        lines.push(`    get ${field.name}(): ${tsType};`);
+        for (const jsdoc of fieldJsDoc(field)) lines.push(jsdoc);
+        lines.push(`    get ${field.name}(): ${tsType}${nul};`);
+    }
+
+    // Methods and setters (portable behaviors).
+    for (const method of visibleMethods(schema, opts.includePrivate)) {
+        const params = method.params
+            .map((p) => `${p.name}: ${irTypeToTs(p.type, opts.embeddedTypeNames)}`)
+            .join(", ");
+        if (method.kind === "setter") {
+            lines.push(`    set ${method.name}(${params});`);
+        } else {
+            const ret = method.returnType ? irTypeToTs(method.returnType, opts.embeddedTypeNames) : "void";
+            lines.push(`    ${method.name}(${params}): ${ret};`);
+        }
     }
 
     // Constructor.
     const ctorFields = fields.filter((f) => f.computed === undefined);
     const ctorParams = ctorFields
-        .map((f) => `${f.name}?: ${irTypeToTs(f.type, opts.embeddedTypeNames)}`)
+        .map((f) => `${f.name}?: ${irTypeToTs(f.type, opts.embeddedTypeNames)}${f.nullable ? " | null" : ""}`)
         .join("; ");
     lines.push(`    constructor(value?: { ${ctorParams} });`);
     lines.push(`}`);
@@ -211,6 +228,24 @@ function visibleFields(schema: IRSchema, includePrivate: boolean): IRField[] {
     return includePrivate ? schema.fields : schema.fields.filter((f) => f.visibility === "public");
 }
 
+function visibleMethods(schema: IRSchema, includePrivate: boolean): IRMethod[] {
+    const methods = schema.methods ?? [];
+    return includePrivate ? methods : methods.filter((m) => m.visibility === "public");
+}
+
+/** Build JSDoc lines for a field from its `@FormField`/`@Deprecated` metadata. */
+function fieldJsDoc(field: IRField): string[] {
+    const body: string[] = [];
+    if (field.form?.title) body.push(field.form.title);
+    if (field.form?.hint) body.push(field.form.hint);
+    if (field.deprecated !== undefined) {
+        body.push(typeof field.deprecated === "string" ? `@deprecated ${field.deprecated}` : "@deprecated");
+    }
+    if (body.length === 0) return [];
+    if (body.length === 1) return [`    /** ${body[0]} */`];
+    return ["    /**", ...body.map((l) => `     * ${l}`), "     */"];
+}
+
 type SchemaRefImport = { className: string; fileName: string };
 
 /** Collect all embedded and reference schema names referenced in a field list. */
@@ -226,7 +261,7 @@ function schemaRefImports(fields: IRField[], fileNames: ReadonlyMap<string, stri
                     result.push({ className: type.schema, fileName });
                 }
             }
-        } else if (type.kind === "nullable" || type.kind === "array") {
+        } else if (type.kind === "array") {
             collect(type.of);
         }
     };

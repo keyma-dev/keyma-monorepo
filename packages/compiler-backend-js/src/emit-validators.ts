@@ -2,9 +2,8 @@ import type {
     IRValidatorDeclaration,
     IRFormatterDeclaration,
     IRFunctionDeclaration,
-    IRStatement,
 } from "@keyma/ir";
-import { exprToJs } from "./emit-expression.js";
+import { stmtToJs } from "./emit-expression.js";
 import { irTypeToTs, jsTypeGuard, irTypeLabel } from "./ir-type-to-ts.js";
 
 export type ValidatorEmitFiles = {
@@ -252,34 +251,6 @@ function emitFormatterRegistryDts(): string {
         `export declare function createFormatterRegistry(): FormatterRegistry;`,
         "",
     ].join("\n");
-}
-
-// ─── Statement lowering ───────────────────────────────────────────────────────
-
-function stmtToJs(stmt: IRStatement, indent: string): string {
-    switch (stmt.kind) {
-        case "return":
-            return stmt.value === null
-                ? `${indent}return;`
-                : `${indent}return ${exprToJs(stmt.value)};`;
-
-        case "if": {
-            const cond = exprToJs(stmt.condition);
-            const then = stmt.consequent.map((s) => stmtToJs(s, indent + "    ")).join("\n");
-            let out = `${indent}if (${cond}) {\n${then}\n${indent}}`;
-            if (stmt.alternate && stmt.alternate.length > 0) {
-                const alt = stmt.alternate.map((s) => stmtToJs(s, indent + "    ")).join("\n");
-                out += ` else {\n${alt}\n${indent}}`;
-            }
-            return out;
-        }
-
-        case "const":
-            return `${indent}const ${stmt.name} = ${exprToJs(stmt.init)};`;
-
-        case "expression":
-            return `${indent}${exprToJs(stmt.expr)};`;
-    }
 }
 
 // ─── Helpers ─────────────────────────────────────────────────────────────────

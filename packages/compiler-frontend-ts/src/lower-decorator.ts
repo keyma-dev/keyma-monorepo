@@ -1,8 +1,8 @@
 import ts from "typescript";
-import type { IRValidator, IRFormatterSpec, IRFieldIndex, IRDiagnostic } from "@keyma/ir";
+import type { IRValidator, IRFormatterSpec, IRFieldIndex, IRDiagnostic, IRDefault, IRFormField, IRType } from "@keyma/ir";
 import {
     mkError,
-    KEYMA011, KEYMA013, KEYMA016, KEYMA020, KEYMA021,
+    KEYMA011, KEYMA013, KEYMA016, KEYMA020, KEYMA021, KEYMA090, KEYMA091,
 } from "./diagnostics.js";
 import { getLocation, numericLiteralValue, stringLiteralValue, booleanLiteralValue, resolveAlias, isFromModule } from "./util.js";
 
@@ -85,7 +85,7 @@ export function lowerFormatArgs(
     const phaseArg = args[0];
     if (!phaseArg) return [];
 
-    const phase = stringLiteralValue(phaseArg);
+    const phase = resolvePhaseValue(phaseArg, ctx);
     if (phase === undefined || !VALID_PHASES.has(phase)) {
         ctx.diagnostics.push(
             mkError(KEYMA011, '@Format() first argument must be "change", "blur", "submit", or "save"', getLocation(phaseArg, ctx.sourceFile))
@@ -101,6 +101,18 @@ export function lowerFormatArgs(
         if (spec !== null) result.push({ phase, spec });
     }
     return result;
+}
+
+/**
+ * Resolve the `@Format` phase argument to its string value. Accepts a bare string
+ * literal (`"save"`) or a `Phase.*` constant — for the latter the value is read
+ * from the resolved string-literal type via the checker.
+ */
+function resolvePhaseValue(arg: ts.Expression, ctx: LowerContext): string | undefined {
+    const lit = stringLiteralValue(arg);
+    if (lit !== undefined) return lit;
+    const t = ctx.checker.getTypeAtLocation(arg);
+    return t.isStringLiteral() ? t.value : undefined;
 }
 
 function lowerFormatterArg(expr: ts.Expression, ctx: LowerContext): IRFormatterSpec | null {
@@ -190,16 +202,157 @@ function resolveFactory(
         const factorySym = ctx.checker.getSymbolAtLocation(init.expression);
         if (factorySym === undefined || !isFromModule(factorySym, ctx.checker, ctx.dslModuleName)) continue;
 
-        const nameArg = init.arguments[0];
-        if (nameArg === undefined || !ts.isStringLiteral(nameArg)) continue;
+        // Two forms: `Validator("name", fn)` and `Validator(fn)` (name inferred
+        // from the const binding). Recover the name and the factory accordingly.
+        const arg0 = init.arguments[0];
+        let name: string;
+        let factoryFn: ts.Expression | undefined;
+        if (arg0 !== undefined && ts.isStringLiteral(arg0)) {
+            name = arg0.text;
+            factoryFn = init.arguments[1];
+        } else if (arg0 !== undefined && (ts.isArrowFunction(arg0) || ts.isFunctionExpression(arg0)) && ts.isIdentifier(decl.name)) {
+            name = decl.name.text;
+            factoryFn = arg0;
+        } else {
+            continue;
+        }
 
-        const factoryFn = init.arguments[1];
         const factoryParams = factoryFn !== undefined && (ts.isArrowFunction(factoryFn) || ts.isFunctionExpression(factoryFn))
             ? factoryFn.parameters
             : [];
-        return { name: nameArg.text, factoryParams };
+        return { name, factoryParams };
     }
     return undefined;
+}
+
+// ─── @Default ──────────────────────────────────────────────────────────────────
+
+/**
+ * Lower a `@Default(...)` argument to an IRDefault. Accepts a literal value or a
+ * named generator (`Now`, `Uuid`) imported from the DSL. The `fieldType` is used
+ * for a light literal-vs-type compatibility check (KEYMA090). Returns null on error.
+ */
+export function lowerDefaultArg(
+    args: ts.NodeArray<ts.Expression>,
+    fieldType: IRType,
+    ctx: LowerContext,
+): IRDefault | null {
+    const arg = args[0];
+    if (arg === undefined) {
+        ctx.diagnostics.push(mkError(KEYMA091, "@Default() requires a value"));
+        return null;
+    }
+
+    // Named generator: @Default(Now) / @Default(Uuid)
+    if (ts.isIdentifier(arg)) {
+        const gen = resolveDefaultGenerator(arg, ctx);
+        if (gen !== undefined) return { kind: "generator", name: gen };
+    }
+
+    // Enum-member / const access (e.g. `Role.Member`) — resolve to its literal value.
+    if (ts.isPropertyAccessExpression(arg)) {
+        const t = ctx.checker.getTypeAtLocation(arg);
+        const v = t.isStringLiteral() ? t.value : t.isNumberLiteral() ? t.value : undefined;
+        if (v === undefined) {
+            ctx.diagnostics.push(mkError(
+                KEYMA091,
+                "@Default() must be a literal, a named generator (Now, Uuid), or a string-enum member",
+                getLocation(arg, ctx.sourceFile),
+            ));
+            return null;
+        }
+        if (!literalMatchesType(v, fieldType)) {
+            ctx.diagnostics.push(mkError(KEYMA090, `@Default value ${JSON.stringify(v)} is not compatible with field type "${fieldType.kind}"`, getLocation(arg, ctx.sourceFile)));
+            return null;
+        }
+        return { kind: "literal", value: v };
+    }
+
+    // Arrows/functions/calls are not supported as defaults yet.
+    if (ts.isArrowFunction(arg) || ts.isFunctionExpression(arg) || ts.isCallExpression(arg)) {
+        ctx.diagnostics.push(mkError(
+            KEYMA091,
+            "@Default() must be a literal value or a named generator (Now, Uuid)",
+            getLocation(arg, ctx.sourceFile),
+        ));
+        return null;
+    }
+
+    const r = evalLiteralValue(arg, ctx);
+    if (!r.ok) return null;
+    const value = r.value as string | number | boolean | null | unknown[];
+
+    if (!literalMatchesType(value, fieldType)) {
+        ctx.diagnostics.push(mkError(
+            KEYMA090,
+            `@Default value ${JSON.stringify(value)} is not compatible with field type "${fieldType.kind}"`,
+            getLocation(arg, ctx.sourceFile),
+        ));
+        return null;
+    }
+
+    return { kind: "literal", value };
+}
+
+/** Resolve a DSL default generator identifier (`Now`/`Uuid`) to its IR name. */
+function resolveDefaultGenerator(ident: ts.Identifier, ctx: LowerContext): "now" | "uuid" | undefined {
+    const sym = ctx.checker.getSymbolAtLocation(ident);
+    if (sym === undefined || !isFromModule(sym, ctx.checker, ctx.dslModuleName)) return undefined;
+    const name = resolveAlias(sym, ctx.checker).getName();
+    if (name === "Now") return "now";
+    if (name === "Uuid") return "uuid";
+    return undefined;
+}
+
+/** A light compatibility check between a literal default and the field's type. */
+function literalMatchesType(value: unknown, type: IRType): boolean {
+    switch (type.kind) {
+        case "json":
+            return true; // any JSON value
+        case "string": case "id": case "decimal": case "date": case "dateTime": case "time": case "regexp":
+            return typeof value === "string";
+        case "number": case "integer":
+            return typeof value === "number";
+        case "bigint":
+            return typeof value === "number" || typeof value === "bigint";
+        case "boolean":
+            return typeof value === "boolean";
+        case "enum":
+            return typeof value === "string" && type.values.includes(value);
+        case "array":
+            return Array.isArray(value);
+        case "bytes": case "reference": case "embedded":
+            return value === null; // only null is a sensible literal default here
+    }
+}
+
+// ─── @FormField ────────────────────────────────────────────────────────────────
+
+/** Lower a `@FormField({...})` argument to IRFormField. Returns undefined when empty. */
+export function lowerFormFieldArg(
+    args: ts.NodeArray<ts.Expression>,
+    ctx: LowerContext,
+): IRFormField | undefined {
+    const opts = readObjectLiteralArg(args[0], ctx);
+    if (opts === null || opts === undefined) return undefined;
+
+    const form: IRFormField = {};
+    for (const key of ["title", "hint", "placeholder", "group"] as const) {
+        const node = opts.get(key);
+        if (node !== undefined) {
+            const v = stringLiteralValue(node);
+            if (v === undefined) { ctx.diagnostics.push(mkError(KEYMA011, `${key} must be a string literal`, getLocation(node, ctx.sourceFile))); continue; }
+            form[key] = v;
+        }
+    }
+    const order = opts.get("order");
+    if (order !== undefined) {
+        const v = numericLiteralValue(order);
+        if (v === undefined) { ctx.diagnostics.push(mkError(KEYMA011, "order must be a numeric literal", getLocation(order, ctx.sourceFile))); }
+        else form.order = v;
+    }
+
+    return Object.keys(form).length > 0 ? form : undefined;
 }
 
 // ─── @Indexed ────────────────────────────────────────────────────────────────

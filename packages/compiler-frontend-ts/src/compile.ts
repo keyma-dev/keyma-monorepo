@@ -1,9 +1,11 @@
 import path from "node:path";
 import { fileURLToPath } from "node:url";
 import ts from "typescript";
-import type { KeymaIR, IRDiagnostic } from "@keyma/ir";
+import type { KeymaIR, IRDiagnostic, IRSchema } from "@keyma/ir";
+import { collectFieldRefs } from "@keyma/ir";
 import { createProgram, DEFAULT_COMPILER_OPTIONS, type VirtualFiles } from "./program.js";
 import { discoverSchemas } from "./discover.js";
+import { discoverEnums } from "./discover-enums.js";
 import { discoverValidators, discoverFormatters } from "./discover-validators.js";
 import { lowerValidatorDeclaration, lowerFormatterDeclaration, type LowerDeps } from "./lower-validator.js";
 import { createFunctionCollector } from "./lower-function.js";
@@ -13,6 +15,7 @@ import {
     mkError,
     mkWarning,
     KEYMA001,
+    KEYMA018,
     KEYMA031,
     KEYMA035,
     KEYMA036,
@@ -32,7 +35,7 @@ export type FrontendConfig = {
     dslModuleName?: string;
     /** Compiler version string embedded in the IR document. */
     compilerVersion?: string;
-    /** IR schema version string. Defaults to "1.0.0". */
+    /** IR schema version string. Defaults to "2.0.0". */
     irVersion?: string;
 };
 
@@ -104,17 +107,29 @@ function compileProgram(program: ts.Program, config: FrontendConfig): CompileRes
         discoveredFormatterDecls.map((d) => [d.funcName, d.formatterName])
     );
 
+    // Pass 1c: discover TS enum declarations referenced by schema fields
+    const enums = discoverEnums(program);
+
     const schemaClassNames = new Set(discovered.map((d) => d.className));
+
+    // Utility-function collector: resolves project-local functions referenced from
+    // validator/formatter bodies AND method/setter behavior bodies, compiling them
+    // (transitively) when drained. Created up front so method bodies (lowered during
+    // extraction) and validator/formatter bodies (lowered later) share one queue.
+    const functionCollector = createFunctionCollector({ checker, dslModuleName, schemaClassNames, diagnostics });
+
     const extractCtx = {
         checker,
         dslModuleName,
         schemaClassNames,
+        enums,
         diagnostics,
         discoveredValidators,
         discoveredFormatters,
+        classifyFunction: functionCollector.classify,
     };
 
-    // Pass 2: extract fields for each schema (own fields only)
+    // Pass 2: extract fields and method/setter behaviors for each schema (own only)
     const rawSchemas = discovered.map((d) => extractSchema(d, extractCtx));
 
     const schemasBySourceName = new Map(rawSchemas.map((s) => [s.sourceName, s]));
@@ -139,9 +154,9 @@ function compileProgram(program: ts.Program, config: FrontendConfig): CompileRes
     // Post-processing: every Reference<T> target schema must declare an ID field
     checkReferenceTargetsHaveId(schemas, diagnostics);
 
-    // Utility-function collector: resolves project-local functions referenced from
-    // validator/formatter bodies and compiles them (transitively) after lowering.
-    const functionCollector = createFunctionCollector({ checker, dslModuleName, schemaClassNames, diagnostics });
+    // Post-processing: populate computed-field dependencies and reject cycles.
+    analyzeComputedFields(schemas, diagnostics);
+
     const lowerDeps: LowerDeps = {
         checker,
         dslModuleName,
@@ -163,12 +178,16 @@ function compileProgram(program: ts.Program, config: FrontendConfig): CompileRes
     const functionDeclarations = functionCollector.drain();
 
     const ir: KeymaIR = {
-        irVersion: config.irVersion ?? "1.0.0",
+        irVersion: config.irVersion ?? "2.0.0",
         compilerVersion: config.compilerVersion ?? "0.1.0",
         ...(config.baseDir !== undefined ? { sourceRoot: config.baseDir } : {}),
         schemas,
         diagnostics,
     };
+
+    // Collect named enums actually referenced by schema fields.
+    const usedEnums = collectUsedEnums(schemas, enums);
+    if (usedEnums.length > 0) ir.enums = usedEnums;
 
     if (validatorDeclarations.length > 0) ir.validatorDeclarations = validatorDeclarations;
     if (formatterDeclarations.length > 0) ir.formatterDeclarations = formatterDeclarations;
@@ -302,8 +321,8 @@ function checkReferenceTargetsHaveId(schemas: import("@keyma/ir").IRSchema[], di
             if (inner.kind !== "reference") continue;
             const target = bySourceName.get(inner.schema);
             if (target === undefined) continue;
-            const hasId = target.fields.some((f) => f.type.kind === "id");
-            if (!hasId) {
+            const idField = target.fields.find((f) => f.type.kind === "id");
+            if (idField === undefined) {
                 diagnostics.push(
                     mkError(
                         KEYMA070,
@@ -311,14 +330,117 @@ function checkReferenceTargetsHaveId(schemas: import("@keyma/ir").IRSchema[], di
                         field.source,
                     ),
                 );
+            } else {
+                // Record the resolved id type so backends can type the stored id.
+                inner.idType = idField.type;
             }
         }
     }
 }
 
 function unwrap(type: import("@keyma/ir").IRType): import("@keyma/ir").IRType {
-    if (type.kind === "nullable" || type.kind === "array") return unwrap(type.of);
+    if (type.kind === "array") return unwrap(type.of);
     return type;
+}
+
+/** Collect the IREnumDeclarations for every named enum referenced by a field type. */
+function collectUsedEnums(
+    schemas: IRSchema[],
+    enums: ReadonlyMap<string, import("./discover-enums.js").EnumInfo>,
+): import("@keyma/ir").IREnumDeclaration[] {
+    const used = new Set<string>();
+    const visit = (t: import("@keyma/ir").IRType): void => {
+        if (t.kind === "array") visit(t.of);
+        else if (t.kind === "enum" && t.name !== undefined) used.add(t.name);
+    };
+    for (const schema of schemas) {
+        for (const field of schema.fields) visit(field.type);
+    }
+    const result: import("@keyma/ir").IREnumDeclaration[] = [];
+    for (const name of used) {
+        const info = enums.get(name);
+        if (info?.members != null) result.push({ name: info.name, members: info.members, source: info.source });
+    }
+    return result;
+}
+
+/**
+ * Populate each computed field's `dependsOn` (the in-schema fields it reads) and
+ * reject computed→computed dependency cycles (KEYMA018, incl. self-reference).
+ */
+function analyzeComputedFields(schemas: IRSchema[], diagnostics: IRDiagnostic[]): void {
+    for (const schema of schemas) {
+        const fieldNames = new Set(schema.fields.map((f) => f.name));
+        const computedNames = new Set(
+            schema.fields.filter((f) => f.computed !== undefined).map((f) => f.name),
+        );
+
+        // dependsOn = in-schema fields referenced by the computed expression.
+        for (const field of schema.fields) {
+            if (field.computed === undefined) continue;
+            const deps = collectFieldRefs(field.computed.expression).filter((n) => fieldNames.has(n));
+            if (deps.length > 0) field.computed.dependsOn = deps;
+        }
+
+        detectComputedCycle(schema, computedNames, diagnostics);
+    }
+}
+
+/**
+ * Detect a cycle in the computed→computed dependency subgraph via a 3-colour DFS.
+ * Emits a single KEYMA018 per schema naming a cycle path (self-reference included).
+ */
+function detectComputedCycle(
+    schema: IRSchema,
+    computedNames: ReadonlySet<string>,
+    diagnostics: IRDiagnostic[],
+): void {
+    const depsOf = new Map<string, string[]>();
+    for (const field of schema.fields) {
+        if (field.computed === undefined) continue;
+        const deps = (field.computed.dependsOn ?? []).filter((n) => computedNames.has(n));
+        depsOf.set(field.name, deps);
+    }
+
+    const WHITE = 0, GRAY = 1, BLACK = 2;
+    const color = new Map<string, number>();
+    const stack: string[] = [];
+
+    const visit = (name: string): string[] | null => {
+        color.set(name, GRAY);
+        stack.push(name);
+        for (const dep of depsOf.get(name) ?? []) {
+            const c = color.get(dep) ?? WHITE;
+            if (c === GRAY) {
+                // Back-edge → cycle. Slice the path from `dep` to the current node.
+                const start = stack.indexOf(dep);
+                return [...stack.slice(start), dep];
+            }
+            if (c === WHITE) {
+                const cycle = visit(dep);
+                if (cycle !== null) return cycle;
+            }
+        }
+        stack.pop();
+        color.set(name, BLACK);
+        return null;
+    };
+
+    for (const name of depsOf.keys()) {
+        if ((color.get(name) ?? WHITE) !== WHITE) continue;
+        const cycle = visit(name);
+        if (cycle !== null) {
+            const path = cycle.join(" → ");
+            diagnostics.push(
+                mkError(
+                    KEYMA018,
+                    `Computed fields in "${schema.sourceName}" form a dependency cycle: ${path}`,
+                    schema.source,
+                ),
+            );
+            return; // one diagnostic per schema is enough
+        }
+    }
 }
 
 /** Get a stable base directory for virtual files (within the compiler-frontend-ts package src). */

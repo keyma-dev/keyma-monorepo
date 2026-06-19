@@ -1,6 +1,7 @@
 import path from "node:path";
-import type { IRSchema, IRField, IRType } from "@keyma/ir";
+import type { IRSchema, IRField, IRType, IRMethod } from "@keyma/ir";
 import { exprToPython } from "./emit-expression.js";
+import { stmtToPython } from "./emit-validators.js";
 import { irTypeToPython } from "./ir-type-to-python.js";
 import { buildSchemaData, buildMaterializer, hasComputedFields } from "./schema-data.js";
 
@@ -65,7 +66,7 @@ export function emitModelPython(schema: IRSchema, opts: ModelEmitOptions): strin
     let assigned = false;
     for (const field of fields) {
         if (field.computed !== undefined) continue;
-        lines.push(`            self.${field.name}: ${irTypeToPython(field.type)} = value.get("${field.name}")`);
+        lines.push(`            self.${field.name}: ${fieldAnnotation(field)} = value.get("${field.name}")`);
         assigned = true;
     }
     if (!assigned && schema.extends === undefined) {
@@ -75,12 +76,20 @@ export function emitModelPython(schema: IRSchema, opts: ModelEmitOptions): strin
     }
 
     // Computed getters (properties).
+    const computedNames = new Set<string>();
     for (const field of fields) {
         if (field.computed === undefined) continue;
+        computedNames.add(field.name);
         lines.push("");
         lines.push(`    @property`);
-        lines.push(`    def ${field.name}(self) -> ${irTypeToPython(field.type)}:`);
+        lines.push(`    def ${field.name}(self) -> ${fieldAnnotation(field)}:`);
         lines.push(`        return ${exprToPython(field.computed.expression)}`);
+    }
+
+    // Methods and setters (portable behaviors). `self.<field>` reads/writes fields.
+    for (const method of visibleMethods(schema, opts.includePrivate)) {
+        lines.push("");
+        lines.push(...emitMethodPython(method, computedNames));
     }
 
     lines.push("");
@@ -106,6 +115,63 @@ function visibleFields(schema: IRSchema, includePrivate: boolean): IRField[] {
     return includePrivate ? schema.fields : schema.fields.filter((f) => f.visibility === "public");
 }
 
+function visibleMethods(schema: IRSchema, includePrivate: boolean): IRMethod[] {
+    const methods = schema.methods ?? [];
+    return includePrivate ? methods : methods.filter((m) => m.visibility === "public");
+}
+
+/**
+ * Emit a method or setter as Python class members. Methods become plain `def`s.
+ * A setter pairs with a same-named `@property` (a computed getter) via the
+ * `@<name>.setter` decorator when one exists; otherwise it is wired through a
+ * setter-only `property(None, ...)` so writes still dispatch to the body.
+ */
+function emitMethodPython(method: IRMethod, computedNames: ReadonlySet<string>): string[] {
+    const lines: string[] = [];
+    const body = methodBodyPython(method);
+
+    if (method.kind === "setter") {
+        const valueParam = method.params[0]?.name ?? "value";
+        if (computedNames.has(method.name)) {
+            lines.push(`    @${method.name}.setter`);
+            lines.push(`    def ${method.name}(self, ${valueParam}):`);
+            lines.push(...body);
+        } else {
+            const helper = `_set_${method.name}`;
+            lines.push(`    def ${helper}(self, ${valueParam}):`);
+            lines.push(...body);
+            lines.push(`    ${method.name} = property(None, ${helper})`);
+        }
+        return lines;
+    }
+
+    const params = ["self", ...method.params.map((p) => p.name)].join(", ");
+    lines.push(`    def ${method.name}(${params}):`);
+    lines.push(...body);
+    return lines;
+}
+
+/** Render a behavior body (8-space indented), or `pass` when empty. */
+function methodBodyPython(method: IRMethod): string[] {
+    if (method.statements.length === 0) return ["        pass"];
+    return method.statements.map((s) => stmtToPython(s, "        "));
+}
+
+/**
+ * Render a field's Python type annotation. The core type comes from the type
+ * mapper; nullability is a field-level axis (`field.nullable`) so we wrap in
+ * `Optional[...]` here. Optionality (`!field.required`, i.e. key may be absent)
+ * also surfaces as `None` in Python — there is no separate `undefined` — so an
+ * optional field is likewise wrapped in `Optional[...]`.
+ */
+function fieldAnnotation(field: IRField): string {
+    const core = irTypeToPython(field.type);
+    if (field.nullable || !field.required) {
+        return core.startsWith("Optional[") ? core : `Optional[${core}]`;
+    }
+    return core;
+}
+
 type SchemaRefImport = { className: string; fileName: string };
 
 function schemaRefImports(fields: IRField[], fileNames: ReadonlyMap<string, string>): SchemaRefImport[] {
@@ -120,7 +186,7 @@ function schemaRefImports(fields: IRField[], fileNames: ReadonlyMap<string, stri
                     result.push({ className: type.schema, fileName });
                 }
             }
-        } else if (type.kind === "nullable" || type.kind === "array") {
+        } else if (type.kind === "array") {
             collect(type.of);
         }
     };

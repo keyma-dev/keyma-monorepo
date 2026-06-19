@@ -39,7 +39,8 @@ export const USER_SCHEMA: SchemaMetadata = {
         { name: "active", type: { kind: "boolean" }, required: false },
         {
             name: "organization",
-            type: { kind: "nullable", of: { kind: "reference", schema: "organization" } },
+            type: { kind: "reference", schema: "organization" },
+            nullable: true,
             required: false,
         },
         { name: "tags", type: { kind: "array", of: { kind: "string" } }, required: false },

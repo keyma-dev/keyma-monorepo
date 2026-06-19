@@ -41,3 +41,6 @@ Thumbs.db
 # Claude Code — keep shared settings, ignore per-user overrides
 .claude/settings.local.json
 .claude/*.local.json
+
+
+.junie/

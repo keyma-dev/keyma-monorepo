@@ -110,3 +110,43 @@ describe("DSL usage example", () => {
         });
     });
 });
+
+// ── New authoring-surface API (Phase 5/6) ─────────────────────────────────────
+
+import {
+    Computed, Default, Now, Uuid, Phase, FormField, Deprecated,
+} from "../src/decorators.js";
+
+describe("@keyma/dsl new authoring API", () => {
+    it("Phase exposes the lifecycle constants", () => {
+        assert.deepEqual(Phase, { Change: "change", Blur: "blur", Submit: "submit", Save: "save" });
+    });
+
+    it("@Computed/@FormField/@Deprecated/@Default are no-op property decorators", () => {
+        for (const make of [
+            () => Computed(),
+            () => FormField({ title: "x" }),
+            () => Deprecated("gone"),
+            () => Default("a"),
+            () => Default(Now),
+        ]) {
+            const d = make();
+            assert.equal(typeof d, "function");
+            assert.equal(d({}, "field"), undefined);
+        }
+    });
+
+    it("Now and Uuid are generator functions", () => {
+        assert.equal(typeof Now, "function");
+        assert.equal(typeof Uuid, "function");
+    });
+
+    it("Validator infers a name (single-arg) and accepts an explicit name", () => {
+        const inferred = Validator((n: number) => (v: string) => v.length >= n ? null : null);
+        const explicit = Validator("emailAddress", () => (v: string) => v.includes("@") ? null : null);
+        assert.equal(typeof inferred, "function");
+        assert.equal(typeof explicit, "function");
+        // explicit form carries its name into the ref at runtime
+        assert.equal((explicit() as { __validatorName: string }).__validatorName, "emailAddress");
+    });
+});

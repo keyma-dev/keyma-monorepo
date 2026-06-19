@@ -190,7 +190,11 @@ export function emitFunctionsPy(declarations: IRFunctionDeclaration[]): string {
 
 // ─── Statement lowering ───────────────────────────────────────────────────────
 
-function stmtToPython(stmt: IRStatement, indent: string): string {
+/**
+ * Lower an IR statement to a Python source line. Shared by validator/formatter
+ * registries, compiled utility functions, and method/setter behavior bodies.
+ */
+export function stmtToPython(stmt: IRStatement, indent: string): string {
     switch (stmt.kind) {
         case "return":
             return stmt.value === null
@@ -213,6 +217,9 @@ function stmtToPython(stmt: IRStatement, indent: string): string {
 
         case "expression":
             return `${indent}${exprToPython(stmt.expr)}`;
+
+        case "assign":
+            return `${indent}${exprToPython(stmt.target)} = ${exprToPython(stmt.value)}`;
     }
 }
 

@@ -56,19 +56,44 @@ declare name: string;
 
 ### KEYMA014 — Unsupported computed getter expression
 
-A `get` accessor body contains an expression that cannot be lowered to `IRExpression`.
+A `@Computed()` getter body contains an expression that cannot be lowered to `IRExpression`.
+Computed getters share the same portable expression engine as validator/formatter bodies, so
+intrinsics, `typeof`, conditionals, templates and `new` are allowed; arbitrary function/method
+calls and array literals are not.
 
 ```typescript
-get name() { return someExternalFunction(); } // KEYMA014
+@Computed() get name() { return someExternalFunction(); } // KEYMA014
 ```
 
-### KEYMA015 — Computed getter must have no setter
+### KEYMA015 — (obsolete) Computed getter must have no setter
 
-A `get` accessor that would be treated as a computed field also has a `set` accessor.
+**No longer emitted.** A `@Computed()` getter may now be paired with a `set` accessor:
+the getter becomes a computed field and the setter becomes a portable setter behavior
+(see "Methods and setters" in the DSL README). The code is retained but unused.
 
 ```typescript
-get name() { return this._name; }
-set name(v: string) { this._name = v; } // KEYMA015
+@Computed() get name(): string { return this.firstName; }
+set name(value: string) { this.firstName = value; } // OK — getter is a computed field, setter is a behavior
+```
+
+### KEYMA018 — Computed getter dependency cycle
+
+Computed fields reference one another in a cycle (a self-reference is the degenerate case),
+so no materialization order exists.
+
+```typescript
+@Computed() get a() { return this.b; }
+@Computed() get b() { return this.a; } // KEYMA018
+```
+
+### KEYMA019 — @Computed requirement
+
+A getter is only treated as a computed field when decorated with `@Computed()`. An undecorated
+getter is ignored (warning); applying `@Computed()` to a plain property is an error.
+
+```typescript
+get shout() { return this.first; }          // KEYMA019 (warning) — ignored
+@Computed() declare first: string;          // KEYMA019 (error) — not a getter
 ```
 
 ---
@@ -99,6 +124,17 @@ An identifier passed to `@Format()` is not a known built-in formatter.
 ### KEYMA024 — Empty enum values list
 
 A string literal union type has no members.
+
+### KEYMA025 — Unsupported enum member
+
+A field references a TypeScript `enum`, but the enum is not portable: a member is missing a
+string initializer (numeric, computed, or heterogeneous). Named enums must be string enums.
+
+```typescript
+enum Level { Low, High }                 // numeric — not portable
+@Schema() class Foo { declare level: Level; } // KEYMA025
+enum Status { Active = "active" }        // OK — string enum
+```
 
 ---
 
@@ -135,7 +171,17 @@ class PlainBase {}
 
 ### KEYMA034 — Incompatible type override
 
-A child schema's field overrides a parent field with a different, incompatible type.
+A child schema's field override is not a subtype of the parent field. Safe narrowing is allowed
+(`number` ⊇ `integer`, an enum value-set subset, dropping `| null`); widening is rejected
+(adding `| null`, an enum superset, an unrelated type).
+
+```typescript
+@Schema() class Base { declare x: number; declare y: string; }
+@Schema() class Child extends Base {
+    declare x: string;          // KEYMA034 — unrelated type
+    declare y: string | null;   // KEYMA034 — widens with null
+}
+```
 
 ### KEYMA035 — Persisted schema references an ephemeral schema
 
@@ -162,14 +208,20 @@ An ephemeral schema declares field or composite indexes. Indexes only affect per
 
 ## Naming and duplication errors (0040–0049)
 
-### KEYMA040 — Duplicate field name
+### KEYMA040 — Duplicate member name
 
-A class declares the same field name twice.
+A class declares the same member name twice. This covers duplicate fields, duplicate
+method/setter names, and a method whose name collides with a field. A **setter** may
+share a name with a field (a stored field, or a `@Computed` getter forming a get/set
+pair) — that is allowed.
 
 ```typescript
 @Schema() class Foo {
     declare name: string;
-    declare name: number; // KEYMA040
+    declare name: number;        // KEYMA040 — duplicate field
+    greeting(): string { return this.name; }
+    greeting(p: string): string { return p; } // KEYMA040 — duplicate method
+    name(): string { return ""; }             // KEYMA040 — method collides with field
 }
 ```
 
@@ -269,6 +321,19 @@ A `Reference<T>` field's target schema does not declare a field of type `ID`. Re
 }
 ```
 
+### KEYMA071 — Bare @Schema class field
+
+A field is typed as a bare `@Schema` class. Relationship intent must be explicit: use
+`Reference<T>` (a foreign key storing the target's id) or `Embedded<T>` (an inline copy).
+
+```typescript
+@Schema() class Post {
+    declare author: User;              // KEYMA071
+    declare author2: Reference<User>;  // OK — foreign key
+    declare meta: Embedded<Meta>;      // OK — inline copy
+}
+```
+
 ---
 
 ## Validator / formatter / utility-function compilation errors (0080–0089)
@@ -278,8 +343,9 @@ utility function it references) is lowered to portable IR.
 
 ### KEYMA080 — declaration is not an exported function
 
-`Validator()`/`Formatter()` must be assigned to an exported `const`, with a string-literal
-name and an arrow/function-expression factory.
+`Validator()`/`Formatter()` must be assigned to an exported `const` with an arrow/function-
+expression factory. The name is either given explicitly (`Validator("name", fn)`) or inferred
+from the const binding (`Validator(fn)`).
 
 ### KEYMA081 — factory does not return an inner function
 
@@ -307,8 +373,9 @@ export const minLen = Validator("minLen", (n: number) => (value: string) => …)
 
 ### KEYMA085 — unsupported string/array intrinsic
 
-A method or property used on a `string`/array receiver is not in the intrinsic registry
-(see `packages/ir/intrinsics.md`), or its receiver type could not be resolved.
+A method or property used on a `string`/array receiver (in a validator/formatter/getter body)
+is not in the intrinsic registry (see `packages/ir/intrinsics.md`), or its receiver type could
+not be resolved.
 
 ### KEYMA086 — utility function cannot be compiled
 
@@ -318,5 +385,46 @@ another utility function.
 
 ### KEYMA087 — non-portable `instanceof`
 
-The right-hand side of `instanceof` is outside the portable constructor set
-(`Date`, `RegExp`, `Uint8Array`, `Array`).
+The right-hand side of `instanceof` (in a validator/formatter/getter body) is outside the
+portable constructor set (`Date`, `RegExp`, `Uint8Array`, `Array`).
+
+---
+
+## Default value & behavior errors (0090–0099)
+
+### KEYMA090 — default value incompatible with field type
+
+A `@Default(...)` literal does not match the field's type (e.g. a number default on a string
+field).
+
+```typescript
+@Default(5) declare status: string; // KEYMA090
+```
+
+### KEYMA091 — unsupported @Default form
+
+`@Default(...)` received something other than a literal value or a named generator (`Now`,
+`Uuid`) — e.g. an arrow function or an arbitrary call.
+
+```typescript
+@Default(() => compute()) declare x: string; // KEYMA091
+@Default(Now) declare createdOn: DateTime;   // OK
+```
+
+### KEYMA092 — method/setter signature must be explicitly typed
+
+A method or setter parameter has no type annotation, or a method has no return type. Because
+behavior bodies are lowered to the portable IR and re-emitted in every target, their
+signatures must be explicit and concrete. Use `: void` for a method that returns nothing.
+
+```typescript
+@Schema() class Foo {
+    declare x: string;
+    bad(p): string { return p; }        // KEYMA092 — parameter `p` is untyped
+    alsoBad() { return this.x; }         // KEYMA092 — missing return type
+    good(p: string): string { return p; } // OK
+    touch(): void { this.x = "y"; }       // OK — explicit void
+}
+```
+
+> Async and generator methods are not portable; they are rejected with **KEYMA082**.

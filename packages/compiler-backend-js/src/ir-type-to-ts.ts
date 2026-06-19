@@ -30,11 +30,10 @@ export function irTypeToTs(
         case "enum":
             return type.values.map((v) => JSON.stringify(v)).join(" | ");
 
-        case "nullable":
-            return `${irTypeToTs(type.of, embeddedNames)} | null`;
-
-        case "array":
-            return `${maybeParens(type.of, embeddedNames)}[]`;
+        case "array": {
+            const el = `${maybeParens(type.of, embeddedNames)}[]`;
+            return type.elementNullable ? `(${irTypeToTs(type.of, embeddedNames)} | null)[]` : el;
+        }
 
         case "reference":
             return embeddedNames?.get(type.schema) ?? type.schema;
@@ -75,10 +74,6 @@ export function jsTypeGuard(type: IRType, value: string): string | null {
             return `[${type.values.map((v) => JSON.stringify(v)).join(", ")}].includes(${value})`;
         case "array":
             return `Array.isArray(${value})`;
-        case "nullable": {
-            const inner = jsTypeGuard(type.of, value);
-            return inner === null ? null : `${value} == null || (${inner})`;
-        }
         case "json":
         case "reference":
         case "embedded":
@@ -89,7 +84,6 @@ export function jsTypeGuard(type: IRType, value: string): string | null {
 /** A short human label for a type, used in runtime mismatch messages. */
 export function irTypeLabel(type: IRType): string {
     switch (type.kind) {
-        case "nullable": return `${irTypeLabel(type.of)} or null`;
         case "array":    return `array of ${irTypeLabel(type.of)}`;
         case "enum":     return `one of ${type.values.map((v) => JSON.stringify(v)).join(", ")}`;
         case "reference":
@@ -101,7 +95,7 @@ export function irTypeLabel(type: IRType): string {
 /** Wrap complex types (union, array) in parens when used as an array element type. */
 function maybeParens(type: IRType, names?: ReadonlyMap<string, string>): string {
     const ts = irTypeToTs(type, names);
-    if (type.kind === "nullable" || type.kind === "enum") {
+    if (type.kind === "enum") {
         return `(${ts})`;
     }
     return ts;

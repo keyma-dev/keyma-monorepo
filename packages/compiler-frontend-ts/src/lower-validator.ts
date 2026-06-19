@@ -167,6 +167,7 @@ function mapValueParamType(
         checker: ctx.checker,
         dslModuleName: ctx.dslModuleName,
         schemaClassNames: ctx.schemaClassNames,
+        bareClassReference: true,
         diagnostics: ctx.diagnostics,
         sourceFile: ctx.sourceFile,
     };

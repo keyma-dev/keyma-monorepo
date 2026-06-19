@@ -1,7 +1,8 @@
 import ts from "typescript";
 import type { IRType, IRDiagnostic } from "@keyma/ir";
-import { mkError, KEYMA010, KEYMA024, KEYMA050 } from "./diagnostics.js";
+import { mkError, KEYMA010, KEYMA024, KEYMA025, KEYMA050, KEYMA071 } from "./diagnostics.js";
 import { getLocation, isFromModule, entityNameText } from "./util.js";
+import type { EnumInfo } from "./discover-enums.js";
 
 /**
  * DSL type alias names that map to scalar IR types.
@@ -30,11 +31,42 @@ type TypeMapContext = {
     dslModuleName: string;
     /** Class names of all discovered @Schema classes. */
     schemaClassNames: ReadonlySet<string>;
+    /** Named TS enum declarations, keyed by name (optional — field paths supply it). */
+    enums?: ReadonlyMap<string, EnumInfo>;
+    /**
+     * When true, a bare `@Schema` class lowers to a `reference` (legacy behaviour),
+     * used for validator/utility `value` parameter types where "the whole record"
+     * is meant. Schema FIELD paths leave this false so bare classes are rejected
+     * (KEYMA071) in favour of explicit `Reference<T>`/`Embedded<T>`.
+     */
+    bareClassReference?: boolean;
     diagnostics: IRDiagnostic[];
     sourceFile: ts.SourceFile;
 };
 
-export type MapTypeResult = { type: IRType } | { diag: IRDiagnostic };
+/**
+ * A mapped type plus the two orthogonal shape axes discovered while mapping:
+ * `nullable` (the value may be `null`, from `Nullable<T>`/`T | null`) and
+ * `optional` (the key may be absent, from `T | undefined`). Callers that only
+ * want the core type ignore the flags.
+ */
+export type MapTypeResult = { type: IRType; nullable?: boolean; optional?: boolean } | { diag: IRDiagnostic };
+
+/** Attach the nullable/optional axes to a mapped core type. */
+function withFlags(type: IRType, nullable: boolean, optional: boolean): MapTypeResult {
+    return {
+        type,
+        ...(nullable ? { nullable: true } : {}),
+        ...(optional ? { optional: true } : {}),
+    };
+}
+
+/** Build an array type, lifting the element's nullability onto `elementNullable`. */
+function makeArray(inner: { type: IRType; nullable?: boolean }): IRType {
+    return inner.nullable
+        ? { kind: "array", of: inner.type, elementNullable: true }
+        : { kind: "array", of: inner.type };
+}
 
 export function mapTypeNode(
     typeNode: ts.TypeNode,
@@ -59,7 +91,7 @@ export function mapTypeNode(
     if (ts.isArrayTypeNode(typeNode)) {
         const inner = mapTypeNode(typeNode.elementType, ctx);
         if ("diag" in inner) return inner;
-        return { type: { kind: "array", of: inner.type } };
+        return { type: makeArray(inner) };
     }
 
     if (ts.isTypeReferenceNode(typeNode)) {
@@ -74,21 +106,25 @@ export function mapTypeNode(
     return fail(typeNode, ctx, "unsupported type annotation");
 }
 
-function isNullishTypeNode(t: ts.TypeNode): boolean {
-    if (t.kind === ts.SyntaxKind.UndefinedKeyword) return true;
+/** `null` in type position (a LiteralTypeNode wrapping NullKeyword in TS 5.x). */
+function isNullTypeNode(t: ts.TypeNode): boolean {
     if (t.kind === ts.SyntaxKind.NullKeyword) return true;
-    // In TypeScript 5.x, `null` in type position is a LiteralTypeNode wrapping NullKeyword
     return ts.isLiteralTypeNode(t) && t.literal.kind === ts.SyntaxKind.NullKeyword;
+}
 
+/** `undefined` in type position — drives optionality, NOT nullability. */
+function isUndefinedTypeNode(t: ts.TypeNode): boolean {
+    return t.kind === ts.SyntaxKind.UndefinedKeyword;
 }
 
 function mapUnionType(node: ts.UnionTypeNode, ctx: TypeMapContext): MapTypeResult {
-    const nullishMembers = node.types.filter(isNullishTypeNode);
-    const valueMembers = node.types.filter((t) => !isNullishTypeNode(t));
+    const hasNull = node.types.some(isNullTypeNode);
+    const hasUndefined = node.types.some(isUndefinedTypeNode);
+    const valueMembers = node.types.filter((t) => !isNullTypeNode(t) && !isUndefinedTypeNode(t));
 
-    // All members are string literals → enum
+    // All value members are string literals → enum (possibly nullable/optional)
     if (
-        nullishMembers.length === 0 &&
+        valueMembers.length > 0 &&
         valueMembers.every((m) => ts.isLiteralTypeNode(m) && ts.isStringLiteral(m.literal))
     ) {
         const values = valueMembers.map((m) =>
@@ -98,31 +134,19 @@ function mapUnionType(node: ts.UnionTypeNode, ctx: TypeMapContext): MapTypeResul
             const diag = mkError(KEYMA024, "Enum must have at least one value", getLocation(node, ctx.sourceFile));
             return { diag };
         }
-        return { type: { kind: "enum", values } };
+        return withFlags({ kind: "enum", values }, hasNull, hasUndefined);
     }
 
-    // Nullable: T | null | undefined → nullable(T)
-    if (valueMembers.length === 1 && nullishMembers.length > 0) {
+    // Single value member with null/undefined → that type with the axes set
+    if (valueMembers.length === 1) {
         const member = valueMembers[0];
         if (!member) return fail(node, ctx, "empty union type");
         const inner = mapTypeNode(member, ctx);
         if ("diag" in inner) return inner;
-        return { type: { kind: "nullable", of: inner.type } };
+        return withFlags(inner.type, hasNull || inner.nullable === true, hasUndefined || inner.optional === true);
     }
 
-    // Nullable enum: "a" | "b" | null → nullable(enum)
-    if (
-        nullishMembers.length > 0 &&
-        valueMembers.length > 0 &&
-        valueMembers.every((m) => ts.isLiteralTypeNode(m) && ts.isStringLiteral(m.literal))
-    ) {
-        const values = valueMembers.map((m) =>
-            (m as ts.LiteralTypeNode & { literal: ts.StringLiteral }).literal.text
-        );
-        return { type: { kind: "nullable", of: { kind: "enum", values } } };
-    }
-
-    return fail(node, ctx, "union types must be string literals or T | null");
+    return fail(node, ctx, "union types must be string literals or T | null | undefined");
 }
 
 function mapTypeReference(node: ts.TypeReferenceNode, ctx: TypeMapContext): MapTypeResult {
@@ -139,7 +163,7 @@ function mapTypeReference(node: ts.TypeReferenceNode, ctx: TypeMapContext): MapT
         if (!arg) return fail(node, ctx, "missing Array type argument");
         const inner = mapTypeNode(arg, ctx);
         if ("diag" in inner) return inner;
-        return { type: { kind: "array", of: inner.type } };
+        return { type: makeArray(inner) };
     }
 
     // Global scalars (Date, Uint8Array) — check name first, no DSL check needed
@@ -173,7 +197,7 @@ function mapTypeReference(node: ts.TypeReferenceNode, ctx: TypeMapContext): MapT
             }
             const inner = mapTypeNode(arg, ctx);
             if ("diag" in inner) return inner;
-            return { type: { kind: "nullable", of: inner.type } };
+            return withFlags(inner.type, true, inner.optional === true);
         }
 
         if (name === "Reference") {
@@ -191,12 +215,37 @@ function mapTypeReference(node: ts.TypeReferenceNode, ctx: TypeMapContext): MapT
         return fail(node, ctx, `unknown DSL type "${name}"`);
     }
 
-    // Schema class reference (bare class type → reference by default)
-    if (ctx.schemaClassNames.has(name)) {
-        return { type: { kind: "reference", schema: name } };
+    // Named TS enum referenced by name.
+    const enumInfo = ctx.enums?.get(name);
+    if (enumInfo !== undefined) {
+        if (enumInfo.members === null) {
+            return {
+                diag: mkError(
+                    KEYMA025,
+                    `Enum "${name}" is not portable — every member must have a string initializer (e.g. \`Active = "active"\`)`,
+                    getLocation(node, ctx.sourceFile),
+                ),
+            };
+        }
+        return { type: { kind: "enum", name, values: enumInfo.members.map((m) => m.value) } };
     }
 
-    return fail(node, ctx, `unknown type "${name}" — use a primitive, DSL type, or a @Schema class`);
+    // A bare @Schema class in a FIELD is no longer an implicit reference —
+    // relationship intent must be explicit. In validator/utility `value` positions
+    // (bareClassReference) it still means "the whole record" → a reference.
+    if (ctx.schemaClassNames.has(name)) {
+        if (ctx.bareClassReference === true) {
+            return { type: { kind: "reference", schema: name } };
+        }
+        const diag = mkError(
+            KEYMA071,
+            `Field of @Schema type "${name}" must state its relationship explicitly — use Reference<${name}> (foreign key) or Embedded<${name}> (inline copy)`,
+            getLocation(node, ctx.sourceFile),
+        );
+        return { diag };
+    }
+
+    return fail(node, ctx, `unknown type "${name}" — use a primitive, DSL type, Reference<T>, or Embedded<T>`);
 }
 
 function mapSchemaReference(

@@ -93,12 +93,15 @@ describe("irTypeToPython", () => {
         assert.equal(irTypeToPython({ kind: "embedded", schema: "Address" }), "Address");
     });
 
-    it("maps nullable to Optional", () => {
-        assert.equal(irTypeToPython({ kind: "nullable", of: { kind: "string" } }), "Optional[str]");
-    });
-
     it("maps array to List", () => {
         assert.equal(irTypeToPython({ kind: "array", of: { kind: "string" } }), "List[str]");
+    });
+
+    it("maps array with nullable elements to List[Optional[...]]", () => {
+        assert.equal(
+            irTypeToPython({ kind: "array", of: { kind: "string" }, elementNullable: true }),
+            "List[Optional[str]]",
+        );
     });
 });
 
@@ -115,6 +118,27 @@ describe("emitPython", () => {
         assert.ok(content.includes("def fullName(self) -> str:"), "Missing property getter");
         assert.ok(content.includes("return (str(self.firstName) + \" \" + str(self.lastName))"), "Wrong property expression");
         assert.ok(content.includes("User.schema = {"), "Missing schema metadata");
+    });
+
+    it("renders a nullable field as Optional via field.nullable", async () => {
+        const NULLABLE_IR: KeymaIR = {
+            irVersion: "1.0.0", compilerVersion: "0.1.0",
+            schemas: [
+                {
+                    id: "schema:thing", name: "thing", sourceName: "Thing", visibility: "public",
+                    fields: [
+                        { name: "nickname", type: { kind: "string" }, nullable: true, visibility: "public", readonly: false, required: true, validators: [], formatters: [], indexes: [], source: SRC },
+                    ],
+                    indexes: [], source: SRC,
+                },
+            ],
+            diagnostics: [],
+        };
+        const target: PythonTargetConfig = { language: "python", outDir: "dist/python", library: true };
+        const result = await emitPython(NULLABLE_IR, target, RESOLVED_CONFIG);
+        const content = fileContent(result.files, "dist/python/models/thing.py");
+
+        assert.ok(content.includes("self.nickname: Optional[str] = value.get(\"nickname\")"), "Nullable field not rendered as Optional");
     });
 
     it("emits index.py with re-exports", async () => {
@@ -144,8 +168,66 @@ describe("emitPython", () => {
         
         assert.ok(content.includes('"fields":'), "Missing fields in schema");
         assert.ok(content.includes('"refs": {"U": U}'), "Missing refs in schema");
-        
+
         // Verify comma: should have '],' then newline then whitespace then '"refs":'
         assert.ok(/\],\n\s+"refs":/.test(content), "Missing comma before refs");
+    });
+
+    it("emits methods and both setter forms as Python class members", async () => {
+        const BEHAVIORS_IR: KeymaIR = {
+            irVersion: "2.0.0", compilerVersion: "0.1.0",
+            schemas: [
+                {
+                    id: "schema:user", name: "user", sourceName: "User", visibility: "public",
+                    fields: [
+                        { name: "firstName", type: { kind: "string" }, visibility: "public", readonly: false, required: true, validators: [], formatters: [], indexes: [], source: SRC },
+                        { name: "email", type: { kind: "string" }, visibility: "public", readonly: false, required: true, validators: [], formatters: [], indexes: [], source: SRC },
+                        {
+                            name: "fullName", type: { kind: "string" }, visibility: "public", readonly: true, required: true,
+                            validators: [], formatters: [], indexes: [],
+                            computed: { expression: { kind: "field", name: "firstName" } },
+                            source: SRC,
+                        },
+                    ],
+                    indexes: [],
+                    methods: [
+                        {
+                            name: "greeting", kind: "method",
+                            params: [{ name: "prefix", type: { kind: "string" } }],
+                            returnType: { kind: "string" },
+                            statements: [{ kind: "return", value: { kind: "intrinsic", op: "string.toUpperCase", receiver: { kind: "field", name: "firstName" }, args: [] } }],
+                            visibility: "public", source: SRC,
+                        },
+                        {
+                            // Paired with the `fullName` computed getter → @fullName.setter form.
+                            name: "fullName", kind: "setter",
+                            params: [{ name: "value", type: { kind: "string" } }],
+                            statements: [{ kind: "assign", target: { kind: "field", name: "firstName" }, value: { kind: "identifier", name: "value" } }],
+                            visibility: "public", source: SRC,
+                        },
+                        {
+                            // No matching getter → property(None, ...) form.
+                            name: "primaryEmail", kind: "setter",
+                            params: [{ name: "value", type: { kind: "string" } }],
+                            statements: [{ kind: "assign", target: { kind: "field", name: "email" }, value: { kind: "intrinsic", op: "string.trim", receiver: { kind: "identifier", name: "value" }, args: [] } }],
+                            visibility: "public", source: SRC,
+                        },
+                    ],
+                    source: SRC,
+                },
+            ],
+            diagnostics: [],
+        };
+        const target: PythonTargetConfig = { language: "python", outDir: "dist/python", library: true };
+        const result = await emitPython(BEHAVIORS_IR, target, RESOLVED_CONFIG);
+        const content = fileContent(result.files, "dist/python/models/user.py");
+
+        assert.ok(content.includes("def greeting(self, prefix):"), "method def missing");
+        assert.ok(content.includes("return self.firstName.upper()"), "method body wrong");
+        assert.ok(content.includes("@fullName.setter"), "paired setter form missing");
+        assert.ok(content.includes("self.firstName = value"), "paired setter body wrong");
+        assert.ok(content.includes("def _set_primaryEmail(self, value):"), "standalone setter helper missing");
+        assert.ok(content.includes("self.email = value.strip()"), "standalone setter body wrong");
+        assert.ok(content.includes("primaryEmail = property(None, _set_primaryEmail)"), "property wiring missing");
     });
 });

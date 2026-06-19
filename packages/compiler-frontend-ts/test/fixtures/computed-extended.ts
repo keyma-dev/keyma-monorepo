@@ -1,4 +1,4 @@
-import { Schema, Validate } from "@keyma/dsl";
+import { Schema, Validate, Computed } from "@keyma/dsl";
 function isRequired() { return { __validatorName: "required" } as const; }
 
 @Schema({ name: "product" })
@@ -16,77 +16,97 @@ class Product {
     declare tags: string[];
 
     // string literal
-    get version(): string {
+    @Computed() get version(): string {
         return "v1";
     }
 
     // number literal
-    get baseRate(): number {
+    @Computed() get baseRate(): number {
         return 0;
     }
 
     // boolean literal
-    get isActive(): boolean {
+    @Computed() get isActive(): boolean {
         return true;
     }
 
     // no-substitution template literal → literal
-    get greeting(): string {
+    @Computed() get greeting(): string {
         return `hello`;
     }
 
     // single interpolation → collapses to field reference
-    get displayTitle(): string {
+    @Computed() get displayTitle(): string {
         return `${this.title}`;
     }
 
     // multi-part template
-    get summary(): string {
+    @Computed() get summary(): string {
         return `${this.title}: $${this.price}`;
     }
 
     // binary arithmetic with parenthesized sub-expression
-    get priceWithTax(): number {
+    @Computed() get priceWithTax(): number {
         return this.price * (1 + this.taxRate);
     }
 
     // comparison
-    get isExpensive(): boolean {
+    @Computed() get isExpensive(): boolean {
         return this.price > 100;
     }
 
     // prefix unary negation
-    get negatedPrice(): number {
+    @Computed() get negatedPrice(): number {
         return -this.price;
     }
 
     // prefix unary logical not
-    get isCheap(): boolean {
+    @Computed() get isCheap(): boolean {
         return !this.isExpensive;
     }
 
     // conditional (ternary)
-    get label(): string {
+    @Computed() get label(): string {
         return this.isExpensive ? "premium" : "budget";
     }
 
     // nullish coalescing
-    get displayCategory(): string {
+    @Computed() get displayCategory(): string {
         return this.category ?? "uncategorized";
     }
 
     // logical AND
-    get isValidPrice(): boolean {
+    @Computed() get isValidPrice(): boolean {
         return this.price > 0 && this.taxRate >= 0;
     }
 
     // logical OR
-    get hasDiscount(): boolean {
+    @Computed() get hasDiscount(): boolean {
         return this.price < 50 || this.taxRate === 0;
     }
 
-    // member access (this.tags.length)
-    get tagCount(): number {
+    // array length → intrinsic (type-aware)
+    @Computed() get tagCount(): number {
         return this.tags.length;
+    }
+
+    // string method intrinsic
+    @Computed() get trimmedTitle(): string {
+        return this.title.trim();
+    }
+
+    // array method intrinsic
+    @Computed() get hasPremiumTag(): boolean {
+        return this.tags.includes("premium");
+    }
+
+    // conditional whose condition is an array intrinsic
+    @Computed() get tagBadge(): string {
+        return this.tags.includes("sale") ? "ON SALE" : "";
+    }
+
+    // typeof operator
+    @Computed() get priceType(): string {
+        return typeof this.price;
     }
 }

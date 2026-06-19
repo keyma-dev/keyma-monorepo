@@ -7,8 +7,6 @@ export type SchemaMap = ReadonlyMap<string, SchemaMetadata>;
 export function toBson(value: unknown, type: FieldType, schemas: SchemaMap): unknown {
     if (value === null || value === undefined) return value;
     switch (type.kind) {
-        case "nullable":
-            return toBson(value, type.of, schemas);
         case "array":
             if (!Array.isArray(value)) return value;
             return value.map((v) => toBson(v, type.of, schemas));
@@ -60,8 +58,6 @@ function convertObjectToBson(
 export function fromBson(value: unknown, type: FieldType, schemas: SchemaMap): unknown {
     if (value === null || value === undefined) return value;
     switch (type.kind) {
-        case "nullable":
-            return fromBson(value, type.of, schemas);
         case "array":
             if (!Array.isArray(value)) return value;
             return value.map((v) => fromBson(v, type.of, schemas));

@@ -94,7 +94,7 @@ function baseFieldNames(
 }
 
 function coreType(t: FieldType): FieldType {
-    if (t.kind === "nullable" || t.kind === "array") return coreType(t.of);
+    if (t.kind === "array") return coreType(t.of);
     return t;
 }
 

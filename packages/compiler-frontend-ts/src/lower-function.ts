@@ -126,6 +126,7 @@ export function createFunctionCollector(deps: FunctionCollectorDeps): FunctionCo
             checker,
             dslModuleName: deps.dslModuleName,
             schemaClassNames: deps.schemaClassNames,
+            bareClassReference: true,
             diagnostics,
             sourceFile: fn.sourceFile,
         };

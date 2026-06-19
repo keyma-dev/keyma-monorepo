@@ -13,8 +13,7 @@ export function labelGen(): LabelGen {
 }
 
 function isArrayField(schema: SchemaMetadata, name: string): boolean {
-    let type = schema.fields.find((f) => f.name === name)?.type;
-    while (type !== undefined && type.kind === "nullable") type = type.of;
+    const type = schema.fields.find((f) => f.name === name)?.type;
     return type !== undefined && type.kind === "array";
 }
 

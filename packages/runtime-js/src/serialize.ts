@@ -34,10 +34,6 @@ function serializeValue(
         }
         return value;
     }
-    if (type.kind === "nullable") {
-        if (value === null || value === undefined) return value;
-        return serializeValue(value, type.of, refs, opts);
-    }
     if (type.kind === "array" && Array.isArray(value)) {
         return value.map((el) => serializeValue(el, type.of, refs, opts));
     }

@@ -73,7 +73,7 @@ const INHERITANCE_IR: KeymaIR = {
             name: "employee",
             sourceName: "Employee",
             visibility: "public",
-            extends: "Person",
+            extendsSource: "Person",
             fields: [
                 { name: "id", type: { kind: "id" }, visibility: "public", readonly: true, required: true, validators: [], formatters: [], indexes: [], source: SRC },
                 { name: "name", type: { kind: "string" }, visibility: "public", readonly: false, required: true, validators: [], formatters: [], indexes: [], source: SRC },
@@ -338,12 +338,8 @@ describe("irTypeToTs", () => {
         assert.equal(irTypeToTs({ kind: "enum", values: ["a", "b", "c"] }), `"a" | "b" | "c"`);
     });
 
-    it("maps nullable to T | null", () => {
-        assert.equal(irTypeToTs({ kind: "nullable", of: { kind: "string" } }), "string | null");
-    });
-
-    it("wraps nullable array element in parens", () => {
-        assert.equal(irTypeToTs({ kind: "array", of: { kind: "nullable", of: { kind: "string" } } }), "(string | null)[]");
+    it("maps a nullable array element to (T | null)[]", () => {
+        assert.equal(irTypeToTs({ kind: "array", of: { kind: "string" }, elementNullable: true }), "(string | null)[]");
     });
 
     it("maps embedded using the class name", () => {
@@ -491,25 +487,25 @@ describe("emitJs — inheritance", () => {
         files = result.files;
     });
 
-    it("Employee model extends Person", () => {
+    it("Employee model is a flat class (no extends/super after flattening)", () => {
         const content = fileContent(files, "dist/js/client/models/employee.js");
-        assert.ok(content.includes("export class Employee extends Person"), "missing extends clause");
+        assert.ok(content.includes("export class Employee {"), "expected a flat class declaration");
+        assert.ok(!content.includes("extends Person"), "must not re-emit an extends clause");
+        assert.ok(!content.includes("super(value)"), "must not call super — fields are flattened");
     });
 
-    it("Employee model imports Person", () => {
+    it("Employee assigns each inherited field exactly once", () => {
         const content = fileContent(files, "dist/js/client/models/employee.js");
-        assert.ok(content.includes(`import { Person } from "./person.js"`), "missing Person import");
+        const count = (needle: string) => content.split(needle).length - 1;
+        assert.equal(count("this.id = value.id;"), 1);
+        assert.equal(count("this.name = value.name;"), 1);
+        assert.equal(count("this.department = value.department;"), 1);
     });
 
-    it("Employee constructor calls super(value)", () => {
-        const content = fileContent(files, "dist/js/client/models/employee.js");
-        assert.ok(content.includes("super(value)"), "missing super call");
-    });
-
-    it("Employee .d.ts extends Person", () => {
+    it("Employee .d.ts is a flat class", () => {
         const content = fileContent(files, "dist/js/client/models/employee.d.ts");
-        assert.ok(content.includes("extends Person"), "missing extends in .d.ts");
-        assert.ok(content.includes(`import type { Person }`), "missing Person type import in .d.ts");
+        assert.ok(content.includes("export declare class Employee {"), "expected a flat declared class");
+        assert.ok(!content.includes("extends Person"), "must not re-emit extends in .d.ts");
     });
 });
 
@@ -822,5 +818,114 @@ describe("emitJs — library mode with validators", () => {
         const content = fileContent(result.files, "dist/js/index.js");
         assert.ok(content.includes(`export * from "./validators.js"`), "validators not re-exported from library index");
         assert.ok(content.includes(`export * from "./registry.js"`), "registry not re-exported from library index");
+    });
+});
+
+// ─── Method / setter behaviors ─────────────────────────────────────────────────
+
+const BEHAVIORS_IR: KeymaIR = {
+    irVersion: "2.0.0",
+    compilerVersion: "0.1.0",
+    schemas: [
+        {
+            id: "schema:user",
+            name: "user",
+            sourceName: "User",
+            visibility: "public",
+            fields: [
+                { name: "firstName", type: { kind: "string" }, visibility: "public", readonly: false, required: true, validators: [], formatters: [], indexes: [], source: SRC },
+                { name: "email", type: { kind: "string" }, visibility: "public", readonly: false, required: true, validators: [], formatters: [], indexes: [], source: SRC },
+                { name: "secret", type: { kind: "string" }, visibility: "private", readonly: false, required: false, validators: [], formatters: [], indexes: [], source: SRC },
+            ],
+            indexes: [],
+            methods: [
+                {
+                    name: "greeting", kind: "method",
+                    params: [{ name: "prefix", type: { kind: "string" } }],
+                    returnType: { kind: "string" },
+                    statements: [{ kind: "return", value: { kind: "template", parts: [{ kind: "identifier", name: "prefix" }, { kind: "literal", value: " " }, { kind: "field", name: "firstName" }] } }],
+                    visibility: "public", source: SRC,
+                },
+                {
+                    name: "primaryEmail", kind: "setter",
+                    params: [{ name: "value", type: { kind: "string" } }],
+                    statements: [{ kind: "assign", target: { kind: "field", name: "email" }, value: { kind: "intrinsic", op: "string.trim", receiver: { kind: "identifier", name: "value" }, args: [] } }],
+                    visibility: "public", source: SRC,
+                },
+                {
+                    name: "stash", kind: "method",
+                    params: [{ name: "v", type: { kind: "string" } }],
+                    statements: [{ kind: "assign", target: { kind: "field", name: "secret" }, value: { kind: "identifier", name: "v" } }],
+                    visibility: "private", source: SRC,
+                },
+            ],
+            source: SRC,
+        },
+    ],
+    diagnostics: [],
+};
+
+describe("emitJs — method/setter behaviors", () => {
+    let serverFiles: { path: string; content: string | Uint8Array }[];
+    let clientFiles: { path: string; content: string | Uint8Array }[];
+
+    before(async () => {
+        serverFiles = (await emitJs(BEHAVIORS_IR, serverOnlyTarget(), RESOLVED_CONFIG)).files;
+        clientFiles = (await emitJs(BEHAVIORS_IR, clientOnlyTarget(), RESOLVED_CONFIG)).files;
+    });
+
+    it("emits a method and setter into the server model .js", () => {
+        const content = fileContent(serverFiles, "dist/js/server/models/user.js");
+        assert.ok(content.includes("greeting(prefix) {"), "method missing");
+        assert.ok(content.includes("return `${prefix} ${this.firstName}`;"), "method body wrong");
+        assert.ok(content.includes("set primaryEmail(value) {"), "setter missing");
+        assert.ok(content.includes("this.email = value.trim();"), "setter assign body wrong");
+    });
+
+    it("emits method/setter declarations into the server .d.ts", () => {
+        const content = fileContent(serverFiles, "dist/js/server/models/user.d.ts");
+        assert.ok(content.includes("greeting(prefix: string): string;"), "method decl missing");
+        assert.ok(content.includes("set primaryEmail(value: string);"), "setter decl missing");
+        assert.ok(content.includes("stash(v: string): void;"), "void method decl missing");
+    });
+
+    it("includes a private behavior in the server bundle but not the client", () => {
+        assert.ok(fileContent(serverFiles, "dist/js/server/models/user.js").includes("stash(v) {"), "private method missing from server");
+        const client = fileContent(clientFiles, "dist/js/client/models/user.js");
+        assert.ok(!client.includes("stash"), "private method leaked into client bundle");
+        // Public behaviors still appear in the client bundle.
+        assert.ok(client.includes("greeting(prefix) {"), "public method missing from client");
+        assert.ok(client.includes("set primaryEmail(value) {"), "public setter missing from client");
+    });
+});
+
+// ─── Self-referential Reference<T> must not self-import ─────────────────────────
+
+const SELF_REF_IR: KeymaIR = {
+    irVersion: "2.0.0",
+    compilerVersion: "0.1.0",
+    schemas: [
+        {
+            id: "schema:node", name: "node", sourceName: "Node", visibility: "public",
+            fields: [
+                { name: "id", type: { kind: "id" }, visibility: "public", readonly: true, required: true, validators: [], formatters: [], indexes: [{ unique: true }], source: SRC },
+                { name: "parent", type: { kind: "reference", schema: "Node", idType: { kind: "id" } }, visibility: "public", readonly: false, required: false, validators: [], formatters: [], indexes: [], source: SRC },
+            ],
+            indexes: [], source: SRC,
+        },
+    ],
+    diagnostics: [],
+};
+
+describe("emitJs — self-referential reference", () => {
+    it("does not emit an import of the class into its own model file", async () => {
+        const files = (await emitJs(SELF_REF_IR, serverOnlyTarget(), RESOLVED_CONFIG)).files;
+        const js = fileContent(files, "dist/js/server/models/node.js");
+        assert.ok(!/^import \{ Node \} from/m.test(js), "model self-imports its own class");
+        // The ref is still resolvable via the embedded refs map.
+        assert.ok(js.includes(`["Node", Node]`), "self-ref should remain in the refs map");
+
+        const dts = fileContent(files, "dist/js/server/models/node.d.ts");
+        assert.ok(!/^import type \{ Node \} from/m.test(dts), ".d.ts self-imports its own class");
     });
 });

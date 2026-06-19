@@ -39,12 +39,16 @@ function isComputedOrEphemeral(field: FieldMetadata): boolean {
 type ColumnDef = { sql: string; isId: boolean; refSchema?: string };
 
 function columnDef(field: FieldMetadata): ColumnDef {
-    const { type, isId, refSchema, nullable } = inspectType(field.type);
+    const { type, isId, refSchema } = inspectType(field.type);
     const sqlType = sqliteColumnType(type);
     const parts: string[] = [q(field.name), sqlType];
+    // A column allows NULL when the field is explicitly nullable OR optional
+    // (key may be absent). Only emit NOT NULL when the field is both required
+    // and not nullable.
+    const allowsNull = field.nullable === true || field.required === false;
     if (isId) {
         parts.push("PRIMARY KEY NOT NULL");
-    } else if (!nullable && field.required !== false) {
+    } else if (!allowsNull) {
         parts.push("NOT NULL");
     }
     if (type.kind === "enum") {
@@ -57,25 +61,18 @@ function columnDef(field: FieldMetadata): ColumnDef {
 }
 
 type InspectedType = {
-    /** Effective leaf type after unwrapping nullable. Array stays as array.  */
+    /** The field's core type. Array stays as array. */
     type: FieldType;
     isId: boolean;
     refSchema?: string;
-    nullable: boolean;
 };
 
 function inspectType(t: FieldType): InspectedType {
-    let nullable = false;
-    let cur: FieldType = t;
-    while (cur.kind === "nullable") {
-        nullable = true;
-        cur = cur.of;
+    if (t.kind === "id") return { type: t, isId: true };
+    if (t.kind === "reference") {
+        return { type: t, isId: false, refSchema: t.schema };
     }
-    if (cur.kind === "id") return { type: cur, isId: true, nullable };
-    if (cur.kind === "reference") {
-        return { type: cur, isId: false, refSchema: cur.schema, nullable };
-    }
-    return { type: cur, isId: false, nullable };
+    return { type: t, isId: false };
 }
 
 export function sqliteColumnType(type: FieldType): string {
@@ -101,8 +98,6 @@ export function sqliteColumnType(type: FieldType): string {
             return "REAL";
         case "bytes":
             return "BLOB";
-        case "nullable":
-            return sqliteColumnType(type.of);
     }
 }
 

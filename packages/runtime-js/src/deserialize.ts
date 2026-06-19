@@ -49,11 +49,6 @@ function deserializeValue(
         return value;
     }
 
-    if (type.kind === "nullable") {
-        if (value === null || value === undefined) return value;
-        return deserializeValue(value, type.of, refs);
-    }
-
     if (type.kind === "array" && Array.isArray(value)) {
         return value.map((el) => deserializeValue(el, type.of, refs));
     }

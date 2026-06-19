@@ -10,16 +10,16 @@ class Node {
 @Edge()
 class MissingTo {
     declare readonly id: ID;
-    @From() declare from: Node;
+    @From() declare from: Reference<Node>;
 }
 
 // KEYMA066 — duplicate @From() endpoint
 @Edge()
 class DuplicateFrom {
     declare readonly id: ID;
-    @From() declare a: Node;
-    @From() declare b: Node;
-    @To() declare to: Node;
+    @From() declare a: Reference<Node>;
+    @From() declare b: Reference<Node>;
+    @To() declare to: Reference<Node>;
 }
 
 // KEYMA061 — endpoint field is not a node reference
@@ -27,15 +27,15 @@ class DuplicateFrom {
 class BadEndpointType {
     declare readonly id: ID;
     @From() declare from: string;
-    @To() declare to: Node;
+    @To() declare to: Reference<Node>;
 }
 
 // A well-formed edge, referenced as a node below.
 @Edge()
 class Rel {
     declare readonly id: ID;
-    @From() declare from: Node;
-    @To() declare to: Node;
+    @From() declare from: Reference<Node>;
+    @To() declare to: Reference<Node>;
 }
 
 // KEYMA064 — non-edge schema references an edge

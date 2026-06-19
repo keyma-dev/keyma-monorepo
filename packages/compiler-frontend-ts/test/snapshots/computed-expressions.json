@@ -84,8 +84,36 @@
     }
   },
   "tagCount": {
-    "kind": "member",
-    "object": { "kind": "field", "name": "tags" },
-    "member": "length"
+    "kind": "intrinsic",
+    "op": "array.length",
+    "receiver": { "kind": "field", "name": "tags" },
+    "args": []
+  },
+  "trimmedTitle": {
+    "kind": "intrinsic",
+    "op": "string.trim",
+    "receiver": { "kind": "field", "name": "title" },
+    "args": []
+  },
+  "hasPremiumTag": {
+    "kind": "intrinsic",
+    "op": "array.includes",
+    "receiver": { "kind": "field", "name": "tags" },
+    "args": [{ "kind": "literal", "value": "premium" }]
+  },
+  "tagBadge": {
+    "kind": "conditional",
+    "condition": {
+      "kind": "intrinsic",
+      "op": "array.includes",
+      "receiver": { "kind": "field", "name": "tags" },
+      "args": [{ "kind": "literal", "value": "sale" }]
+    },
+    "whenTrue": { "kind": "literal", "value": "ON SALE" },
+    "whenFalse": { "kind": "literal", "value": "" }
+  },
+  "priceType": {
+    "kind": "typeof",
+    "operand": { "kind": "field", "name": "price" }
   }
 }
