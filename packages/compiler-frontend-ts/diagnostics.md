@@ -185,56 +185,70 @@ A type reference uses a generic parameter that is not a supported DSL wrapper (`
 
 ## Edge schema errors (0060–0069)
 
-### KEYMA060 — @Edge from/to references unknown or non-node schema
+### KEYMA060 — @Edge from/to points at an edge schema
 
-`@Edge({ from, to })` names a class that is not a `@Schema` class, or names an edge schema instead of a node schema.
-
-```typescript
-@Edge({ from: User, to: NotASchemaClass }) // KEYMA060
-class Knows { ... }
-```
-
-### KEYMA061 — Edge from/to field missing or wrong type
-
-The edge class is missing its `from` or `to` field (or the configured `fromField`/`toField`), or the field is not `Reference<TargetSchema>`.
+A `@From()`/`@To()` endpoint field's node type is itself an edge schema. Endpoints must be node schemas.
 
 ```typescript
-@Edge({ from: User, to: User })
-class Knows {
-    // KEYMA061 — `from` field missing
-    @Indexed() to!: Reference<User>;
+@Edge() class Knows { @From() from!: User; @To() to!: User; }
+@Edge() class Meta {
+    @From() from!: Knows; // KEYMA060 — Knows is an edge, not a node
+    @To() to!: User;
 }
 ```
 
-### KEYMA062 — Edge from/to field not indexed
+### KEYMA061 — Edge endpoint field is not a node reference
 
-Edge endpoint fields must carry `@Indexed()` — without indexes, traversal degrades to a full collection scan on every database.
+A `@From()`/`@To()` field is typed as something other than a node reference (a `@Schema` class, or `Reference<T>`).
 
 ```typescript
-@Edge({ from: User, to: User })
+@Edge()
 class Knows {
-    from!: Reference<User>;     // KEYMA062 — needs @Indexed()
-    @Indexed() to!: Reference<User>;
+    @From() from!: string;       // KEYMA061 — not a node reference
+    @To() to!: User;
 }
 ```
 
-### KEYMA063 — @Edge from/to argument is not a class identifier
+### KEYMA062 — (obsolete)
 
-`from` and `to` must be class identifiers, not arbitrary expressions or literals.
+Previously "Edge from/to field not indexed". `@From()`/`@To()` fields are now indexed automatically, so this is never emitted. The code is retained and not reused.
 
-```typescript
-@Edge({ from: "User", to: User }) // KEYMA063 — string instead of class
-class Knows { ... }
-```
+### KEYMA063 — (obsolete)
+
+Previously "@Edge from/to argument is not a class identifier". `from`/`to` are no longer options — endpoints come from `@From()`/`@To()` fields — so this is never emitted. The code is retained and not reused.
 
 ### KEYMA064 — Edge schema used as a node reference
 
 A non-edge schema has a `Reference<EdgeClass>` or `Embedded<EdgeClass>` field. Edges are not addressable as nodes; if you want to expose edges, query them with `Keyma.list(EdgeClass, ...)` or via traversal.
 
 ```typescript
-@Edge({ from: User, to: User }) class Knows { ... }
+@Edge() class Knows { @From() from!: User; @To() to!: User; }
 @Schema() class Thing {
     rel!: Reference<Knows>; // KEYMA064
+}
+```
+
+### KEYMA065 — Edge schema missing @From() or @To()
+
+An `@Edge` class must declare exactly one `@From()` field and one `@To()` field.
+
+```typescript
+@Edge()
+class Knows {
+    @From() from!: User; // KEYMA065 — no @To() field
+}
+```
+
+### KEYMA066 — Edge schema has duplicate @From() or @To()
+
+An `@Edge` class declares more than one `@From()` or more than one `@To()` field. Exactly one of each is allowed.
+
+```typescript
+@Edge()
+class Knows {
+    @From() a!: User;
+    @From() b!: User; // KEYMA066 — two @From() fields
+    @To() to!: User;
 }
 ```
 

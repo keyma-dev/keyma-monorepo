@@ -127,20 +127,21 @@ export type IRField = {
 
 /**
  * Metadata for a schema that represents an edge connecting two node schemas.
- * Present iff the user authored the class with `@Edge({ from, to, ... })`.
- * Non-graph backends ignore this; graph-aware backends use it to plan
- * traversals.
+ * Present iff the user authored the class with `@Edge(...)`. The endpoints are
+ * derived from the `@From()`/`@To()`-decorated fields: each field's name yields
+ * `fromField`/`toField` and its declared node type yields `from`/`to`. Non-graph
+ * backends ignore this; graph-aware backends use it to plan traversals.
  */
 export type IREdge = {
-    /** Source node schema's sourceName (TS class name). */
+    /** Source node schema's sourceName — the `@From()` field's node type. */
     from: string;
-    /** Field on the edge schema that holds the source ID. Default: "from". */
+    /** Name of the `@From()`-decorated field holding the source endpoint. */
     fromField: string;
-    /** Target node schema's sourceName (TS class name). */
+    /** Target node schema's sourceName — the `@To()` field's node type. */
     to: string;
-    /** Field on the edge schema that holds the target ID. Default: "to". */
+    /** Name of the `@To()`-decorated field holding the target endpoint. */
     toField: string;
-    /** Traversal label (defaults to the edge schema's `name`). */
+    /** Traversal label — the edge schema's `name`. */
     label: string;
     /** When false, the edge is undirected — adapters may treat both ends as equivalent. */
     directed: boolean;

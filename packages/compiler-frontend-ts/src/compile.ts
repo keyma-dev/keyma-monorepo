@@ -16,8 +16,6 @@ import {
     KEYMA035,
     KEYMA036,
     KEYMA060,
-    KEYMA061,
-    KEYMA062,
     KEYMA064,
     KEYMA070,
 } from "./diagnostics.js";
@@ -257,94 +255,26 @@ function checkEdgeSchemas(schemas: import("@keyma/ir").IRSchema[], diagnostics: 
         }
     }
 
-    // Per-edge structural checks
+    // Per-edge structural checks. The endpoint fields, their names, and target
+    // schemas are derived from @From()/@To() in extract-schema (which also emits
+    // KEYMA061/065/066). Here we only verify the targets are node schemas — not
+    // edges — since that needs the full schema set.
     for (const schema of schemas) {
         const edge = schema.edge;
         if (edge === undefined) continue;
 
-        const fromTarget = bySourceName.get(edge.from);
-        const toTarget = bySourceName.get(edge.to);
-
-        if (fromTarget === undefined) {
-            diagnostics.push(
-                mkError(
-                    KEYMA060,
-                    `@Edge "from" on "${schema.sourceName}" references unknown schema "${edge.from}"`,
-                    schema.source,
-                ),
-            );
-        } else if (fromTarget.edge !== undefined) {
-            diagnostics.push(
-                mkError(
-                    KEYMA060,
-                    `@Edge "from" on "${schema.sourceName}" points at edge schema "${edge.from}" — must be a node schema`,
-                    schema.source,
-                ),
-            );
+        for (const [role, target] of [["from", edge.from], ["to", edge.to]] as const) {
+            const resolved = bySourceName.get(target);
+            if (resolved !== undefined && resolved.edge !== undefined) {
+                diagnostics.push(
+                    mkError(
+                        KEYMA060,
+                        `@Edge "${role}" on "${schema.sourceName}" points at edge schema "${target}" — must be a node schema`,
+                        schema.source,
+                    ),
+                );
+            }
         }
-        if (toTarget === undefined) {
-            diagnostics.push(
-                mkError(
-                    KEYMA060,
-                    `@Edge "to" on "${schema.sourceName}" references unknown schema "${edge.to}"`,
-                    schema.source,
-                ),
-            );
-        } else if (toTarget.edge !== undefined) {
-            diagnostics.push(
-                mkError(
-                    KEYMA060,
-                    `@Edge "to" on "${schema.sourceName}" points at edge schema "${edge.to}" — must be a node schema`,
-                    schema.source,
-                ),
-            );
-        }
-
-        // Verify fromField / toField exist on the edge schema, are reference fields
-        // pointing at the named target schema, and are indexed.
-        checkEdgeEndpointField(schema, edge.fromField, edge.from, fromTarget !== undefined, "from", diagnostics);
-        checkEdgeEndpointField(schema, edge.toField, edge.to, toTarget !== undefined, "to", diagnostics);
-    }
-}
-
-function checkEdgeEndpointField(
-    edgeSchema: import("@keyma/ir").IRSchema,
-    fieldName: string,
-    expectedSchemaName: string,
-    expectedSchemaResolved: boolean,
-    role: "from" | "to",
-    diagnostics: IRDiagnostic[],
-): void {
-    const field = edgeSchema.fields.find((f) => f.name === fieldName);
-    if (field === undefined) {
-        diagnostics.push(
-            mkError(
-                KEYMA061,
-                `Edge schema "${edgeSchema.sourceName}" is missing "${fieldName}" field (required for @Edge ${role})`,
-                edgeSchema.source,
-            ),
-        );
-        return;
-    }
-    const inner = unwrap(field.type);
-    if (inner.kind !== "reference" || (expectedSchemaResolved && inner.schema !== expectedSchemaName)) {
-        diagnostics.push(
-            mkError(
-                KEYMA061,
-                `Edge schema "${edgeSchema.sourceName}" field "${fieldName}" must be Reference<${expectedSchemaName}>`,
-                field.source,
-            ),
-        );
-        return;
-    }
-    if (field.indexes.length === 0) {
-        diagnostics.push(
-            mkError(
-                KEYMA062,
-                `Edge schema "${edgeSchema.sourceName}" field "${fieldName}" must be @Indexed for traversal to be feasible`,
-                field.source,
-            ),
-        );
     }
 }
 

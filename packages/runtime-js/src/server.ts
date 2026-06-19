@@ -276,7 +276,7 @@ export class KeymaServer {
         op: Extract<KeymaOperation, { op: "create" }>,
         context: RequestContext,
     ): Promise<KeymaLeafResult> {
-        let data = { ...op.data };
+        let data = extractEdgeEndpointIds(schema, { ...op.data });
         await format(schema, data, "save", this.opts.formatters);
         const writableSchema: SchemaMetadata = {
             ...schema,
@@ -299,7 +299,7 @@ export class KeymaServer {
         op: Extract<KeymaOperation, { op: "update" }>,
         context: RequestContext,
     ): Promise<KeymaLeafResult> {
-        let data = { ...op.data };
+        let data = extractEdgeEndpointIds(schema, { ...op.data });
         await format(schema, data, "save", this.opts.formatters);
         const errors = await validate(schema, data, this.opts.validators);
         if (errors.length > 0) {
@@ -418,9 +418,27 @@ export class KeymaServer {
                       .filter((f) => f.visibility !== "private")
                       .map((f): [string, 1] => [f.name, 1]);
 
+        const edge = schema.edge;
+
         for (const [key, sub] of entries) {
             const field = schema.fields.find((f) => f.name === key);
             const type = field !== undefined ? coreType(field.type) : undefined;
+
+            // Edge endpoints always materialize as objects: `{ id }` by default,
+            // or the requested sub-projection (id is always included so the
+            // object keeps its identity). `edge.from`/`to` are node sourceNames.
+            if (edge !== undefined && (key === edge.fromField || key === edge.toField)) {
+                const targetSourceName = key === edge.fromField ? edge.from : edge.to;
+                const referenced = this.findBySourceName(targetSourceName);
+                if (referenced !== undefined) {
+                    const nested =
+                        sub === 1
+                            ? { fields: { id: 1 as const } }
+                            : withIdField(this.buildAdapterProjection(referenced, sub as ProjectionSpec));
+                    populate[key] = { schema: referenced, projection: nested };
+                    continue;
+                }
+            }
 
             if (type?.kind === "reference" && sub !== 1) {
                 const referenced = this.schemaMap.get(type.schema);
@@ -447,6 +465,30 @@ export class KeymaServer {
         if (Object.keys(populate).length > 0) result.populate = populate;
         return result;
     }
+}
+
+/** Replace edge endpoint node objects with their `id` for the adapter. Edge
+ *  create/update input carries `{ from: nodeObj, to: nodeObj }`; adapters expect
+ *  bare ids. No-op for non-edge schemas or endpoints already given as ids. */
+function extractEdgeEndpointIds(
+    schema: SchemaMetadata,
+    data: Record<string, unknown>,
+): Record<string, unknown> {
+    const edge = schema.edge;
+    if (edge === undefined) return data;
+    for (const fieldName of [edge.fromField, edge.toField]) {
+        const v = data[fieldName];
+        if (v !== null && typeof v === "object" && !Array.isArray(v) && "id" in v) {
+            data[fieldName] = (v as { id: unknown }).id;
+        }
+    }
+    return data;
+}
+
+/** Ensure a populate sub-projection includes the `id` field so the resolved
+ *  endpoint object always carries its identity. */
+function withIdField(projection: AdapterProjection): AdapterProjection {
+    return { ...projection, fields: { ...(projection.fields ?? {}), id: 1 } };
 }
 
 function buildEmbeddedSpec(spec: ProjectionSpec): { [key: string]: AdapterFieldSpec } {

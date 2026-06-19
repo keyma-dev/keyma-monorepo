@@ -22,18 +22,9 @@ export interface EdgeBrand<From, To> {
     readonly [__edgeBrand]: { from: From; to: To };
 }
 
-export type EdgeOptions<From, To> = SchemaOptions & {
-    /** Source node class. */
-    from: new (...args: never[]) => From;
-    /** Target node class. */
-    to: new (...args: never[]) => To;
+export type EdgeOptions = SchemaOptions & {
     /** Defaults to true. Undirected edges are traversable both ways. */
     directed?: boolean;
-    /** Human-readable label (defaults to the class name). */
-    label?: string;
-    /** Names of the from/to fields on the edge class. Default: "from" and "to". */
-    fromField?: string;
-    toField?: string;
 };
 
 export type IndexOptions = {
@@ -142,21 +133,45 @@ export function Format(
 
 /**
  * Marks a class as an edge schema connecting two node schemas. The compiler
- * records `from`, `to`, and `label` in IR; backends with graph capabilities
- * (or graph emulation) use this to plan traversals.
+ * records `from`, `to`, and the traversal label (the schema `name`) in IR;
+ * backends with graph capabilities (or graph emulation) use this to plan
+ * traversals.
  *
  * Edge classes are treated as schemas — they have fields, validators, indexes,
- * and visibility — but they additionally carry a `from`/`to` pair. The default
- * field names are `from` and `to` (both `Reference<NodeClass>` typed); pass
- * `fromField`/`toField` to override.
+ * and visibility — but they additionally carry a `from`/`to` pair, identified
+ * by the `@From()` and `@To()` field decorators. Each endpoint field's target
+ * node schema is its declared type (bare class `T` or `Reference<T>`); the
+ * endpoint fields are indexed automatically.
  *
- * Brands the decorated class with `EdgeBrand<From, To>` at the type level so
- * `Keyma.traverse(...)` can type-check step chains.
+ * The compiler-generated edge class is branded with `EdgeBrand<From, To>` at
+ * the type level (derived from the `@From()`/`@To()` field types) so
+ * `Keyma.traverse(...)` can type-check step chains. The authored DSL class
+ * itself is not branded.
  *
  * No-op at runtime — the decorator implementation does nothing.
  */
-export function Edge<From, To>(
-    _options: EdgeOptions<From, To>,
-): <C extends new (...args: never[]) => unknown>(cls: C) => C & EdgeBrand<From, To> {
-    return ((cls: unknown) => cls) as never;
+export function Edge(_options?: EdgeOptions): ClassDecorator {
+    return () => undefined;
+}
+
+/**
+ * Marks the source-endpoint field of an `@Edge` schema. The field's declared
+ * type (a bare node class `T` or `Reference<T>`) names the source node schema.
+ * Auto-indexed by the compiler. Exactly one `@From()` is required per edge.
+ *
+ * No-op at runtime — the decorator implementation does nothing.
+ */
+export function From(): PropertyDecorator {
+    return () => undefined;
+}
+
+/**
+ * Marks the target-endpoint field of an `@Edge` schema. The field's declared
+ * type (a bare node class `T` or `Reference<T>`) names the target node schema.
+ * Auto-indexed by the compiler. Exactly one `@To()` is required per edge.
+ *
+ * No-op at runtime — the decorator implementation does nothing.
+ */
+export function To(): PropertyDecorator {
+    return () => undefined;
 }

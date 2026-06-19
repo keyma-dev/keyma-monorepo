@@ -11,6 +11,9 @@ import {
     USER_SCHEMA,
     ORGANIZATION_SCHEMA,
     ADDRESS_SCHEMA,
+    PERSON_SCHEMA,
+    COMPANY_SCHEMA,
+    KNOWS_SCHEMA,
 } from "./fixtures.js";
 
 const EMAIL_RE = /^[^\s@]+@[^\s@]+\.[^\s@]{2,}$/;
@@ -249,6 +252,93 @@ describe("template + server end-to-end", () => {
         }
         if (rb.results.user.ok && rb.results.user.data !== null) {
             assert.equal(rb.results.user.data.email, "b@x.com");
+        }
+    });
+});
+
+describe("edges — create with node objects, read populates from/to", () => {
+    function setupEdgeServer() {
+        const adapter = new InMemoryAdapter();
+        const server = new KeymaServer({
+            schemas: [PERSON_SCHEMA, COMPANY_SCHEMA, KNOWS_SCHEMA],
+            adapter,
+        });
+        adapter.stores.set("person", new Map([
+            ["p1", { id: "p1", name: "Alice" }],
+            ["p2", { id: "p2", name: "Bob" }],
+        ]));
+        return { server, adapter };
+    }
+
+    it("create extracts ids from from/to node objects; result returns { id }", async () => {
+        const { server } = setupEdgeServer();
+        const resp = await server.handle({
+            operations: {
+                c: {
+                    op: "create",
+                    schema: "knows",
+                    data: {
+                        id: "k1",
+                        from: { id: "p1", name: "Alice" },
+                        to: { id: "p2", name: "Bob" },
+                        since: "2020",
+                    },
+                },
+            },
+        });
+        const r = resp.results["c"]!;
+        assert.equal(r.ok, true, JSON.stringify(r));
+        if (r.ok) {
+            const data = r.data as Record<string, unknown>;
+            assert.deepEqual(data["from"], { id: "p1" });
+            assert.deepEqual(data["to"], { id: "p2" });
+            assert.equal(data["since"], "2020");
+        }
+    });
+
+    it("read returns from/to as { id } by default", async () => {
+        const { server } = setupEdgeServer();
+        await server.handle({
+            operations: {
+                c: { op: "create", schema: "knows", data: { id: "k1", from: { id: "p1" }, to: { id: "p2" }, since: "2020" } },
+            },
+        });
+        const resp = await server.handle({
+            operations: { r: { op: "read", schema: "knows", where: { id: "k1" } } },
+        });
+        const r = resp.results["r"]!;
+        assert.equal(r.ok, true, JSON.stringify(r));
+        if (r.ok) {
+            const data = r.data as Record<string, unknown>;
+            assert.deepEqual(data["from"], { id: "p1" });
+            assert.deepEqual(data["to"], { id: "p2" });
+        }
+    });
+
+    it("read populates from/to node fields when the projection requests them", async () => {
+        const { server } = setupEdgeServer();
+        await server.handle({
+            operations: {
+                c: { op: "create", schema: "knows", data: { id: "k1", from: { id: "p1" }, to: { id: "p2" }, since: "2020" } },
+            },
+        });
+        const resp = await server.handle({
+            operations: {
+                r: {
+                    op: "read",
+                    schema: "knows",
+                    where: { id: "k1" },
+                    project: { since: 1, from: { name: 1 }, to: 1 },
+                },
+            },
+        });
+        const r = resp.results["r"]!;
+        assert.equal(r.ok, true, JSON.stringify(r));
+        if (r.ok) {
+            const data = r.data as Record<string, unknown>;
+            assert.deepEqual(data["from"], { name: "Alice", id: "p1" });
+            assert.deepEqual(data["to"], { id: "p2" });
+            assert.equal(data["since"], "2020");
         }
     });
 });

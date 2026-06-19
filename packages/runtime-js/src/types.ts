@@ -55,6 +55,12 @@ export type FieldMetadata = {
     ephemeral?: boolean;
 };
 
+/** Edge metadata recorded by the compiler from `@Edge` + the `@From()`/`@To()`
+ *  endpoint fields. `fromField`/`toField` are the endpoint field names; `from`/
+ *  `to` are their node-schema sourceNames; `label` is the schema `name`. On
+ *  create the endpoint fields carry node objects (`{ id }`); the server extracts
+ *  the id. On read they are returned as `{ id }` objects (populated further when
+ *  the projection asks for endpoint sub-fields). */
 export type EdgeMetadata = {
     from: string;
     fromField: string;

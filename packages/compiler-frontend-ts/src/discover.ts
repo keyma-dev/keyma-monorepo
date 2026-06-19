@@ -1,17 +1,13 @@
 import ts from "typescript";
 import { isFromModule, getLocation } from "./util.js";
 import type { IRDiagnostic, IRSourceLocation } from "@keyma/ir";
-import { mkError, KEYMA032, KEYMA033, KEYMA063 } from "./diagnostics.js";
+import { KEYMA032, KEYMA033 } from "./diagnostics.js";
 
 export type DiscoveredEdgeOptions = {
-    /** Source class identifier text from @Edge({ from: <ident>, ... }). */
-    fromClassName: string;
-    /** Target class identifier text. */
-    toClassName: string;
-    label?: string;
+    /** Whether the edge is directed. Defaults to true when omitted. The
+     *  from/to endpoints and the traversal label (the schema `name`) are
+     *  derived from the @From()/@To() fields and @Schema/@Edge `name`. */
     directed?: boolean;
-    fromField?: string;
-    toField?: string;
 };
 
 export type DiscoveredSchema = {
@@ -94,9 +90,10 @@ function tryDiscoverSchema(
 
     const result: DiscoveredSchema = { classNode: node, className, sourceFile, schemaOptions, source };
     if (parentClassName !== undefined) result.parentClassName = parentClassName;
+    // edgeOptions present-iff @Edge — always set it (even empty) so the extract
+    // pass knows this class is an edge and looks for @From()/@To() fields.
     if (edgeDecorator) {
-        const edgeOptions = extractEdgeOptions(edgeDecorator, sourceFile, ctx);
-        if (edgeOptions) result.edgeOptions = edgeOptions;
+        result.edgeOptions = extractEdgeOptions(edgeDecorator);
     }
     return result;
 }
@@ -156,71 +153,23 @@ function extractSchemaOptions(
     return opts;
 }
 
-/** Extract @Edge decorator options. Reports KEYMA063 if `from`/`to` aren't class identifiers. */
-function extractEdgeOptions(
-    decorator: ts.Decorator,
-    sourceFile: ts.SourceFile,
-    ctx: DiscoverContext
-): DiscoveredEdgeOptions | undefined {
+/** Extract @Edge decorator options. Only `directed` is read here; the schema
+ *  `name` (used as the traversal label) is read by extractSchemaOptions, and
+ *  the from/to endpoints come from the @From()/@To() fields. */
+function extractEdgeOptions(decorator: ts.Decorator): DiscoveredEdgeOptions {
     const expr = decorator.expression;
-    if (!ts.isCallExpression(expr) || expr.arguments.length === 0) return undefined;
+    if (!ts.isCallExpression(expr) || expr.arguments.length === 0) return {};
     const arg = expr.arguments[0];
-    if (!arg || !ts.isObjectLiteralExpression(arg)) return undefined;
+    if (!arg || !ts.isObjectLiteralExpression(arg)) return {};
 
-    let fromClassName: string | undefined;
-    let toClassName: string | undefined;
-    let label: string | undefined;
-    let directed: boolean | undefined;
-    let fromField: string | undefined;
-    let toField: string | undefined;
-
+    const out: DiscoveredEdgeOptions = {};
     for (const prop of arg.properties) {
         if (!ts.isPropertyAssignment(prop) || !ts.isIdentifier(prop.name)) continue;
-        const key = prop.name.text;
+        if (prop.name.text !== "directed") continue;
         const val = prop.initializer;
-
-        if (key === "from" || key === "to") {
-            if (!ts.isIdentifier(val)) {
-                ctx.diagnostics.push(
-                    mkError(
-                        KEYMA063,
-                        `@Edge "${key}" must be a class identifier`,
-                        getLocation(val, sourceFile),
-                    ),
-                );
-                continue;
-            }
-            if (key === "from") fromClassName = val.text;
-            else toClassName = val.text;
-        } else if (key === "label" && ts.isStringLiteral(val)) {
-            label = val.text;
-        } else if (key === "directed") {
-            if (val.kind === ts.SyntaxKind.TrueKeyword) directed = true;
-            if (val.kind === ts.SyntaxKind.FalseKeyword) directed = false;
-        } else if (key === "fromField" && ts.isStringLiteral(val)) {
-            fromField = val.text;
-        } else if (key === "toField" && ts.isStringLiteral(val)) {
-            toField = val.text;
-        }
-        // name/private/description are read by extractSchemaOptions
+        if (val.kind === ts.SyntaxKind.TrueKeyword) out.directed = true;
+        if (val.kind === ts.SyntaxKind.FalseKeyword) out.directed = false;
     }
-
-    if (fromClassName === undefined || toClassName === undefined) {
-        ctx.diagnostics.push(
-            mkError(
-                KEYMA063,
-                `@Edge requires "from" and "to" class identifiers`,
-                getLocation(arg, sourceFile),
-            ),
-        );
-        return undefined;
-    }
-
-    const out: DiscoveredEdgeOptions = { fromClassName, toClassName };
-    if (label !== undefined) out.label = label;
-    if (directed !== undefined) out.directed = directed;
-    if (fromField !== undefined) out.fromField = fromField;
-    if (toField !== undefined) out.toField = toField;
     return out;
 }
 

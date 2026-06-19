@@ -8,7 +8,7 @@ Keyma is **database-agnostic** and **transport-agnostic** by design:
 
 * **Database-agnostic** — the same schemas run against graph, document, and relational databases. The runtime talks to your data through a `KeymaDatabaseAdapter`. Bring an adapter (a MongoDB adapter, `@keyma/adapter-mongodb-js`, ships in the monorepo; others are pluggable) and the generated code doesn't change.
 * **Transport-agnostic** — the client serializes queries to a portable, language-neutral request document and hands it to a `Transport` function you supply. HTTP, WebSocket, gRPC, in-process, message bus — Keyma doesn't care. An in-process `createDirectTransport` is provided for SSR and tests.
-* **Graph queries, on any backend** — schemas can declare `@Edge` classes with typed `from`/`to` node references. `Keyma.traverse(...)` builds typed, multi-hop graph queries (heterogeneous chains, homogeneous repeats with depth bounds, edge predicates) that compile to native traversals on graph databases and to emulated joins/lookups on document and relational stores. The query surface is identical regardless of backend.
+* **Graph queries, on any backend** — schemas can declare `@Edge` classes whose `@From()`/`@To()` fields name the connected node schemas. `Keyma.traverse(...)` builds typed, multi-hop graph queries (heterogeneous chains, homogeneous repeats with depth bounds, edge predicates) that compile to native traversals on graph databases and to emulated joins/lookups on document and relational stores. The query surface is identical regardless of backend.
 
 The generated schema libraries do **not** depend on `reflect-metadata`, `tslib`, TypeScript decorator emit helpers, or any other runtime reflection mechanism. They are paired with tiny target runtimes such as `@keyma/runtime-js` or `@keyma/runtime-cpp`.
 
@@ -207,10 +207,10 @@ export class UserCredentials {
 
 ## Edges and graph traversals
 
-Beyond plain references, Keyma supports first-class **edge schemas**: classes decorated with `@Edge({ from, to })` declare a typed connection between two node schemas. Edges have their own fields, validators, and indexes, but they additionally participate in `Keyma.traverse(...)` graph queries.
+Beyond plain references, Keyma supports first-class **edge schemas**: classes decorated with `@Edge(...)` whose endpoint fields are marked `@From()` and `@To()` declare a typed connection between two node schemas. The endpoint field's own type names the connected node schema (a bare class or `Reference<T>`), and `@From()`/`@To()` fields are indexed automatically. The edge's `name` doubles as its traversal label. Edges have their own fields, validators, and indexes, and they participate in `Keyma.traverse(...)` graph queries.
 
 ```typescript
-import { Schema, Edge, ID, Reference, Indexed } from "@keyma/dsl";
+import { Schema, Edge, From, To, ID } from "@keyma/dsl";
 
 @Schema({ name: "person" })
 export class Person {
@@ -224,24 +224,24 @@ export class Company {
     name: string;
 }
 
-@Edge({ name: "knows", from: Person, to: Person, directed: false })
+@Edge({ name: "knows", directed: false })
 export class Knows {
     readonly id: ID;
-    from: Reference<Person>;
-    to: Reference<Person>;
-
-    @Indexed()
+    @From() from: Person;
+    @To() to: Person;
     since: string;
 }
 
-@Edge({ name: "works_at", from: Person, to: Company })
+@Edge({ name: "works_at" })
 export class WorksAt {
     readonly id: ID;
-    from: Reference<Person>;
-    to: Reference<Company>;
+    @From() from: Person;
+    @To() to: Company;
     role: string;
 }
 ```
+
+When creating an edge, pass the node objects for `from`/`to` (each must carry its `id`); the server extracts the id. Reading an edge returns `from`/`to` as `{ id }` objects by default, and populates the connected node's fields when the query's projection asks for them.
 
 You can then issue a typed, multi-hop traversal from any client. The same query runs on a graph database (native traversal), a document database (adapter-emulated lookups), or a relational database (adapter-emulated joins):
 

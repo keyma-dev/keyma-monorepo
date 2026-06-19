@@ -38,11 +38,13 @@ export const KEYMA040 = "KEYMA040"; // Duplicate field name
 export const KEYMA050 = "KEYMA050"; // Unsupported generic type parameter
 
 // Edge schema errors
-export const KEYMA060 = "KEYMA060"; // @Edge `from` or `to` references unknown schema
-export const KEYMA061 = "KEYMA061"; // Edge from/to field missing or wrong type (not a reference to the named schema)
-export const KEYMA062 = "KEYMA062"; // Edge from/to field not indexed
-export const KEYMA063 = "KEYMA063"; // @Edge `from`/`to` argument is not a class identifier
+export const KEYMA060 = "KEYMA060"; // @Edge `from` or `to` points at an edge schema (must be a node)
+export const KEYMA061 = "KEYMA061"; // Edge @From()/@To() endpoint field is not a node reference type
+export const KEYMA062 = "KEYMA062"; // (obsolete) Edge from/to field not indexed — endpoints are now auto-indexed
+export const KEYMA063 = "KEYMA063"; // (obsolete) @Edge `from`/`to` argument is not a class identifier — from/to now come from @From()/@To() fields
 export const KEYMA064 = "KEYMA064"; // Edge schema cannot itself be referenced by another schema as a node
+export const KEYMA065 = "KEYMA065"; // Edge schema missing a @From() and/or @To() endpoint field
+export const KEYMA066 = "KEYMA066"; // Edge schema declares more than one @From() or @To() field
 
 // Reference errors
 export const KEYMA070 = "KEYMA070"; // Reference<T> target schema has no `id: ID` field

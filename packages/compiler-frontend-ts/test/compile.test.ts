@@ -558,7 +558,7 @@ describe("@Edge discovery", () => {
         assert.deepEqual(errorCodes(result), [], `Unexpected errors: ${JSON.stringify(result.diagnostics)}`);
     });
 
-    it("records edge metadata on Knows (undirected, custom label)", () => {
+    it("records edge metadata on Knows (undirected, custom label) from @From()/@To()", () => {
         const knows = schemaByName(result, "Knows");
         assert.ok(knows.edge !== undefined, "Knows should carry edge metadata");
         assert.equal(knows.edge.from, "Person");
@@ -569,12 +569,22 @@ describe("@Edge discovery", () => {
         assert.equal(knows.edge.directed, false);
     });
 
-    it("records edge metadata on WorksAt with defaults (directed, label=className)", () => {
+    it("auto-indexes the @From()/@To() endpoint fields", () => {
+        const knows = schemaByName(result, "Knows");
+        const from = knows.fields.find((f) => f.name === "from");
+        const to = knows.fields.find((f) => f.name === "to");
+        assert.ok(from && from.indexes.length > 0, "from should be auto-indexed");
+        assert.ok(to && to.indexes.length > 0, "to should be auto-indexed");
+    });
+
+    it("records edge metadata on WorksAt with defaults (directed, label=name)", () => {
         const wa = schemaByName(result, "WorksAt");
         assert.ok(wa.edge !== undefined, "WorksAt should carry edge metadata");
         assert.equal(wa.edge.from, "Person");
         assert.equal(wa.edge.to, "Company");
-        assert.equal(wa.edge.label, "WorksAt");
+        // No explicit name → defaults to the lowercased class name, which is
+        // also the traversal label.
+        assert.equal(wa.edge.label, "worksat");
         assert.equal(wa.edge.directed, true);
     });
 
@@ -592,14 +602,21 @@ describe("@Edge discovery", () => {
 describe("@Edge diagnostics", () => {
     const result = compile({ files: [fixture("edges-bad.ts")] });
 
-    it("emits KEYMA062 when an edge endpoint field lacks @Indexed", () => {
+    it("emits KEYMA065 when an edge is missing a @From()/@To() endpoint", () => {
         assert.ok(
-            hasError(result, CODES.KEYMA062),
-            `Expected KEYMA062; got ${JSON.stringify(errorCodes(result))}`,
+            hasError(result, CODES.KEYMA065),
+            `Expected KEYMA065; got ${JSON.stringify(errorCodes(result))}`,
         );
     });
 
-    it("emits KEYMA061 when an edge endpoint field is missing", () => {
+    it("emits KEYMA066 when an edge declares duplicate @From()/@To()", () => {
+        assert.ok(
+            hasError(result, CODES.KEYMA066),
+            `Expected KEYMA066; got ${JSON.stringify(errorCodes(result))}`,
+        );
+    });
+
+    it("emits KEYMA061 when an endpoint field is not a node reference", () => {
         assert.ok(
             hasError(result, CODES.KEYMA061),
             `Expected KEYMA061; got ${JSON.stringify(errorCodes(result))}`,
@@ -613,18 +630,17 @@ describe("@Edge diagnostics", () => {
         );
     });
 
-    it("emits KEYMA060 when an @Edge references an unknown class", () => {
+    it("emits KEYMA060 when an endpoint points at an edge schema", () => {
         const r = cv({
             "s.ts": `
-                import { Edge, Schema, Indexed } from "@keyma/dsl";
-                import type { ID, Reference } from "@keyma/dsl";
-                @Schema() class Node { @Indexed() declare readonly id: ID; }
-                class NotASchema {}
-                @Edge({ from: Node, to: NotASchema })
-                class Bad {
-                    @Indexed() declare readonly id: ID;
-                    @Indexed() declare from: Reference<Node>;
-                    @Indexed() declare to: Reference<Node>;
+                import { Edge, Schema, From, To } from "@keyma/dsl";
+                import type { ID } from "@keyma/dsl";
+                @Schema() class Node { declare readonly id: ID; }
+                @Edge() class Knows { declare readonly id: ID; @From() declare from: Node; @To() declare to: Node; }
+                @Edge() class Meta {
+                    declare readonly id: ID;
+                    @From() declare from: Knows;
+                    @To() declare to: Node;
                 }
             `,
         });
@@ -634,45 +650,26 @@ describe("@Edge diagnostics", () => {
         );
     });
 
-    it("emits KEYMA063 when @Edge `from` is not an identifier", () => {
+    it("accepts both bare node types and Reference<T> on endpoints", () => {
         const r = cv({
             "s.ts": `
-                import { Edge, Schema, Indexed } from "@keyma/dsl";
+                import { Edge, Schema, From, To } from "@keyma/dsl";
                 import type { ID, Reference } from "@keyma/dsl";
-                @Schema() class Node { @Indexed() declare readonly id: ID; }
-                @Edge({ from: "Node" as any, to: Node })
-                class Bad {
-                    @Indexed() declare readonly id: ID;
-                    @Indexed() declare from: Reference<Node>;
-                    @Indexed() declare to: Reference<Node>;
-                }
-            `,
-        });
-        assert.ok(
-            hasError(r, CODES.KEYMA063),
-            `Expected KEYMA063; got ${JSON.stringify(errorCodes(r))}`,
-        );
-    });
-
-    it("respects fromField/toField overrides", () => {
-        const r = cv({
-            "s.ts": `
-                import { Edge, Schema, Indexed } from "@keyma/dsl";
-                import type { ID, Reference } from "@keyma/dsl";
-                @Schema() class Node { @Indexed() declare readonly id: ID; }
-                @Edge({ from: Node, to: Node, fromField: "src", toField: "dst" })
-                class Custom {
-                    @Indexed() declare readonly id: ID;
-                    @Indexed() declare src: Reference<Node>;
-                    @Indexed() declare dst: Reference<Node>;
+                @Schema() class Node { declare readonly id: ID; }
+                @Edge() class Mixed {
+                    declare readonly id: ID;
+                    @From() declare from: Node;
+                    @To() declare to: Reference<Node>;
                 }
             `,
         });
         assert.deepEqual(errorCodes(r), [], `Unexpected errors: ${JSON.stringify(r.diagnostics)}`);
-        const custom = schemaByName(r, "Custom");
-        assert.ok(custom.edge !== undefined);
-        assert.equal(custom.edge.fromField, "src");
-        assert.equal(custom.edge.toField, "dst");
+        const mixed = schemaByName(r, "Mixed");
+        assert.ok(mixed.edge !== undefined);
+        assert.equal(mixed.edge.fromField, "from");
+        assert.equal(mixed.edge.toField, "to");
+        assert.equal(mixed.edge.from, "Node");
+        assert.equal(mixed.edge.to, "Node");
     });
 });
 

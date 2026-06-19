@@ -4,11 +4,13 @@ import type {
     TraversalSpec,
     TraversalStep,
 } from "@keyma/runtime-js";
+import type { AdapterProjection } from "@keyma/runtime-js";
 import { __ } from "./gremlin.js";
 import type { GraphTraversal, GraphTraversalSource } from "./gremlin.js";
 import { applyWhere } from "./filter.js";
 import { applyListOptions } from "./list-options.js";
 import { elementMapToPlain, fromProps, type SchemaMap } from "./props.js";
+import { emitProjected, parseProjectedRow } from "./read.js";
 import { GremlinAdapterInvalidQuery } from "./errors.js";
 
 export type LabelFns = {
@@ -29,6 +31,26 @@ function nodeBySourceName(ctx: AdapterTraversalContext, sourceName: string): Sch
         if (node.sourceName === sourceName) return node;
     }
     return undefined;
+}
+
+/** Default projection that populates an edge's from/to endpoints as `{ id }`
+ *  objects. Returns undefined when the endpoint node schemas aren't registered
+ *  in the traversal context (caller falls back to a bare valueMap). */
+function edgeEndpointProjection(
+    edge: SchemaMetadata,
+    ctx: AdapterTraversalContext,
+): AdapterProjection | undefined {
+    const meta = edge.edge;
+    if (meta === undefined) return undefined;
+    const fromNode = nodeBySourceName(ctx, meta.from);
+    const toNode = nodeBySourceName(ctx, meta.to);
+    if (fromNode === undefined || toNode === undefined) return undefined;
+    return {
+        populate: {
+            [meta.fromField]: { schema: fromNode, projection: { fields: { id: 1 } } },
+            [meta.toField]: { schema: toNode, projection: { fields: { id: 1 } } },
+        },
+    };
 }
 
 function resolveStep(step: TraversalStep, ctx: AdapterTraversalContext): Resolved {
@@ -141,9 +163,15 @@ export async function runSteps(
         const lastEdge = chain.edgeLabels[chain.edgeLabels.length - 1]!;
         let trav = chain.trav.select(lastEdge).dedup();
         if (inQueryOptions) trav = applyListOptions(trav, spec.options);
-        const rows = (await trav.valueMap(true).toList()) as unknown[];
         const edgeSchema = chain.edgeSchemas[chain.edgeSchemas.length - 1]!;
-        return rows.map((r) => fromProps(elementMapToPlain(r), edgeSchema, schemas));
+        // Populate the edge's from/to endpoints as `{ id }` objects by default.
+        const proj = edgeEndpointProjection(edgeSchema, ctx);
+        if (proj === undefined) {
+            const rows = (await trav.valueMap(true).toList()) as unknown[];
+            return rows.map((r) => fromProps(elementMapToPlain(r), edgeSchema, schemas));
+        }
+        const rows = (await emitProjected(trav, edgeSchema, proj, schemas).toList()) as unknown[];
+        return rows.map((r) => parseProjectedRow(r, edgeSchema, proj, schemas));
     }
 
     if (spec.emit === "paths") {

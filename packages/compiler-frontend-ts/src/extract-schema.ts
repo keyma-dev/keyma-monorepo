@@ -1,8 +1,8 @@
 import ts from "typescript";
 import type {
-    IRSchema, IRField, IRValidator, IRFormatter, IRFieldIndex, IRIndex, IRDiagnostic, IREdge,
+    IRSchema, IRField, IRType, IRValidator, IRFormatter, IRFieldIndex, IRIndex, IRDiagnostic, IREdge,
 } from "@keyma/ir";
-import { mkError, mkWarning, KEYMA015, KEYMA017, KEYMA040 } from "./diagnostics.js";
+import { mkError, mkWarning, KEYMA015, KEYMA017, KEYMA040, KEYMA061, KEYMA065, KEYMA066 } from "./diagnostics.js";
 import { getLocation, isFromModule } from "./util.js";
 import { mapTypeNode } from "./map-type.js";
 import { lowerValidateArgs, lowerFormatArgs, lowerIndexedArgs } from "./lower-decorator.js";
@@ -32,12 +32,17 @@ export function extractSchema(
     const name = schemaOptions.name ?? className.toLowerCase();
     const visibility = schemaOptions.private === true ? "private" : "public";
 
+    // Endpoint fields are collected during field extraction so the edge can be
+    // derived from the @From()/@To() decorators (rather than @Edge options).
+    const endpoints: EndpointAccumulator = { fromFields: [], toFields: [] };
+
     const fieldCtx = {
         checker: ctx.checker,
         dslModuleName: ctx.dslModuleName,
         schemaClassNames: ctx.schemaClassNames,
         diagnostics: ctx.diagnostics,
         sourceFile,
+        endpoints,
     };
 
     const seenNames = new Set<string>();
@@ -126,23 +131,80 @@ export function extractSchema(
         schema.extends = discovered.parentClassName;
     }
     if (discovered.edgeOptions !== undefined) {
-        const eo = discovered.edgeOptions;
-        const edge: IREdge = {
-            from: eo.fromClassName,
-            fromField: eo.fromField ?? "from",
-            to: eo.toClassName,
-            toField: eo.toField ?? "to",
-            label: eo.label ?? className,
-            directed: eo.directed ?? true,
-        };
-        schema.edge = edge;
+        const edge = deriveEdge(schema, endpoints, discovered.edgeOptions.directed ?? true, ctx);
+        if (edge !== undefined) schema.edge = edge;
     }
 
     return schema;
 }
 
+type EndpointAccumulator = { fromFields: string[]; toFields: string[] };
+
+/** Core (nullable/array-unwrapped) reference target schema of a field type. */
+function referenceTargetOf(type: IRType): string | undefined {
+    let t: IRType = type;
+    while (t.kind === "nullable" || t.kind === "array") t = t.of;
+    return t.kind === "reference" || t.kind === "embedded" ? t.schema : undefined;
+}
+
+/**
+ * Build the IREdge from the @From()/@To()-decorated endpoint fields. The
+ * traversal label is the schema `name`. Emits KEYMA065 (missing endpoint),
+ * KEYMA066 (duplicate endpoint), and KEYMA061 (endpoint field not a reference
+ * type). Returns undefined when the edge cannot be formed.
+ */
+function deriveEdge(
+    schema: IRSchema,
+    endpoints: EndpointAccumulator,
+    directed: boolean,
+    ctx: ExtractContext,
+): IREdge | undefined {
+    const { fromFields, toFields } = endpoints;
+
+    if (fromFields.length > 1 || toFields.length > 1) {
+        ctx.diagnostics.push(
+            mkError(
+                KEYMA066,
+                `Edge schema "${schema.sourceName}" declares multiple @From()/@To() fields — exactly one of each is allowed`,
+                schema.source,
+            ),
+        );
+    }
+    if (fromFields.length === 0 || toFields.length === 0) {
+        ctx.diagnostics.push(
+            mkError(
+                KEYMA065,
+                `Edge schema "${schema.sourceName}" must declare one @From() and one @To() field`,
+                schema.source,
+            ),
+        );
+        return undefined;
+    }
+
+    const fromField = fromFields[0]!;
+    const toField = toFields[0]!;
+    const from = referenceTargetOf(schema.fields.find((f) => f.name === fromField)!.type);
+    const to = referenceTargetOf(schema.fields.find((f) => f.name === toField)!.type);
+
+    if (from === undefined || to === undefined) {
+        const bad = from === undefined ? fromField : toField;
+        ctx.diagnostics.push(
+            mkError(
+                KEYMA061,
+                `Edge schema "${schema.sourceName}" endpoint field "${bad}" must be a node reference (a @Schema class or Reference<T>)`,
+                schema.source,
+            ),
+        );
+        return undefined;
+    }
+
+    return { from, fromField, to, toField, label: schema.name, directed };
+}
+
 type FieldExtractContext = ExtractContext & {
     sourceFile: ts.SourceFile;
+    /** Collects @From()/@To()-decorated field names for edge derivation. */
+    endpoints?: EndpointAccumulator;
 };
 
 function extractField(
@@ -201,6 +263,7 @@ function extractField(
     const formatters: IRFormatter[] = [];
     const fieldIndexes: IRFieldIndex[] = [];
     let ephemeral = false;
+    let isEndpoint = false;
 
     const lowerCtx = {
         checker: ctx.checker,
@@ -231,7 +294,17 @@ function extractField(
             if (idx !== null) fieldIndexes.push(idx);
         } else if (decoName === "Ephemeral") {
             ephemeral = true;
+        } else if (decoName === "From" || decoName === "To") {
+            isEndpoint = true;
+            const bucket = decoName === "From" ? ctx.endpoints?.fromFields : ctx.endpoints?.toFields;
+            bucket?.push(fieldName);
         }
+    }
+
+    // Edge endpoint fields (@From()/@To()) are indexed automatically so the
+    // user need not add @Indexed; an explicit @Indexed still wins.
+    if (isEndpoint && fieldIndexes.length === 0) {
+        fieldIndexes.push({});
     }
 
     // Promote number → integer if @Validate(isInteger) is present

@@ -37,10 +37,18 @@ export function emitProjected(
 ): GraphTraversal {
     if (!hasPopulate(projection)) return trav.valueMap(true);
     const fields = Object.keys(projection!.populate!);
+    const edge = schema.edge;
     let p = trav.project("self", ...fields).by(__.valueMap(true));
     for (const field of fields) {
         const node = projection!.populate![field]!;
-        p = p.by(refSub(field, node.schema, node.projection, schemas, gen));
+        if (edge !== undefined && (field === edge.fromField || field === edge.toField)) {
+            // Edge endpoints are graph endpoints, not stored properties — hop to
+            // the adjacent vertex (out = from, in = to) and project it there.
+            const seed = field === edge.fromField ? __.outV() : __.inV();
+            p = p.by(emitProjected(seed, node.schema, node.projection, schemas, gen).fold());
+        } else {
+            p = p.by(refSub(field, node.schema, node.projection, schemas, gen));
+        }
     }
     return p;
 }
