@@ -323,7 +323,7 @@ describe("irTypeToTs", () => {
         [{ kind: "time" }, "string"],
         [{ kind: "id" }, "string"],
         [{ kind: "json" }, "unknown"],
-        [{ kind: "reference", schema: "User" }, "string"],
+        [{ kind: "reference", schema: "User" }, "User"],
     ];
 
     for (const [type, expected] of cases) {

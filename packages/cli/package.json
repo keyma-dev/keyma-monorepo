@@ -21,6 +21,7 @@
     "dependencies": {
         "@keyma/compiler": "*",
         "@keyma/compiler-backend-js": "*",
+        "@keyma/compiler-backend-python": "*",
         "@keyma/compiler-frontend-ts": "*",
         "@keyma/ir": "*",
         "typescript": "*"

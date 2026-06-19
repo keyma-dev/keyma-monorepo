@@ -3,11 +3,12 @@ import { dirname, isAbsolute, join, resolve } from "node:path";
 import { drive, resolveConfig } from "@keyma/compiler";
 import type { EmitFile, KeymaBackend, ResolvedConfig } from "@keyma/compiler";
 import { jsBackend } from "@keyma/compiler-backend-js";
+import { pythonBackend } from "@keyma/compiler-backend-python";
 import type { KeymaIR, IRDiagnostic } from "@keyma/ir";
 import { findConfig, loadProjectConfig } from "../config.js";
 import { createTsFrontend } from "../frontend.js";
 
-const DEFAULT_BACKENDS: KeymaBackend[] = [jsBackend];
+const DEFAULT_BACKENDS: KeymaBackend[] = [jsBackend, pythonBackend];
 
 export type BuildOptions = {
     /** Project root. Defaults to cwd. */

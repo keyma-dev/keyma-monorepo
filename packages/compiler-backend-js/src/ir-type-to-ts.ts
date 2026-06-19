@@ -37,8 +37,7 @@ export function irTypeToTs(
             return `${maybeParens(type.of, embeddedNames)}[]`;
 
         case "reference":
-            // References store only the ID
-            return "string";
+            return embeddedNames?.get(type.schema) ?? type.schema;
 
         case "embedded": {
             return embeddedNames?.get(type.schema) ?? type.schema;
