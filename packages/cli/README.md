@@ -39,21 +39,17 @@ my-app/
 
 ### `keyma new <name>`
 
-Scaffolds a new project in `./<name>`. Refuses to write into a non-empty directory unless `--force` is passed.
-
-The generated `package.json` depends on `@keyma/dsl` and `@keyma/runtime-js` and wires up `build`, `watch`, and `inspect` scripts that call this CLI.
+Scaffolds a new project in `./<name>`. Refuses to write into a non-empty directory unless `--force` is passed. The generated `package.json` depends on `@keyma/dsl` and `@keyma/runtime-js` and wires up `build`, `watch`, and `inspect` scripts that call this CLI.
 
 ### `keyma gen <schema>`
 
-Generates a schema file at `src/schemas/<schema>.ts`. The argument is normalised: `user-profile` and `UserProfile` both produce class `UserProfile` in `user-profile.ts`.
-
-Refuses to overwrite an existing file without `--force`.
+Generates a schema file at `src/schemas/<schema>.ts`. The argument is normalised: `user-profile` and `UserProfile` both produce class `UserProfile` in `user-profile.ts`. Refuses to overwrite an existing file without `--force`.
 
 ### `keyma build`
 
 Loads `keyma.config.{ts,js,mjs,cjs,json}` from the current directory, runs the TypeScript frontend, validates the IR, dispatches to each configured backend, and writes the emitted files to disk. If `irOutFile` is set in the config, the IR JSON is written there too.
 
-Diagnostics are printed to stderr with their stable `KEYMA####` code. Exit status is non-zero when any error diagnostic is emitted.
+The **JS and Python backends are both registered by default**, so a config target of `{ language: "js" }` or `{ language: "python" }` works out of the box. Diagnostics are printed to stderr with their stable `KEYMA####` code; exit status is non-zero when any error diagnostic is emitted.
 
 Options:
 
@@ -91,6 +87,7 @@ const config: KeymaUserConfig = {
     outDir: "generated",
     targets: [
         { language: "js", outDir: "generated/js" },
+        { language: "python", outDir: "generated/py" },
     ],
 };
 
@@ -103,19 +100,21 @@ Config fields:
 | --- | --- | --- |
 | `source` | `string \| string[]` | Glob(s) for schema files. |
 | `outDir` | `string` | Root output directory. Defaults to `dist`. |
+| `baseDir` | `string` | Base directory for resolving relative source globs. |
 | `irOutFile` | `string` | Optional path to write the IR JSON. |
 | `targets` | `KeymaTargetConfig[]` | One entry per code-generation target. |
 | `customValidators` | `string[]` | Names of custom validators registered for this project. |
 | `customFormatters` | `string[]` | Names of custom formatters registered for this project. |
 
-Target configs are language-specific. The bundled JavaScript target accepts:
+Target configs are language-specific. The bundled JS and Python targets accept:
 
 | Field | Type | Description |
 | --- | --- | --- |
-| `language` | `"js"` | Selects the JS backend. |
+| `language` | `"js"` \| `"python"` | Selects the backend. |
 | `outDir` | `string` | Output directory for this target. |
 | `client` | `boolean` | Emit the client bundle. Defaults to `true`. |
 | `server` | `boolean` | Emit the server bundle. Defaults to `true`. |
+| `library` | `boolean` | Emit a single unified bundle instead of client/server. Defaults to `false`. |
 
 ## Programmatic API
 
@@ -131,17 +130,17 @@ if (result.hasErrors) {
 }
 ```
 
-Also exported: `loadProjectConfig`, `findConfig`, `createTsFrontend`, `formatDiagnostic`, `printDiagnostics`, `projectFiles`, `schemaTemplate`.
+`runBuild` accepts an optional `backends` array to override the default `[jsBackend, pythonBackend]`. Also exported: `loadProjectConfig`, `loadResolvedConfig`, `findConfig`, `createTsFrontend`, `formatDiagnostic`, `printDiagnostics`, `projectFiles`, `schemaTemplate`.
 
 ## How it fits together
 
 ```
-keyma.config        @keyma/compiler-frontend-ts          @keyma/compiler-backend-js
+keyma.config        @keyma/compiler-frontend-ts          @keyma/compiler-backend-js / -python
      │                       │                                     │
      ▼                       ▼                                     ▼
- loadProjectConfig ──► createTsFrontend ──► drive() ──► jsBackend.emit() ──► files on disk
+ loadProjectConfig ──► createTsFrontend ──► drive() ──► backend.emit() ──► files on disk
                                               │
                                               └─► validateIR (@keyma/ir)
 ```
 
-The CLI is a thin orchestrator: configuration loading, source globbing, file I/O, and process management. All compilation work happens inside `@keyma/compiler-frontend-ts`, `@keyma/compiler`, and `@keyma/compiler-backend-js`.
+The CLI is a thin orchestrator: configuration loading, source globbing, file I/O, and process management. All compilation work happens inside `@keyma/compiler-frontend-ts`, `@keyma/compiler`, and the backends.

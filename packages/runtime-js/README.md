@@ -12,7 +12,7 @@ Beyond `@keyma/dsl` (which is type-only at runtime), this package has zero produ
                                               @keyma/compiler-backend-js  →  generated JS  →  @keyma/runtime-js + adapter
 ```
 
-Generated code embeds static `SchemaMetadata` and consumes the runtime through the `@keyma/runtime-js` import. Adapters (e.g. `@keyma/adapter-mongodb-js`, `@keyma/adapter-sqlite-js`) implement `KeymaDatabaseAdapter` and plug into `KeymaServer`.
+Generated code embeds static `SchemaMetadata` and consumes the runtime through the `@keyma/runtime-js` import. Adapters (e.g. `@keyma/adapter-mongodb-js`, `@keyma/adapter-sqlite-js`, `@keyma/adapter-gremlin-js`) implement `KeymaDatabaseAdapter` and plug into `KeymaServer`.
 
 ## Minimal server
 
@@ -30,11 +30,15 @@ await server.ensureSchemas();
 const transport = createDirectTransport(server);
 ```
 
-`createDirectTransport` accepts an optional `contextFactory` that runs per request — wire it to `AsyncLocalStorage` (or whatever your framework uses) to surface a `RequestContext` with `identity` to plugins.
+`KeymaServer`'s public surface is small: `ensureSchemas()` (persist every non-ephemeral schema through the adapter), `handle(request, context?)` (process a request batch), and `close()` (delegates to `adapter.close?.()`). `createDirectTransport` accepts an optional `contextFactory` that runs per request — wire it to `AsyncLocalStorage` (or whatever your framework uses) to surface a `RequestContext` with `identity` to plugins.
+
+## The `Keyma` query builder
+
+The client builds typed, declarative queries that serialize to a portable request document and dispatch through a `Transport`. `Keyma` exposes `query` and `mutation` (document builders), the leaf builders `list` / `read` / `create` / `update` / `delete` / `traverse` / `count`, and `input` (a request-time placeholder). The same document can mix CRUD leaves and graph traversals in one batch and returns a typed, projected response.
 
 ## Writing a database adapter
 
-A `KeymaDatabaseAdapter` is a plain object implementing five required methods (`ensureSchema`, `create`, `read`, `list`, `update`, `delete`) and one optional one (`traverse`):
+A `KeymaDatabaseAdapter` implements seven required methods — `ensureSchema`, `create`, `read`, `list`, `update`, `delete`, `count` — and may add the optional `traverse`, `connect`, `close`, and a `capabilities` descriptor:
 
 ```ts
 import type {
@@ -55,13 +59,17 @@ export class MyAdapter implements KeymaDatabaseAdapter {
     async list(schema: SchemaMetadata, query: ListQuery) { /* … */ }
     async update(schema: SchemaMetadata, where: Record<string, unknown>, data: Record<string, unknown>, projection?: AdapterProjection) { /* … */ }
     async delete(schema: SchemaMetadata, where: Record<string, unknown>): Promise<void> { /* … */ }
-	async count(schema: SchemaMetadata, where: Record<string, unknown>): Promise<number> { /* … */ }
+    async count(schema: SchemaMetadata, where?: Record<string, unknown>): Promise<number> { /* … */ }
+
+    // Optional:
+    async connect(): Promise<void> { /* … */ }
+    async close(): Promise<void> { /* … */ }
 }
 ```
 
 ### Filter shape
 
-Every `where` object the runtime hands an adapter — whether on `read`, `list`, `update`, `delete`, or nested inside a `TraversalSpec` — follows one canonical shape (see `src/adapter.ts` for the authoritative comment):
+Every `where` object the runtime hands an adapter — whether on `read`, `list`, `update`, `delete`, `count`, or nested inside a `TraversalSpec` — follows one canonical shape (see `src/adapter.ts` for the authoritative comment):
 
 - Top-level keys are field names of the operation's schema; `id` is a reserved alias the adapter may rewrite to its native primary-key column.
 - Field values are either literals (compared with equality) or operator objects using `$eq` / `$ne` / `$gt` / `$gte` / `$lt` / `$lte` / `$in` / `$nin`.
@@ -78,7 +86,7 @@ Adapters opt into graph traversals by setting `capabilities.traverse` and implem
 
 ## Writing a server plugin
 
-Plugins implement `KeymaServerPlugin`. See the "Server plugins" section in the root `README.md` for the protocol overview and hook ordering, and look at `@keyma/plugin-acl-js` for a worked example covering filter rewrites, projection augmentation, write checks, and result trimming.
+Plugins implement `KeymaServerPlugin` — a `name` plus any of the optional hooks `init`, `transformOperation`, `beforeOperation`, `transformFilter`, `transformProjection`, `checkWrite`, `transformResult`, and `afterOperation`. They fire in array order at well-defined points in the operation lifecycle; `transformOperation` runs first and can rewrite the whole operation (this is how the ACL plugin injects read predicates into traversals, which never run `transformFilter`). See the "Server plugins" section in the root `README.md` for the protocol overview and hook ordering, and `@keyma/plugin-acl-js` for a worked example.
 
 ## Errors
 
@@ -93,6 +101,10 @@ const error = { ok: false, code: "FORBIDDEN", error: "...", source: "plugin", or
 - `KeymaAdapterError` — `source: "adapter"`; same shape as plugin errors, with the adapter package as `origin`.
 
 Predicate helpers `isRuntimeFailure` / `isPluginFailure` / `isAdapterFailure` narrow a `KeymaLeafFailure` by source.
+
+## `@keyma/runtime-js/testing`
+
+The `./testing` subpath exports an `InMemoryAdapter` (a fully in-memory `KeymaDatabaseAdapter`, including traversals) plus the `matches` / `matchesOp` filter evaluators — handy for unit-testing schemas and plugins without a real database.
 
 ## Status
 

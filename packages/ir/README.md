@@ -1,46 +1,53 @@
 # @keyma/ir
 
-TypeScript types and JSON schema for the Keyma language-neutral intermediate representation (IR).
+TypeScript types and JSON Schema for the Keyma language-neutral **intermediate representation** (IR), plus the intrinsic-method registry that defines which calls are portable across targets.
 
 ## Purpose
 
-The IR is the central contract between the compiler frontend and compiler backends. It is:
+The IR is the central contract between the compiler frontend and the compiler backends. It is:
 
-- **Serializable** — pure JSON, no functions or class instances
-- **Versioned** — `irVersion` is bumped on breaking changes
-- **Portable** — no TypeScript- or JavaScript-specific constructs
-- **Self-describing** — every node carries an optional source location
+- **Serializable** — pure JSON, no functions or class instances.
+- **Versioned** — `irVersion` is bumped on breaking changes (current: `2.0.0`).
+- **Portable** — no TypeScript- or JavaScript-specific constructs.
+- **Self-describing** — every node carries an optional `IRSourceLocation`.
+
+Any change to these types affects every frontend and backend, so keep IR nodes JSON-serializable and bump `irVersion` on breaking changes.
 
 ## Public API
 
-```typescript
-import { validateIR } from "@keyma/ir";
+```ts
+import {
+    validateIR, collectFieldRefs,
+    INTRINSICS, intrinsicByOp, intrinsicByMember,
+} from "@keyma/ir";
 import type { KeymaIR, IRSchema, IRField, IRType } from "@keyma/ir";
 ```
 
-### Types
+### Core types
 
 | Type | Description |
 |---|---|
-| `KeymaIR` | Top-level IR document |
-| `IRSchema` | A compiled schema (fully flattened, including inherited fields) |
-| `IRField` | A single field within a schema |
-| `IRType` | Discriminated union of all supported types |
-| `IRValidator` | Discriminated union of all built-in validators |
-| `IRFormatter` | A formatter entry: `{ phase, spec }` |
-| `IRFormatterSpec` | Discriminated union of all formatter kinds |
-| `IRExpression` | Discriminated union for computed getter expressions |
-| `IRComputed` | Computed field descriptor |
-| `IRFieldIndex` | Single-field index options |
-| `IRIndex` | Composite index descriptor |
-| `IRDiagnostic` | A compiler diagnostic with stable code and source location |
-| `IRSourceLocation` | `{ file, line, column }` |
+| `KeymaIR` | Top-level IR document (`irVersion`, `compilerVersion`, `schemas`, `diagnostics`, …). |
+| `IRSchema` | A compiled schema, fully flattened (including inherited fields). |
+| `IREdge` | Edge metadata on an edge schema (`from`/`to`/`label`/`directed`). |
+| `IRField` | A single field within a schema. |
+| `IRType` | Discriminated union of all supported field types. |
+| `IRValidator` | Discriminated union of all built-in validators. |
+| `IRFormatter` / `IRFormatterSpec` | A formatter entry (`{ phase, spec }`) and the spec union. |
+| `IRComputed` | Computed-field descriptor. |
+| `IRExpression` | Discriminated union for computed-getter / body expressions. |
+| `IRStatement` (+ `IRReturnStmt`, `IRIfStmt`, `IRConstDecl`, `IRExprStmt`, `IRAssignStmt`) | Portable statement nodes for method/setter/validator/formatter bodies. |
+| `IRMethod`, `IRParam`, `IRFunctionBody` | Method / behavior descriptors. |
+| `IRFieldIndex` / `IRIndex` | Single-field and composite index descriptors. |
+| `IRFormField` / `IRDefault` | Form metadata and default-value descriptors. |
+| `IRValidatorDeclaration`, `IRFormatterDeclaration`, `IRFunctionDeclaration`, `IREnumDeclaration` | Project-declared validators, formatters, utility functions, and enums. |
+| `IRDiagnostic` / `IRSourceLocation` | A compiler diagnostic with a stable code, and `{ file, line, column }`. |
 
 ### `validateIR(doc: unknown): IRValidationResult`
 
-Validates an unknown value against the IR structure. Returns `{ valid, errors }`.
+Validates an unknown value against the IR structure. Returns `{ valid: boolean, errors: IRValidationError[] }`.
 
-```typescript
+```ts
 import { validateIR } from "@keyma/ir";
 
 const result = validateIR(JSON.parse(fs.readFileSync("schema.ir.json", "utf8")));
@@ -51,11 +58,16 @@ if (!result.valid) {
 }
 ```
 
+### `collectFieldRefs(...)` and the intrinsic registry
+
+- `collectFieldRefs` walks an expression/body and reports the fields it reads — used to order computed-field materialization.
+- `INTRINSICS`, `intrinsicByOp`, and `intrinsicByMember` describe the **portable method/property calls** (e.g. `.trim()`, `.includes()`, `.length`) that may appear in getter/method/validator bodies. The human-readable catalog is `intrinsics.md` in this package; frontends use it to reject non-portable calls and backends use it to re-emit the supported ones.
+
 ### `schema.json`
 
 A JSON Schema 2020-12 document for validating IR files with standard tooling:
 
-```typescript
+```ts
 import schema from "@keyma/ir/schema.json" assert { type: "json" };
 ```
 
@@ -63,7 +75,7 @@ import schema from "@keyma/ir/schema.json" assert { type: "json" };
 
 ```json
 {
-  "irVersion": "1.0.0",
+  "irVersion": "2.0.0",
   "compilerVersion": "0.1.0",
   "schemas": [
     {
@@ -89,10 +101,7 @@ import schema from "@keyma/ir/schema.json" assert { type: "json" };
           "visibility": "public",
           "readonly": false,
           "required": true,
-          "validators": [
-            { "kind": "required" },
-            { "kind": "emailAddress" }
-          ],
+          "validators": [{ "kind": "emailAddress" }],
           "formatters": [
             { "phase": "save", "spec": { "kind": "normalizeEmail" } }
           ],

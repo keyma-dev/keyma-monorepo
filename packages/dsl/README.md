@@ -1,25 +1,30 @@
 # @keyma/dsl
 
-Type-only declarations for the Keyma authoring DSL. Provides decorators, validator markers, formatter markers, and semantic types with full TypeScript/IntelliSense support. No runtime reflection, no `tslib`, no `reflect-metadata`.
+Type-only declarations for the Keyma authoring DSL: decorators, semantic types, the validator/formatter factories, and the contract types schemas type-check against. Full TypeScript/IntelliSense support, no runtime reflection, no `tslib`, no `reflect-metadata`.
 
 ## Purpose
 
-This package is what developers import when writing Keyma schemas. It:
+This is what you import when writing Keyma schemas. It:
 
-- Type-checks cleanly in any TypeScript editor
-- Provides no-op runtime implementations so schemas can be imported in test/editor environments
-- Requires no runtime emit (`experimentalDecorators` only, no `emitDecoratorMetadata`)
-- Has zero production dependencies
+- Type-checks cleanly in any TypeScript editor.
+- Ships no-op runtime implementations so schemas can be imported in test/editor environments. **Decorators are compile-time annotations only** — the Keyma compiler reads them from the AST; they are never executed and never emitted into generated output.
+- Needs only `experimentalDecorators` (no `emitDecoratorMetadata`).
+- Has zero production dependencies.
 
 ## Public API
 
-### Decorators
+### Decorators and markers
 
-```typescript
+```ts
 import {
-    Schema, Validate, Indexed, Format, Phase,
-    Computed, Default, Now, FormField, Edge, From, To,
+    Schema, Validate, Indexed, Format, Phase, FormField,
+    Computed, Ephemeral, Default, Now, Uuid, Deprecated,
+    Edge, From, To, Validator, Formatter,
 } from "@keyma/dsl";
+```
+
+```ts
+import { Schema, Validate, Indexed, Format, Phase, Computed, Default, Now, FormField } from "@keyma/dsl";
 import type { ID, DateTime, Reference } from "@keyma/dsl";
 import { isEmail, minLength, maxLength } from "@keyma/validators";
 import { trim, normalizeEmail } from "@keyma/formatters";
@@ -76,21 +81,27 @@ class Follows {
 }
 ```
 
+| Decorator | Purpose |
+|---|---|
+| `@Schema(opts?)` | Marks a class as a schema. `opts.name` is the canonical name; `opts.private` makes it server-only. |
+| `@Validate(...markers)` | Attaches validators (from `@keyma/validators` or a custom `Validator`). |
+| `@Format(phase, ...markers)` | Attaches formatters for a lifecycle `Phase` (or the equivalent string). |
+| `@Indexed(opts?)` | Declares a field (or computed field) indexed; `{ unique, sparse, … }`. |
+| `@FormField(opts)` | Attaches form metadata (`title`, `hint`, …). |
+| `@Computed()` | Marks a getter as a stored, materialized computed field. |
+| `@Ephemeral()` | Field/schema that is not persisted but may travel over the wire. |
+| `@Default(value)` | Fills a value on create when the key is absent — a literal or a generator (`Now`, `Uuid`). |
+| `@Deprecated(message?)` | Marks a field as deprecated (carried into the IR/metadata). |
+| `@Edge(opts?)` | Marks a class as an edge schema; its `@From()`/`@To()` fields name the connected nodes. |
+| `Validator` / `Formatter` | Factories for authoring custom validators/formatters (see below). |
+
 Key authoring rules:
 
-- **Relationships are explicit.** A bare `@Schema` class field is rejected (`KEYMA071`) —
-  use `Reference<T>` (stores the target's id) or `Embedded<T>` (inlines a copy).
+- **Relationships are explicit.** A bare `@Schema` class field is rejected (`KEYMA071`) — use `Reference<T>` (stores the target's id) or `Embedded<T>` (inlines a copy).
 - **Computed fields are explicit.** Only getters decorated with `@Computed()` become fields.
-- **Methods and setters are portable behaviors.** Plain instance methods and `set` accessors
-  are emitted onto the generated model class in every target. They are not stored fields;
-  their bodies use the portable subset (plus `this.field = …` assignment). See
-  "Methods and setters" below.
-- **Optional vs. nullable are orthogonal.** `field?: T` means the key may be *absent*;
-  `Nullable<T>` (or `T | null`) means the value may be *null*. They compose freely.
-- **`@Default`** fills a value on create when the key is absent — a literal or a named
-  generator (`Now`, `Uuid`).
-- **`@Format(Phase.…, …)`** — `Phase` constants (`Change`/`Blur`/`Submit`/`Save`) replace
-  bare string literals.
+- **Methods and setters are portable behaviors.** Plain instance methods and `set` accessors are re-emitted onto the generated model class in every target. They are not stored fields. See "Methods and setters" below.
+- **Optional vs. nullable are orthogonal.** `field?: T` means the key may be *absent*; `Nullable<T>` (or `T | null`) means the value may be *null*. They compose freely. There is no `required` marker — required-ness is inferred from optionality.
+- **`@Format(Phase.…, …)`** — `Phase` constants (`Change`/`Blur`/`Submit`/`Save`) are aliases for the bare string literals (`@Format(Phase.Save, …)` ≡ `@Format("save", …)`).
 - **Named enums** are authored as TypeScript string `enum`s and reused across schemas.
 
 ### Semantic types
@@ -104,110 +115,60 @@ Key authoring rules:
 | `Decimal` | `{ kind: "decimal" }` | Arbitrary-precision decimal |
 | `Json` | `{ kind: "json" }` | Arbitrary JSON value |
 | `Bytes` | `{ kind: "bytes" }` | Binary blob |
+| `Regexp` | `{ kind: "regexp" }` | Regular expression |
 | `Nullable<T>` | field flag `nullable: true` | Value may be `null` (orthogonal to optionality) |
 | `Reference<T>` | `{ kind: "reference", schema, idType }` | Foreign reference (stores the target's id) |
 | `Embedded<T>` | `{ kind: "embedded", schema }` | Inline sub-document |
 
-> `Nullable<T>` is no longer a type wrapper in the IR — nullability is a field-level boolean,
-> so a value may be both optional (`?`) and nullable. Bare `@Schema` class fields are rejected;
-> always write `Reference<T>` or `Embedded<T>`.
+> `Nullable<T>` is a field-level boolean in the IR, not a type wrapper, so a value may be both optional (`?`) and nullable. Bare `@Schema` class fields are rejected — always write `Reference<T>` or `Embedded<T>`.
 
-### Validators
+### Built-in validators & formatters
 
-All validator markers are passed to `@Validate(...)`:
+The built-in marker libraries live in their own packages so the same lists are shared by every target:
 
-| Marker | IR kind |
-|---|---|
-| `isRequired` | `required` |
-| `minLength(n)` | `minLength` |
-| `maxLength(n)` | `maxLength` |
-| `length(n)` | `length` |
-| `min(n)` | `min` |
-| `max(n)` | `max` |
-| `multipleOf(n)` | `multipleOf` |
-| `isPositive` | `positive` |
-| `isNonNegative` | `nonNegative` |
-| `isNegative` | `negative` |
-| `isNonPositive` | `nonPositive` |
-| `isInteger` | `integer` |
-| `minDate(iso)` | `minDate` |
-| `maxDate(iso)` | `maxDate` |
-| `minItems(n)` | `minItems` |
-| `maxItems(n)` | `maxItems` |
-| `uniqueItems` | `uniqueItems` |
-| `pattern(re)` | `pattern` |
-| `isEmailAddress` | `emailAddress` |
-| `isUrl(opts?)` | `url` |
-| `isUuid` | `pattern` (UUID regex) |
-| `isPhoneNumber(opts?)` | `phoneNumber` |
-| `isIpAddress(opts?)` | `ipAddress` |
-| `oneOf(values)` | `oneOf` |
-| `customValidator(name)` | `custom` |
+- **`@keyma/validators`** — `isEmail()`, `minLength(n)`, `min(n)`, `oneOf(...)`, … (full table in that package's README).
+- **`@keyma/formatters`** — `trim()`, `normalizeEmail()`, `slugify()`, … (full table in that package's README).
 
-### Formatters
-
-All formatter markers are passed to `@Format(phase, ...)`:
-
-| Marker | IR kind |
-|---|---|
-| `trim` | `trim` |
-| `normalizeWhitespace` | `normalizeWhitespace` |
-| `lowercase` | `lowercase` |
-| `uppercase` | `uppercase` |
-| `titleCase` | `titleCase` |
-| `capitalize` | `capitalize` |
-| `stripNonDigits` | `stripNonDigits` |
-| `normalizeEmail` | `normalizeEmail` |
-| `normalizePhone(opts?)` | `normalizePhone` |
-| `normalizeUrl` | `normalizeUrl` |
-| `slugify` | `slugify` |
-| `truncate(maxLength)` | `truncate` |
-| `customFormatter(name)` | `custom` |
+Both are imported directly (`import { isEmail } from "@keyma/validators"`) and passed to `@Validate` / `@Format`.
 
 ### Custom validators & formatters
 
-Declare custom validators/formatters with the `Validator`/`Formatter` factories. The name can
-be inferred from the exported `const` binding, or given explicitly when it must differ:
+Declare your own with the `Validator` / `Formatter` factories exported here. The IR `kind` is the registered name — inferred from the exported `const` binding, or given explicitly when it must differ:
 
-```typescript
+```ts
 import { Validator, Formatter } from "@keyma/dsl";
 
 // Name inferred from the binding → registered as "minLen".
-export const minLen = Validator((n: number) => (value: string) =>
-    value.length >= n ? null : { field: "", code: "MIN_LEN", message: `min ${n}` });
+export const minLen = Validator((n: number) => (value: string, field) =>
+    value.length >= n ? null : { field, code: "MIN_LEN", message: `min ${n}` });
 
 // Explicit name (binding and registered name differ).
-export const isEmail = Validator("emailAddress", () => (value: string) =>
-    value.includes("@") ? null : { field: "", code: "EMAIL", message: "invalid" });
+export const isEmail = Validator("emailAddress", () => (value: string, field) =>
+    value.includes("@") ? null : { field, code: "EMAIL", message: "invalid" });
+
+export const collapseDashes = Formatter("collapseDashes", () =>
+    (value: string) => value.replace(/-+/g, "-"));
 ```
+
+Contract types are exported for typing your own implementations: `ValidatorRef`, `FormatterRef`, `ValidationError`, `ValidatorContext`, `FormatterContext`, `UserValidatorFn`, `UserFormatterFn`.
 
 ### Portable expression subset
 
-The bodies of **validators, formatters, `@Computed()` getters, methods, and setters** are read
-by the compiler and re-emitted in every target language, so they are restricted to a portable
-subset:
+The bodies of **validators, formatters, `@Computed()` getters, methods, and setters** are read by the compiler and re-emitted in every target language, so they are restricted to a portable subset:
 
-- **Statements:** `return`, `if`/`else`, single-binding `const`, expression statements, and
-  (methods/setters only) `this.field = …` assignment. No loops, `switch`, `try`/`catch`,
-  `throw`, `await`, or spread.
-- **Expressions:** literals, field/parameter references, member access, template strings,
-  the standard binary/unary/ternary operators, object literals, regex literals, and `new`.
-- **Method/property calls** are limited to the **intrinsic registry** (e.g. `.includes()`,
-  `.trim()`, `.length`, `.startsWith()` on strings/arrays — see `@keyma/ir`'s `intrinsics.md`)
-  plus project-local utility functions. Arbitrary method calls are rejected.
+- **Statements:** `return`, `if`/`else`, single-binding `const`, expression statements, and (methods/setters only) `this.field = …` assignment. No loops, `switch`, `try`/`catch`, `throw`, `await`, or spread.
+- **Expressions:** literals, field/parameter references, member access, template strings, the standard binary/unary/ternary operators, object literals, regex literals, and `new`.
+- **Method/property calls** are limited to the **intrinsic registry** (e.g. `.includes()`, `.trim()`, `.length`, `.startsWith()` on strings/arrays — see `@keyma/ir`'s `intrinsics.md`) plus project-local utility functions. Arbitrary method calls are rejected.
 - **`typeof x === "…"`** and **`x instanceof Date|RegExp|Uint8Array|Array`** are supported.
 - A validator/formatter's `value` parameter **must declare a concrete type** (no `any`/`unknown`).
 
-Constructs outside this subset are reported with stable `KEYMA08x` (bodies) / `KEYMA014`
-(getters) diagnostics — see `@keyma/compiler-frontend-ts`'s `diagnostics.md`.
+Constructs outside this subset are reported with stable `KEYMA08x` (bodies) / `KEYMA014` (getters) diagnostics — see `@keyma/compiler-frontend-ts`'s `diagnostics.md`.
 
 ### Methods and setters
 
-A `@Schema` class may declare plain instance **methods** and **setters**. Unlike `@Computed`
-getters (which become stored, materialized fields), these are **behaviors**: code re-emitted
-onto the generated model class in every target, not part of the persisted record.
+A `@Schema` class may declare plain instance **methods** and **setters**. Unlike `@Computed` getters (which become stored, materialized fields), these are **behaviors**: code re-emitted onto the generated model class in every target, not part of the persisted record.
 
-```typescript
+```ts
 @Schema() class User {
     declare firstName: string;
     declare email: string;
@@ -226,12 +187,8 @@ onto the generated model class in every target, not part of the persisted record
 
 Rules:
 
-- Bodies use the **portable subset** above, plus `this.<field> = …` assignment. `this.<field>`
-  reads/writes the record; parameters and `const`s are plain locals.
-- **Signatures must be explicitly typed** — every parameter, and a method's return type
-  (use `: void` for none). Untyped signatures are rejected with `KEYMA092`.
+- Bodies use the **portable subset** above, plus `this.<field> = …` assignment. `this.<field>` reads/writes the record; parameters and `const`s are plain locals.
+- **Signatures must be explicitly typed** — every parameter, and a method's return type (use `: void` for none). Untyped signatures are rejected with `KEYMA092`.
 - **Async/generator** methods are not portable (`KEYMA082`).
-- Visibility follows the TS modifier: a `private` method is emitted only into the server
-  bundle, a public one into both client and server.
-- A method's name must be unique among members; a **setter** may share a name with a field —
-  e.g. a `@Computed` getter and a `set` of the same name form a get/set pair.
+- Visibility follows the TS modifier: a `private` method is emitted only into the server bundle, a public one into both client and server.
+- A method's name must be unique among members; a **setter** may share a name with a field — e.g. a `@Computed` getter and a `set` of the same name form a get/set pair.

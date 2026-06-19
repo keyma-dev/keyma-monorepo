@@ -6,11 +6,11 @@ You define data models, validation rules, formatting behavior, indexes, computed
 
 Keyma is **database-agnostic** and **transport-agnostic** by design:
 
-* **Database-agnostic** — the same schemas run against graph, document, and relational databases. The runtime talks to your data through a `KeymaDatabaseAdapter`. Bring an adapter (a MongoDB adapter, `@keyma/adapter-mongodb-js`, ships in the monorepo; others are pluggable) and the generated code doesn't change.
+* **Database-agnostic** — the same schemas run against graph, document, and relational databases. The runtime talks to your data through a `KeymaDatabaseAdapter`. Bring an adapter (MongoDB, SQLite, and Gremlin adapters ship in the monorepo; others are pluggable) and the generated code doesn't change.
 * **Transport-agnostic** — the client serializes queries to a portable, language-neutral request document and hands it to a `Transport` function you supply. HTTP, WebSocket, gRPC, in-process, message bus — Keyma doesn't care. An in-process `createDirectTransport` is provided for SSR and tests.
 * **Graph queries, on any backend** — schemas can declare `@Edge` classes whose `@From()`/`@To()` fields name the connected node schemas. `Keyma.traverse(...)` builds typed, multi-hop graph queries (heterogeneous chains, homogeneous repeats with depth bounds, edge predicates) that compile to native traversals on graph databases and to emulated joins/lookups on document and relational stores. The query surface is identical regardless of backend.
 
-The generated schema libraries have **no** external dependencies, you can use them as-is in any project, or pair it with a provided runtime such as `@keyma/runtime-js`.
+The generated schema libraries have **no** external dependencies; you can use them as-is in any project, or pair them with a provided runtime such as `@keyma/runtime-js`.
 
 ## Introduction
 
@@ -18,8 +18,8 @@ The generated schema libraries have **no** external dependencies, you can use th
 
 * **Declarative** — define data models, relationships, and graph edges using clear, concise decorators.
 * **Compiled** — TypeScript is the authoring language. Keyma parses your source via the TypeScript compiler API, builds a language-neutral intermediate representation (IR), and emits target-specific code.
-* **Full stack** — write once and consume your schemas on both client and server. Keyma produces two distinct generated libraries: one for backend (with private fields and server-only schemas) and one for frontend (with only public surface area).
-* **Multi-language** — the compiler has a frontend/backend architecture. The built-in frontend reads TypeScript. Backends can target any language. A built-in JavaScript backend is provided. C++ and others can be added.
+* **Full stack** — write once and consume your schemas on both client and server. Keyma produces two distinct generated libraries: one for the backend (with private fields and server-only schemas) and one for the frontend (with only public surface area).
+* **Multi-language** — the compiler has a frontend/backend architecture. The built-in frontend reads TypeScript. Backends can target any language; JavaScript and Python backends ship today, and C++ and others can be added.
 * **Database-agnostic** — one schema, many storage models. Adapters bridge the runtime to graph, document, or relational databases. Computed fields and edge traversals are lowered appropriately for each.
 * **Transport-agnostic** — the generated client emits portable query documents. You provide the transport.
 * **Lightweight output** — generated code is plain — no decorators, no reflect-metadata, no tslib. Only a small runtime library is required at consumption time.
@@ -34,12 +34,32 @@ Whether you are building a simple CRUD app, a richly relational system, or a gra
 - TypeScript schema source files
 - TypeScript compiler frontend (uses the TypeScript compiler API)
 - Keyma language-neutral IR (`.keyma/schema.ir.json`)
-- Code generation backends (JS, C++, ...)
-- Generated schema library + small runtime (`@keyma/runtime-js`, `@keyma/runtime-cpp`, ...)
-- Database adapter of your choice (`@keyma/adapter-mongodb-js`, ...)
+- Code generation backends (JS, Python, C++, ...)
+- Generated schema library + small runtime (`@keyma/runtime-js`, ...)
+- Database adapter of your choice (`@keyma/adapter-mongodb-js`, `@keyma/adapter-sqlite-js`, `@keyma/adapter-gremlin-js`, ...)
 - Transport of your choice (HTTP, WebSocket, in-process, ...)
 
 Decorators in the schema source are **compile-time annotations**, not runtime behavior. The Keyma compiler reads them from the AST. They are never executed and never emitted into the compiled output.
+
+---
+
+## Packages
+
+Pipeline order (each package depends on the one above):
+
+| Package | Role |
+|---|---|
+| [`@keyma/dsl`](packages/dsl) | Type-only authoring surface — decorators, semantic types, validator/formatter factories. |
+| [`@keyma/validators`](packages/validators) · [`@keyma/formatters`](packages/formatters) | The built-in validator and formatter marker libraries. |
+| [`@keyma/ir`](packages/ir) | The language-neutral IR types, JSON Schema, and intrinsic registry. |
+| [`@keyma/compiler-frontend-ts`](packages/compiler-frontend-ts) | TypeScript frontend — parses schema files into IR. |
+| [`@keyma/compiler`](packages/compiler) | Driver + plugin interfaces (`KeymaFrontend`, `KeymaBackend`). |
+| [`@keyma/compiler-backend-js`](packages/compiler-backend-js) · [`@keyma/compiler-backend-python`](packages/compiler-backend-python) | Code-generation backends. |
+| [`@keyma/runtime-js`](packages/runtime-js) | The JS runtime — query builder, `KeymaServer`, adapter interface, plugin protocol. |
+| [`@keyma/adapter-mongodb-js`](packages/adapter-mongodb-js) · [`@keyma/adapter-sqlite-js`](packages/adapter-sqlite-js) · [`@keyma/adapter-gremlin-js`](packages/adapter-gremlin-js) | Database adapters. |
+| [`@keyma/plugin-acl-js`](packages/plugin-acl-js) | Declarative access-control server plugin. |
+| [`@keyma/cli`](packages/cli) | Project scaffolding and build orchestration. |
+| [`@keyma/bench`](packages/bench) | Shared latency-benchmark harness for adapters. |
 
 ---
 
@@ -58,7 +78,7 @@ keyma new my-project
 cd my-project
 ```
 
-This will generate a new Keyma project and change the command directory to the project directory. Now let's create a data model.
+This generates a new Keyma project and changes into the project directory. Now let's create a data model.
 
 ```shell
 keyma gen user
@@ -77,11 +97,11 @@ export class User {
 }
 ```
 
-Let's add some fields with validation to our User model:
+Let's add some fields with validation to our User model. Required-ness is inferred from the type — a non-optional field is required, so there is no `required` marker:
 
 ```typescript
 import { Schema, ID, Validate } from "@keyma/dsl";
-import { required, minLength, maxLength, isEmail } from "@keyma/validators";
+import { minLength, maxLength, isEmail } from "@keyma/validators";
 
 @Schema({
     name: "user",
@@ -89,13 +109,13 @@ import { required, minLength, maxLength, isEmail } from "@keyma/validators";
 export class User {
     readonly id: ID;
 
-    @Validate(required(), minLength(2), maxLength(32))
+    @Validate(minLength(2), maxLength(32))
     firstName: string;
 
-    @Validate(required(), minLength(2), maxLength(32))
+    @Validate(minLength(2), maxLength(32))
     lastName: string;
 
-    @Validate(required(), isEmail())
+    @Validate(isEmail())
     email: string;
 }
 ```
@@ -104,7 +124,7 @@ We'll want to store users in a database, so we'll declare how it's indexed. We c
 
 ```typescript
 import { Schema, ID, Validate, Indexed } from "@keyma/dsl";
-import { required, minLength, maxLength, isEmail } from "@keyma/validators";
+import { minLength, maxLength, isEmail } from "@keyma/validators";
 
 @Schema({
     name: "user",
@@ -112,13 +132,13 @@ import { required, minLength, maxLength, isEmail } from "@keyma/validators";
 export class User {
     readonly id: ID;
 
-    @Validate(required(), minLength(2), maxLength(32))
+    @Validate(minLength(2), maxLength(32))
     firstName: string;
 
-    @Validate(required(), minLength(2), maxLength(32))
+    @Validate(minLength(2), maxLength(32))
     lastName: string;
 
-    @Validate(required(), isEmail())
+    @Validate(isEmail())
     @Indexed({ unique: true })
     email: string;
 
@@ -140,13 +160,13 @@ The getter-only property `fullName` is treated as a **computed field**. Because 
 * expose it as an index in the generated server library,
 * expose it as a normal getter on the client.
 
-Computed getters must be expressible in Keyma's **portable expression subset** (field access, literals, template strings, basic operators, conditional expressions). The compiler will emit a diagnostic if a getter uses unsupported constructs, so that the same field can be generated correctly across all target languages.
+Computed getters must be expressible in Keyma's **portable expression subset** (field access, literals, template strings, basic operators, conditional expressions). The compiler emits a diagnostic if a getter uses unsupported constructs, so the same field can be generated correctly across all target languages.
 
 Let's add formatting and form behavior:
 
 ```typescript
 import { Schema, ID, Validate, Indexed, Format, Ephemeral } from "@keyma/dsl";
-import { required, minLength, maxLength, isEmail } from "@keyma/validators";
+import { minLength, maxLength, isEmail } from "@keyma/validators";
 import { trim, normalizeEmail } from "@keyma/formatters";
 
 @Schema({
@@ -155,15 +175,15 @@ import { trim, normalizeEmail } from "@keyma/formatters";
 export class User {
     readonly id: ID;
 
-    @Validate(required(), minLength(2), maxLength(32))
-    @Format("change", trim)
+    @Validate(minLength(2), maxLength(32))
+    @Format("change", trim())
     firstName: string;
 
-    @Validate(required(), minLength(2), maxLength(32))
-    @Format("change", trim)
+    @Validate(minLength(2), maxLength(32))
+    @Format("change", trim())
     lastName: string;
 
-    @Validate(required(), isEmail())
+    @Validate(isEmail())
     @Indexed({ unique: true })
     @Format("change", normalizeEmail())
     email: string;
@@ -180,10 +200,10 @@ export class User {
 }
 ```
 
-References to other schemas use `Reference<T>` (stored ID, fetched separately) or `Embedded<T>` (inline sub-document). A bare class type also means reference, but `Reference<T>` makes the intent explicit. Schemas can be marked `private` to make them entirely server-only:
+References to other schemas use `Reference<T>` (stored ID, fetched separately) or `Embedded<T>` (inline sub-document). Schemas can be marked `private` to make them entirely server-only:
 
 ```typescript
-import { Schema, ID, Validate, Indexed, Reference, Nullable } from "@keyma/dsl";
+import { Schema, ID, Indexed, Reference, Nullable } from "@keyma/dsl";
 
 @Schema({
     name: "user_credentials",
@@ -330,7 +350,7 @@ export default {
     outDir: "dist",
     targets: [
         { language: "js", client: true, server: true },
-        { language: "cpp" }
+        { language: "python" }
     ]
 };
 ```
@@ -340,7 +360,7 @@ export default {
 The server-side library is consumed with the `@keyma/runtime-js` runtime and a database adapter. The adapter is the seam that makes Keyma database-agnostic — swap MongoDB for a graph or relational adapter and the schema and query code are unchanged:
 
 ```typescript
-import { KeymaServer } from "@keyma/runtime-js/server";
+import { KeymaServer } from "@keyma/runtime-js";
 import { MongoAdapter } from "@keyma/adapter-mongodb-js";
 import { schemas } from "./generated/server";
 
@@ -349,7 +369,7 @@ const server = new KeymaServer({
     adapter: new MongoAdapter({ url: "mongodb://localhost:27017", db: "myapp" }),
 });
 
-await server.sync(); // creates collections, indexes, and edge collections
+await server.ensureSchemas(); // creates collections, indexes, and edge collections
 ```
 
 To implement your own adapter for a different database, conform to the `KeymaDatabaseAdapter` interface exported from `@keyma/runtime-js`.
@@ -360,10 +380,10 @@ Cross-cutting concerns — access control, auditing, soft-delete, multi-tenancy,
 
 ```typescript
 import { KeymaServer } from "@keyma/runtime-js";
-import { createAclPlugin, aclSchemas } from "@keyma/plugin-acl-js";
+import { createAclPlugin } from "@keyma/plugin-acl-js";
 
 const server = new KeymaServer({
-    schemas: [...mySchemas, ...aclSchemas],
+    schemas: mySchemas, // the ACL plugin registers its own schemas during init
     adapter,
     plugins: [createAclPlugin(), auditLog, multiTenant],
 });
@@ -373,7 +393,8 @@ Plugins fire in array order at well-defined points in the operation lifecycle. E
 
 | Hook                  | When it runs                                                          | What it can do                                                                                  |
 |-----------------------|-----------------------------------------------------------------------|-------------------------------------------------------------------------------------------------|
-| `init`                | Once after server construction.                                       | Inspect schemas / adapter via `PluginServerHandle`. Reject misconfiguration by throwing.        |
+| `init`                | Once after server construction.                                       | Inspect schemas / adapter via `PluginServerHandle`; register schemas; reject misconfiguration by throwing. |
+| `transformOperation`  | First, before any other per-leaf hook.                               | Rewrite the whole operation (e.g. inject filters into a traversal spec).                         |
 | `beforeOperation`     | Before any work on each leaf.                                         | Observe; early-reject with a `KeymaPluginError`.                                                |
 | `transformFilter`     | On `list` / `read` / `update` / `delete` (also when computing trims). | Rewrite the `where` clause. Supports top-level `$and` / `$or` / `$nor` for layered policy.      |
 | `transformProjection` | On every operation that produces a projection.                        | Trim the projection (security) or augment it (e.g. pull predicate fields the plugin needs).     |
@@ -399,7 +420,7 @@ Throwing a `KeymaPluginError` from any hook (other than `afterOperation`) aborts
 
 `source` distinguishes plugin failures from `runtime` (validation, missing schema, NOT_FOUND) and `adapter` (database errors) failures; `origin` is the package name of the plugin that raised the error. The same `KeymaLeafFailure` shape is produced for adapter errors via `KeymaAdapterError`.
 
-A worked example is `@keyma/plugin-acl-js`, which uses `transformFilter` to merge per-identity allow/deny predicates into the caller's `where`, `transformProjection` to enforce field-level read perms (and to pull predicate fields the adapter needs), `checkWrite` to enforce field-level write perms, and `transformResult` to strip plugin-added projection fields from the response.
+A worked example is `@keyma/plugin-acl-js`, which uses `transformFilter` to merge per-identity allow/deny predicates into the caller's `where`, `transformProjection` to enforce field-level read perms (and to pull predicate fields the adapter needs), `checkWrite` to enforce field-level write perms, `transformResult` to strip plugin-added projection fields, and `transformOperation` to inject read predicates into traversals.
 
 ## Transports
 
@@ -478,17 +499,22 @@ Traditional decorator-based TypeScript schema libraries depend on `reflect-metad
 
 Keyma sidesteps all of those limitations by treating TypeScript as an authoring DSL and generating plain, statically-defined libraries from a stable IR.
 
+## Development
+
+npm workspaces monorepo. All packages live under `packages/*` and publish under the `@keyma/*` scope.
+
+```bash
+npm run build                                   # build every workspace
+npm run test                                    # test every workspace
+npm -w @keyma/compiler-frontend-ts run build    # build a single package
+npm -w @keyma/compiler-frontend-ts run test     # build + test a single package
+```
+
+Tests use Node's built-in test runner (`node --test`): each package compiles its TypeScript to `dist/test/` first, then runs the compiled `.test.js` files.
+
 ## Status
 
 Keyma is under active development.
-
-## Roadmap
-
-TODO
-
-### Pipe dreams
- - getters that reference a persisted type should hydrate that reference in materialize function. Would need to pass in a context with db adapter.
- - A more usable expression set for TS -> IR -> C++/Rust/etc... 
 
 ## License
 

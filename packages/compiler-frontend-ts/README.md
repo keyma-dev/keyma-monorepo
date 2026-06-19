@@ -4,29 +4,30 @@ TypeScript compiler frontend for Keyma. Ingests `.ts` schema files decorated wit
 
 ## Purpose
 
-This package bridges the TypeScript authoring surface (`@keyma/dsl`) and the IR (`@keyma/ir`). It:
+This package bridges the TypeScript authoring surface (`@keyma/dsl`) and the IR (`@keyma/ir`). Using the TypeScript compiler API (`ts.createProgram`) it parses and type-checks the schema files, then runs a sequence of passes — `discoverSchemas` → `extractSchema` (own fields) → `flattenAll` (inheritance), plus validator/formatter/utility-function discovery — followed by duplicate-name and visibility-leak post-checks. It:
 
-- Uses the TypeScript compiler API (`ts.createProgram`) to parse and type-check user schema files
-- Discovers `@Schema`-decorated classes
-- Extracts fields, validators, formatters, and indexes from the AST (without executing decorators)
-- Lowers computed `get` accessor bodies to `IRExpression`
-- Flattens inheritance chains into self-contained `IRSchema` entries
-- Emits `KEYMA####` diagnostics for every structural problem
+- Discovers `@Schema`- and `@Edge`-decorated classes.
+- Extracts fields, validators, formatters, indexes, methods, and form metadata from the AST — **without executing decorators**.
+- Lowers `@Computed` getter and method/setter bodies to portable `IRExpression`/`IRStatement` nodes.
+- Flattens inheritance chains into self-contained `IRSchema` entries.
+- Emits stable `KEYMA####` diagnostics for every structural problem.
 
 ## Public API
 
-```typescript
+```ts
 import { compile, compileVirtual } from "@keyma/compiler-frontend-ts";
 ```
 
+> There is no frontend *plugin object* here — `@keyma/cli`'s `createTsFrontend(cwd)` adapts `compile()` to the `KeymaFrontend` shape the driver expects. All `KEYMA####` code constants and the `mkError`/`mkWarning` helpers are also re-exported for diagnostic handling.
+
 ### `compile(config): CompileResult`
 
-Compile TypeScript files on disk.
+Compile TypeScript files on disk. Returns `{ ir, diagnostics }`.
 
-```typescript
+```ts
 const { ir, diagnostics } = compile({
     files: ["src/schemas/user.ts", "src/schemas/order.ts"],
-    dslModuleName: "@keyma/dsl",           // default
+    dslModuleName: "@keyma/dsl",   // default
     compilerVersion: "0.1.0",
 });
 
@@ -37,18 +38,19 @@ for (const diag of diagnostics) {
 
 ### `compileVirtual(sources, config): CompileResult`
 
-Compile TypeScript sources from in-memory strings. Module resolution falls back to the real file system, so `@keyma/dsl` is resolved normally.
+Compile TypeScript sources from in-memory strings. The second argument is `Omit<FrontendConfig, "files"> & { baseDir?: string }` — `files` are derived from the `sources` keys. Module resolution still falls back to the real file system, so `@keyma/dsl` (and `@keyma/validators` etc.) resolve normally.
 
-```typescript
+```ts
 const { ir } = compileVirtual({
     "schema.ts": `
-        import { Schema, Validate, isRequired } from "@keyma/dsl";
+        import { Schema, Validate } from "@keyma/dsl";
         import type { ID } from "@keyma/dsl";
+        import { minLength } from "@keyma/validators";
 
         @Schema({ name: "product" })
         class Product {
-            @Validate(isRequired)
             declare id: ID;
+            @Validate(minLength(1))
             declare title: string;
         }
     `,
@@ -59,7 +61,7 @@ const { ir } = compileVirtual({
 
 ```json
 {
-  "irVersion": "1.0.0",
+  "irVersion": "2.0.0",
   "compilerVersion": "0.1.0",
   "schemas": [
     {
@@ -69,19 +71,19 @@ const { ir } = compileVirtual({
       "visibility": "public",
       "fields": [
         {
-          "name": "id",
-          "type": { "kind": "id" },
+          "name": "title",
+          "type": { "kind": "string" },
           "visibility": "public",
           "readonly": false,
           "required": true,
-          "validators": [{ "kind": "required" }],
+          "validators": [{ "kind": "minLength", "value": 1 }],
           "formatters": [],
           "indexes": [],
-          "source": { "file": "schema.ts", "line": 7, "column": 12 }
+          "source": { "file": "schema.ts", "line": 8, "column": 12 }
         }
       ],
       "indexes": [],
-      "source": { "file": "schema.ts", "line": 4, "column": 14 }
+      "source": { "file": "schema.ts", "line": 5, "column": 14 }
     }
   ],
   "diagnostics": []
@@ -90,4 +92,4 @@ const { ir } = compileVirtual({
 
 ## Diagnostic codes
 
-See [diagnostics.md](./diagnostics.md) for the full list of `KEYMA####` codes this package can emit.
+See [diagnostics.md](./diagnostics.md) for the full list of stable `KEYMA####` codes this package can emit. Codes are **never renumbered** — new ones are added, old ones never shift.
