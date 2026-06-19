@@ -217,7 +217,11 @@ export class GremlinAdapter implements KeymaDatabaseAdapter {
             );
         }
         // Edges cannot carry multi-properties; arrays are JSON-encoded.
-        const { props } = toProps(data, schema, schemas, { excludeId: true, multiProperty: false });
+        const { props } = toProps(data, schema, schemas, {
+            excludeId: true,
+            multiProperty: false,
+            excludeFields: [meta.fromField, meta.toField],
+        });
         let trav: GraphTraversal = g
             .V(fromId)
             .addE(this.edgeLabel(schema))
@@ -296,6 +300,7 @@ export class GremlinAdapter implements KeymaDatabaseAdapter {
             const { props, nulls } = toProps(data, schema, schemas, {
                 excludeId: true,
                 multiProperty: !isEdge,
+                ...(isEdge && { excludeFields: [schema.edge!.fromField, schema.edge!.toField] }),
             });
             for (const key of nulls) {
                 trav = trav.sideEffect(__.properties(key).drop());

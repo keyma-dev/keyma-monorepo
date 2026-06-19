@@ -81,9 +81,10 @@ export function toProps(
     data: Record<string, unknown>,
     schema: SchemaMetadata,
     schemas: SchemaMap,
-    opts: { excludeId?: boolean; multiProperty?: boolean } = {},
+    opts: { excludeId?: boolean; multiProperty?: boolean; excludeFields?: string[] } = {},
 ): Props {
     const multiProperty = opts.multiProperty ?? true;
+    const excludeFields = new Set(opts.excludeFields ?? []);
     const props: PropEntry[] = [];
     const nulls: string[] = [];
     let id: unknown | undefined;
@@ -96,6 +97,7 @@ export function toProps(
             if (opts.excludeId !== true) id = value;
             continue;
         }
+        if (excludeFields.has(field.name)) continue;
         if (value === null) {
             nulls.push(field.name);
             continue;
