@@ -40,3 +40,55 @@ export function irTypeToPython(
         }
     }
 }
+
+/**
+ * Build a Python boolean expression that checks whether `value` matches `type`, for
+ * runtime input guards on validators/formatters. Returns null when no meaningful
+ * structural check applies (e.g. `json`, schema references).
+ */
+export function irTypeGuard(type: IRType, value: string): string | null {
+    switch (type.kind) {
+        case "string":
+        case "id":
+        case "date":
+        case "time":
+        case "decimal":
+        case "regexp":
+            return `isinstance(${value}, str)`;
+        case "number":
+            return `isinstance(${value}, (int, float)) and not isinstance(${value}, bool)`;
+        case "integer":
+        case "bigint":
+            return `isinstance(${value}, int) and not isinstance(${value}, bool)`;
+        case "boolean":
+            return `isinstance(${value}, bool)`;
+        case "bytes":
+            return `isinstance(${value}, (bytes, bytearray))`;
+        case "dateTime":
+            return `isinstance(${value}, datetime)`;
+        case "enum":
+            return `${value} in (${type.values.map((v) => JSON.stringify(v)).join(", ")})`;
+        case "array":
+            return `isinstance(${value}, list)`;
+        case "nullable": {
+            const inner = irTypeGuard(type.of, value);
+            return inner === null ? null : `${value} is None or (${inner})`;
+        }
+        case "json":
+        case "reference":
+        case "embedded":
+            return null;
+    }
+}
+
+/** A short human label for a type, used in runtime mismatch messages. */
+export function irTypeLabel(type: IRType): string {
+    switch (type.kind) {
+        case "nullable": return `${irTypeLabel(type.of)} or None`;
+        case "array":    return `list of ${irTypeLabel(type.of)}`;
+        case "enum":     return `one of ${type.values.map((v) => JSON.stringify(v)).join(", ")}`;
+        case "reference":
+        case "embedded": return type.schema;
+        default:         return type.kind;
+    }
+}

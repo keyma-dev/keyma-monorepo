@@ -58,12 +58,12 @@ describe("exprToPython", () => {
         assert.equal(exprToPython({ kind: "literal", value: null }), "None");
     });
 
-    it("lowers f-strings", () => {
+    it("lowers template literals to string concatenation", () => {
         const expr = {
             kind: "template" as const,
             parts: [{ kind: "field" as const, name: "first" }, { kind: "literal" as const, value: " " }, { kind: "field" as const, name: "last" }],
         };
-        assert.equal(exprToPython(expr), `f"{self.first} {self.last}"`);
+        assert.equal(exprToPython(expr), `(str(self.first) + " " + str(self.last))`);
     });
 
     it("lowers conditional", () => {
@@ -113,7 +113,7 @@ describe("emitPython", () => {
         assert.ok(content.includes("self.firstName: str = value.get(\"firstName\")"), "Missing field assignment");
         assert.ok(content.includes("@property"), "Missing property decorator");
         assert.ok(content.includes("def fullName(self) -> str:"), "Missing property getter");
-        assert.ok(content.includes("return f\"{self.firstName} {self.lastName}\""), "Wrong property expression");
+        assert.ok(content.includes("return (str(self.firstName) + \" \" + str(self.lastName))"), "Wrong property expression");
         assert.ok(content.includes("User.schema = {"), "Missing schema metadata");
     });
 

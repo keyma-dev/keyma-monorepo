@@ -268,3 +268,55 @@ A `Reference<T>` field's target schema does not declare a field of type `ID`. Re
     declare tag: Reference<Tag>; // KEYMA070
 }
 ```
+
+---
+
+## Validator / formatter / utility-function compilation errors (0080–0089)
+
+These fire when a `Validator("name", fn)` / `Formatter("name", fn)` declaration (or a
+utility function it references) is lowered to portable IR.
+
+### KEYMA080 — declaration is not an exported function
+
+`Validator()`/`Formatter()` must be assigned to an exported `const`, with a string-literal
+name and an arrow/function-expression factory.
+
+### KEYMA081 — factory does not return an inner function
+
+The factory must return an inner `(value[, field[, context]]) => …` function (directly, or
+via a single `return`).
+
+### KEYMA082 — unsupported statement/expression in body
+
+The body uses a construct outside the portable subset (loops, unsupported operators, etc.).
+
+### KEYMA083 — inner function has wrong arity
+
+The inner function must take 1–3 parameters: `value`, optional `field`, optional `context`.
+
+### KEYMA084 — input (`value`) parameter must be typed
+
+The inner function's first (`value`) parameter must declare an explicit, concrete type so the
+compiler knows what it operates on and backends can emit a runtime type-guard. `unknown`,
+`any`, and a missing annotation are rejected.
+
+```typescript
+export const minLen = Validator("minLen", (n: number) => (value: unknown) => …); // KEYMA084
+export const minLen = Validator("minLen", (n: number) => (value: string) => …);  // OK
+```
+
+### KEYMA085 — unsupported string/array intrinsic
+
+A method or property used on a `string`/array receiver is not in the intrinsic registry
+(see `packages/ir/intrinsics.md`), or its receiver type could not be resolved.
+
+### KEYMA086 — utility function cannot be compiled
+
+A function called from a body could not be compiled: it is not project-local (lives in
+`node_modules` or a `.d.ts`), has an untyped parameter/return, or collides on name with
+another utility function.
+
+### KEYMA087 — non-portable `instanceof`
+
+The right-hand side of `instanceof` is outside the portable constructor set
+(`Date`, `RegExp`, `Uint8Array`, `Array`).

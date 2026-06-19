@@ -60,7 +60,7 @@ export type TimeOfDay = Brand<string, "TimeOfDay">;
 export type Decimal = Brand<string, "Decimal">;
 
 /**
- * Arbitrary JSON value (settings, metadata).
+ * Arbitrary JSON value (array, object, number, boolean, string).
  * Maps to IR type `{ kind: "json" }`.
  */
 export type Json = unknown;

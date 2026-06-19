@@ -54,6 +54,10 @@ export const KEYMA080 = "KEYMA080"; // @Validator/@Formatter applied to non-expo
 export const KEYMA081 = "KEYMA081"; // Factory body does not return a function expression
 export const KEYMA082 = "KEYMA082"; // Unsupported statement or expression in validator/formatter body
 export const KEYMA083 = "KEYMA083"; // Inner function has wrong arity (must have 2–3 params: value, fieldKey[, context])
+export const KEYMA084 = "KEYMA084"; // Validator/formatter input (value) param must have an explicit type (not unknown/any/unannotated)
+export const KEYMA085 = "KEYMA085"; // String/array method (or member) is not a supported intrinsic, or its receiver type is unresolved
+export const KEYMA086 = "KEYMA086"; // Referenced utility function cannot be compiled (not project-local, untyped, or unsupported body)
+export const KEYMA087 = "KEYMA087"; // Unsupported `instanceof` right-hand constructor (outside the portable set)
 
 export function mkError(
     code: string,

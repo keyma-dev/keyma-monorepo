@@ -319,3 +319,81 @@ describe("validateIR", () => {
         assert.equal(result.valid, true);
     });
 });
+
+describe("validateIR — intrinsics & declarations", () => {
+    const validatorDecl = {
+        name: "v",
+        factoryParams: [] as unknown[],
+        inputType: { kind: "string" as const },
+        body: {
+            params: [{ name: "value", role: "value" as const }],
+            statements: [{
+                kind: "return" as const,
+                value: {
+                    kind: "intrinsic" as const, op: "string.includes",
+                    receiver: { kind: "field" as const, name: "value" },
+                    args: [{ kind: "literal" as const, value: "x" }],
+                },
+            }],
+        },
+        source: minimalSource,
+    };
+
+    it("accepts an intrinsic expression node", () => {
+        const doc = { ...goldenIR, validatorDeclarations: [validatorDecl] };
+        const result = validateIR(doc);
+        assert.equal(result.valid, true, JSON.stringify(result.errors));
+    });
+
+    it("rejects an intrinsic with a missing op", () => {
+        const bad = structuredClone(validatorDecl);
+        (bad.body.statements[0] as any).value.op = "";
+        const doc = { ...goldenIR, validatorDeclarations: [bad] };
+        assert.equal(validateIR(doc).valid, false);
+    });
+
+    it("requires inputType on a validator declaration", () => {
+        const bad = structuredClone(validatorDecl) as any;
+        delete bad.inputType;
+        const doc = { ...goldenIR, validatorDeclarations: [bad] };
+        const result = validateIR(doc);
+        assert.equal(result.valid, false);
+        assert.ok(result.errors.some(e => e.path.includes("inputType")));
+    });
+
+    it("accepts functionDeclarations", () => {
+        const doc = {
+            ...goldenIR,
+            functionDeclarations: [{
+                name: "isLong",
+                params: [{ name: "s", type: { kind: "string" } }],
+                returnType: { kind: "boolean" },
+                statements: [{
+                    kind: "return",
+                    value: {
+                        kind: "binary", op: ">",
+                        left: { kind: "intrinsic", op: "string.length", receiver: { kind: "identifier", name: "s" }, args: [] },
+                        right: { kind: "literal", value: 3 },
+                    },
+                }],
+                source: minimalSource,
+            }],
+        };
+        const result = validateIR(doc);
+        assert.equal(result.valid, true, JSON.stringify(result.errors));
+    });
+
+    it("rejects a functionDeclaration with a bad param type", () => {
+        const doc = {
+            ...goldenIR,
+            functionDeclarations: [{
+                name: "f",
+                params: [{ name: "s", type: { kind: "nope" } }],
+                returnType: { kind: "boolean" },
+                statements: [],
+                source: minimalSource,
+            }],
+        };
+        assert.equal(validateIR(doc).valid, false);
+    });
+});

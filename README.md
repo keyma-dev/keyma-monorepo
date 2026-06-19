@@ -10,7 +10,7 @@ Keyma is **database-agnostic** and **transport-agnostic** by design:
 * **Transport-agnostic** — the client serializes queries to a portable, language-neutral request document and hands it to a `Transport` function you supply. HTTP, WebSocket, gRPC, in-process, message bus — Keyma doesn't care. An in-process `createDirectTransport` is provided for SSR and tests.
 * **Graph queries, on any backend** — schemas can declare `@Edge` classes whose `@From()`/`@To()` fields name the connected node schemas. `Keyma.traverse(...)` builds typed, multi-hop graph queries (heterogeneous chains, homogeneous repeats with depth bounds, edge predicates) that compile to native traversals on graph databases and to emulated joins/lookups on document and relational stores. The query surface is identical regardless of backend.
 
-The generated schema libraries do **not** depend on `reflect-metadata`, `tslib`, TypeScript decorator emit helpers, or any other runtime reflection mechanism. They are paired with tiny target runtimes such as `@keyma/runtime-js` or `@keyma/runtime-cpp`.
+The generated schema libraries have **no** external dependencies, you can use them as-is in any project, or pair it with a provided runtime such as `@keyma/runtime-js`.
 
 ## Introduction
 

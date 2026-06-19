@@ -61,7 +61,56 @@ export function exprToJs(expr: IRExpression): string {
             const args = expr.args.map(exprToJs).join(", ");
             return `new ${callee}(${args})`;
         }
+
+        case "intrinsic":
+            return intrinsicToJs(expr);
     }
+}
+
+/** Canonical op id → JS method name (for the method-form intrinsics). */
+const JS_METHOD: Record<string, string> = {
+    "string.includes": "includes",
+    "array.includes": "includes",
+    "string.startsWith": "startsWith",
+    "string.endsWith": "endsWith",
+    "string.toLowerCase": "toLowerCase",
+    "string.toUpperCase": "toUpperCase",
+    "string.trim": "trim",
+    "string.indexOf": "indexOf",
+    "array.indexOf": "indexOf",
+    "string.slice": "slice",
+    "string.charAt": "charAt",
+    "string.replace": "replace",
+    "array.join": "join",
+    "array.filter": "filter",
+    "regexp.test": "test",
+};
+
+/** Translate a canonical intrinsic op to JavaScript (mostly near-identity). */
+function intrinsicToJs(expr: Extract<IRExpression, { kind: "intrinsic" }>): string {
+    const recv = expr.receiver !== null ? wrapIfComplex(expr.receiver) : "";
+    const args = expr.args.map(exprToJs);
+
+    switch (expr.op) {
+        case "string.length":
+        case "array.length":
+            return `${recv}.length`;
+        case "type-is":
+            // args[0] is a string literal, e.g. "string" → typeof recv === "string"
+            return `typeof ${recv} === ${args[0]}`;
+        case "instance-of":
+            return `${recv} instanceof ${literalText(expr.args[0])}`;
+        default: {
+            const method = JS_METHOD[expr.op];
+            if (method !== undefined) return `${recv}.${method}(${args.join(", ")})`;
+            return `__keyma_unsupported_intrinsic__(${JSON.stringify(expr.op)})`;
+        }
+    }
+}
+
+/** Read a string-literal arg's raw value (constructor name), or "" if not a literal. */
+function literalText(expr: IRExpression | undefined): string {
+    return expr !== undefined && expr.kind === "literal" && typeof expr.value === "string" ? expr.value : "";
 }
 
 /** Wrap in parens if this is a complex expression that needs grouping in certain positions. */

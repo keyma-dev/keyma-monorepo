@@ -45,6 +45,59 @@ export function irTypeToTs(
     }
 }
 
+/**
+ * Build a JS boolean expression checking whether `value` matches `type`, for runtime
+ * input guards on validators/formatters. Returns null when no structural check applies.
+ */
+export function jsTypeGuard(type: IRType, value: string): string | null {
+    switch (type.kind) {
+        case "string":
+        case "id":
+        case "date":
+        case "time":
+        case "decimal":
+            return `typeof ${value} === "string"`;
+        case "regexp":
+            return `${value} instanceof RegExp`;
+        case "number":
+            return `typeof ${value} === "number"`;
+        case "integer":
+            return `typeof ${value} === "number" && Number.isInteger(${value})`;
+        case "bigint":
+            return `typeof ${value} === "bigint"`;
+        case "boolean":
+            return `typeof ${value} === "boolean"`;
+        case "bytes":
+            return `${value} instanceof Uint8Array`;
+        case "dateTime":
+            return `${value} instanceof Date`;
+        case "enum":
+            return `[${type.values.map((v) => JSON.stringify(v)).join(", ")}].includes(${value})`;
+        case "array":
+            return `Array.isArray(${value})`;
+        case "nullable": {
+            const inner = jsTypeGuard(type.of, value);
+            return inner === null ? null : `${value} == null || (${inner})`;
+        }
+        case "json":
+        case "reference":
+        case "embedded":
+            return null;
+    }
+}
+
+/** A short human label for a type, used in runtime mismatch messages. */
+export function irTypeLabel(type: IRType): string {
+    switch (type.kind) {
+        case "nullable": return `${irTypeLabel(type.of)} or null`;
+        case "array":    return `array of ${irTypeLabel(type.of)}`;
+        case "enum":     return `one of ${type.values.map((v) => JSON.stringify(v)).join(", ")}`;
+        case "reference":
+        case "embedded": return type.schema;
+        default:         return type.kind;
+    }
+}
+
 /** Wrap complex types (union, array) in parens when used as an array element type. */
 function maybeParens(type: IRType, names?: ReadonlyMap<string, string>): string {
     const ts = irTypeToTs(type, names);

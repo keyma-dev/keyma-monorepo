@@ -490,9 +490,9 @@ describe("compile IR structure", () => {
         const result = cv({
             "validators.ts": `
                 import { Validator, Formatter } from "@keyma/dsl";
-                export const required = Validator("required", () => (_raw: unknown) => null);
-                export const minLength = Validator("minLength", (value: number) => (_raw: unknown) => null);
-                export const trim = Formatter("trim", () => (v: unknown) => v);
+                export const required = Validator("required", () => (_raw: string) => null);
+                export const minLength = Validator("minLength", (value: number) => (_raw: string) => null);
+                export const trim = Formatter("trim", () => (v: string) => v);
             `,
             "s.ts": `
                 import { Schema, Validate, Format } from "@keyma/dsl";
@@ -516,7 +516,7 @@ describe("compile IR structure", () => {
         const result = cv({
             "validators.ts": `
                 import { Validator } from "@keyma/dsl";
-                export const required = Validator("required", () => (_raw: unknown) => null);
+                export const required = Validator("required", () => (_raw: string) => null);
             `,
             "s.ts": `
                 import { Schema, Validate } from "@keyma/dsl";

@@ -3,7 +3,7 @@ import type { KeymaIR, IRSchema } from "@keyma/ir";
 import type { KeymaBackend, KeymaTargetConfig, ResolvedConfig, EmitFile, EmitResult } from "@keyma/compiler";
 import { emitModelJs, emitModelDts } from "./emit-model.js";
 import { emitIndexJs, emitIndexDts } from "./emit-index.js";
-import { emitValidatorFiles, emitFormatterFiles } from "./emit-validators.js";
+import { emitValidatorFiles, emitFormatterFiles, emitFunctionFiles } from "./emit-validators.js";
 import { resolveJsTarget, type JsTargetConfig } from "./types.js";
 
 export const jsBackend: KeymaBackend = {
@@ -63,6 +63,8 @@ export async function emitJs(
     // Validator and formatter declarations go into each enabled bundle (same content).
     const validatorDecls = ir.validatorDeclarations ?? [];
     const formatterDecls = ir.formatterDeclarations ?? [];
+    const functionDecls = ir.functionDeclarations ?? [];
+    const functionNames = functionDecls.map((d) => d.name);
 
     const bundleDirs: string[] = [
         ...(jsTarget.emitClient ? [path.posix.join(jsTarget.outDir, "client")] : []),
@@ -70,8 +72,16 @@ export async function emitJs(
         ...(jsTarget.emitLibrary ? [jsTarget.outDir] : []),
     ];
 
+    if (functionDecls.length > 0) {
+        const fn = emitFunctionFiles(functionDecls, embeddedTypeNames);
+        for (const bundleDir of bundleDirs) {
+            files.push({ path: `${bundleDir}/functions.js`, content: fn.functionsJs });
+            files.push({ path: `${bundleDir}/functions.d.ts`, content: fn.functionsDts });
+        }
+    }
+
     if (validatorDecls.length > 0) {
-        const vf = emitValidatorFiles(validatorDecls);
+        const vf = emitValidatorFiles(validatorDecls, { functionNames });
         for (const bundleDir of bundleDirs) {
             files.push({ path: `${bundleDir}/validators.js`, content: vf.factoriesJs });
             files.push({ path: `${bundleDir}/validators.d.ts`, content: vf.factoriesDts });
@@ -81,7 +91,7 @@ export async function emitJs(
     }
 
     if (formatterDecls.length > 0) {
-        const ff = emitFormatterFiles(formatterDecls);
+        const ff = emitFormatterFiles(formatterDecls, { functionNames });
         for (const bundleDir of bundleDirs) {
             files.push({ path: `${bundleDir}/formatters.js`, content: ff.factoriesJs });
             files.push({ path: `${bundleDir}/formatters.d.ts`, content: ff.factoriesDts });

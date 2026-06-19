@@ -21,6 +21,10 @@
       "type": "array",
       "items": { "$ref": "#/$defs/IRFormatterDeclaration" }
     },
+    "functionDeclarations": {
+      "type": "array",
+      "items": { "$ref": "#/$defs/IRFunctionDeclaration" }
+    },
     "diagnostics": {
       "type": "array",
       "items": { "$ref": "#/$defs/IRDiagnostic" }
@@ -251,7 +255,7 @@
     },
     "IRValidatorDeclaration": {
       "type": "object",
-      "required": ["name", "factoryParams", "body", "source"],
+      "required": ["name", "factoryParams", "inputType", "body", "source"],
       "additionalProperties": false,
       "properties": {
         "name": { "type": "string", "minLength": 1 },
@@ -259,13 +263,14 @@
           "type": "array",
           "items": { "$ref": "#/$defs/IRFactoryParam" }
         },
+        "inputType": { "$ref": "#/$defs/IRType" },
         "body": { "$ref": "#/$defs/IRFunctionBody" },
         "source": { "$ref": "#/$defs/IRSourceLocation" }
       }
     },
     "IRFormatterDeclaration": {
       "type": "object",
-      "required": ["name", "factoryParams", "body", "source"],
+      "required": ["name", "factoryParams", "inputType", "body", "source"],
       "additionalProperties": false,
       "properties": {
         "name": { "type": "string", "minLength": 1 },
@@ -273,7 +278,35 @@
           "type": "array",
           "items": { "$ref": "#/$defs/IRFactoryParam" }
         },
+        "inputType": { "$ref": "#/$defs/IRType" },
         "body": { "$ref": "#/$defs/IRFunctionBody" },
+        "source": { "$ref": "#/$defs/IRSourceLocation" }
+      }
+    },
+    "IRFunctionParam": {
+      "type": "object",
+      "required": ["name", "type"],
+      "additionalProperties": false,
+      "properties": {
+        "name": { "type": "string", "minLength": 1 },
+        "type": { "$ref": "#/$defs/IRType" }
+      }
+    },
+    "IRFunctionDeclaration": {
+      "type": "object",
+      "required": ["name", "params", "returnType", "statements", "source"],
+      "additionalProperties": false,
+      "properties": {
+        "name": { "type": "string", "minLength": 1 },
+        "params": {
+          "type": "array",
+          "items": { "$ref": "#/$defs/IRFunctionParam" }
+        },
+        "returnType": { "$ref": "#/$defs/IRType" },
+        "statements": {
+          "type": "array",
+          "items": { "type": "object", "required": ["kind"], "properties": { "kind": { "type": "string" } } }
+        },
         "source": { "$ref": "#/$defs/IRSourceLocation" }
       }
     }

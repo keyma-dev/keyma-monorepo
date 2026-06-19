@@ -58,6 +58,15 @@ function checkDocument(doc: unknown, _path: string): IRValidationError[] {
         }
     }
 
+    if ("functionDeclarations" in doc && doc["functionDeclarations"] !== undefined) {
+        if (!isArr(doc["functionDeclarations"])) {
+            errors.push(e("functionDeclarations", "must be an array when present"));
+        } else {
+            doc["functionDeclarations"].forEach((d, i) =>
+                errors.push(...checkFunctionDeclaration(d, `functionDeclarations[${i}]`)));
+        }
+    }
+
     if (!isArr(doc["diagnostics"])) {
         errors.push(e("diagnostics", "must be an array"));
     } else {
@@ -354,6 +363,17 @@ function checkExpression(expr: unknown, path: string): IRValidationError[] {
             }
             return errors;
         }
+        case "intrinsic": {
+            const errors: IRValidationError[] = [];
+            if (!isStr(expr["op"]) || expr["op"] === "") errors.push(e(`${path}.op`, "must be a non-empty string"));
+            if (expr["receiver"] !== null) errors.push(...checkExpression(expr["receiver"], `${path}.receiver`));
+            if (!isArr(expr["args"])) {
+                errors.push(e(`${path}.args`, "must be an array"));
+            } else {
+                expr["args"].forEach((a, i) => errors.push(...checkExpression(a, `${path}.args[${i}]`)));
+            }
+            return errors;
+        }
         default:
             return [e(`${path}.kind`, `unknown expression kind "${kind}"`)];
     }
@@ -437,7 +457,31 @@ function checkDeclaration(decl: unknown, path: string): IRValidationError[] {
             if (!isStr(p["name"]) || p["name"] === "") errors.push(e(`${path}.factoryParams[${i}].name`, "must be a non-empty string"));
         });
     }
+    errors.push(...checkType(decl["inputType"], `${path}.inputType`));
     errors.push(...checkFunctionBody(decl["body"], `${path}.body`));
+    errors.push(...checkSourceLocation(decl["source"], `${path}.source`));
+    return errors;
+}
+
+function checkFunctionDeclaration(decl: unknown, path: string): IRValidationError[] {
+    if (!isObj(decl)) return [e(path, "must be an object")];
+    const errors: IRValidationError[] = [];
+    if (!isStr(decl["name"]) || decl["name"] === "") errors.push(e(`${path}.name`, "must be a non-empty string"));
+    if (!isArr(decl["params"])) {
+        errors.push(e(`${path}.params`, "must be an array"));
+    } else {
+        decl["params"].forEach((p, i) => {
+            if (!isObj(p)) { errors.push(e(`${path}.params[${i}]`, "must be an object")); return; }
+            if (!isStr(p["name"]) || p["name"] === "") errors.push(e(`${path}.params[${i}].name`, "must be a non-empty string"));
+            errors.push(...checkType(p["type"], `${path}.params[${i}].type`));
+        });
+    }
+    errors.push(...checkType(decl["returnType"], `${path}.returnType`));
+    if (!isArr(decl["statements"])) {
+        errors.push(e(`${path}.statements`, "must be an array"));
+    } else {
+        decl["statements"].forEach((s, i) => errors.push(...checkStatement(s, `${path}.statements[${i}]`)));
+    }
     errors.push(...checkSourceLocation(decl["source"], `${path}.source`));
     return errors;
 }

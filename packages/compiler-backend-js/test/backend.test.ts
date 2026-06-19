@@ -181,6 +181,7 @@ const VALIDATORS_IR: KeymaIR = {
         {
             name: "required",
             factoryParams: [],
+            inputType: { kind: "string" },
             body: {
                 params: [{ name: "value", role: "value" }],
                 statements: [{ kind: "return", value: { kind: "binary", op: "!=", left: { kind: "field", name: "value" }, right: { kind: "literal", value: null } } }],
@@ -211,6 +212,7 @@ const FORMATTERS_IR: KeymaIR = {
         {
             name: "trim",
             factoryParams: [],
+            inputType: { kind: "string" },
             body: {
                 params: [{ name: "value", role: "value" }],
                 statements: [{ kind: "return", value: { kind: "call", callee: { kind: "member", object: { kind: "field", name: "value" }, member: "trim" }, args: [] } }],

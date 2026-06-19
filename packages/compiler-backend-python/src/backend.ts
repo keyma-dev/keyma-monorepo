@@ -3,7 +3,7 @@ import type { KeymaIR, IRSchema } from "@keyma/ir";
 import type { KeymaBackend, KeymaTargetConfig, ResolvedConfig, EmitFile, EmitResult } from "@keyma/compiler";
 import { emitModelPython } from "./emit-model.js";
 import { emitIndexPython } from "./emit-index.js";
-import { emitValidatorFiles, emitFormatterFiles } from "./emit-validators.js";
+import { emitValidatorFiles, emitFormatterFiles, emitFunctionsPy } from "./emit-validators.js";
 import { resolvePythonTargetJSStyle as resolvePythonTarget, type PythonTargetConfig } from "./types.js";
 
 export const pythonBackend: KeymaBackend = {
@@ -121,15 +121,21 @@ function emitBundle(
 
     const validatorDecls = ir.validatorDeclarations ?? [];
     const formatterDecls = ir.formatterDeclarations ?? [];
+    const functionDecls = ir.functionDeclarations ?? [];
+    const hasFunctions = functionDecls.length > 0;
+
+    if (hasFunctions) {
+        files.push({ path: path.posix.join(bundleDir, "functions.py"), content: emitFunctionsPy(functionDecls) });
+    }
 
     if (validatorDecls.length > 0) {
-        const vf = emitValidatorFiles(validatorDecls);
+        const vf = emitValidatorFiles(validatorDecls, { hasFunctions });
         files.push({ path: path.posix.join(bundleDir, "validators.py"), content: vf.factoriesPy });
         files.push({ path: path.posix.join(bundleDir, "registry.py"), content: vf.registryPy });
     }
 
     if (formatterDecls.length > 0) {
-        const ff = emitFormatterFiles(formatterDecls);
+        const ff = emitFormatterFiles(formatterDecls, { hasFunctions });
         files.push({ path: path.posix.join(bundleDir, "formatters.py"), content: ff.factoriesPy });
         files.push({ path: path.posix.join(bundleDir, "formatter_registry.py"), content: ff.registryPy });
     }

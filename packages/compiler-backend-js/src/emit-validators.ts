@@ -1,5 +1,11 @@
-import type { IRValidatorDeclaration, IRFormatterDeclaration, IRStatement } from "@keyma/ir";
+import type {
+    IRValidatorDeclaration,
+    IRFormatterDeclaration,
+    IRFunctionDeclaration,
+    IRStatement,
+} from "@keyma/ir";
 import { exprToJs } from "./emit-expression.js";
+import { irTypeToTs, jsTypeGuard, irTypeLabel } from "./ir-type-to-ts.js";
 
 export type ValidatorEmitFiles = {
     factoriesJs: string;
@@ -15,15 +21,51 @@ export type FormatterEmitFiles = {
     registryDts: string;
 };
 
+export type RegistryOptions = {
+    /** Names of compiled utility functions to import into the registry module. */
+    functionNames: readonly string[];
+};
+
+/** `import { a, b } from "./functions.js";` header, or empty when there are none. */
+function functionsImport(functionNames: readonly string[]): string {
+    if (functionNames.length === 0) return "";
+    return `import { ${functionNames.join(", ")} } from "./functions.js";\n\n`;
+}
+
 // ─── Validators ───────────────────────────────────────────────────────────────
 
-export function emitValidatorFiles(declarations: IRValidatorDeclaration[]): ValidatorEmitFiles {
+export function emitValidatorFiles(
+    declarations: IRValidatorDeclaration[],
+    opts: RegistryOptions,
+): ValidatorEmitFiles {
     return {
         factoriesJs: emitValidatorFactoriesJs(declarations),
         factoriesDts: emitValidatorFactoriesDts(declarations),
-        registryJs: emitValidatorRegistryJs(declarations),
+        registryJs: emitValidatorRegistryJs(declarations, opts),
         registryDts: emitValidatorRegistryDts(),
     };
+}
+
+// ─── Utility functions ─────────────────────────────────────────────────────────
+
+export type FunctionEmitFiles = { functionsJs: string; functionsDts: string };
+
+/** Emit compiled project-local utility functions as an ES module + types. */
+export function emitFunctionFiles(
+    declarations: IRFunctionDeclaration[],
+    embeddedNames?: ReadonlyMap<string, string>,
+): FunctionEmitFiles {
+    const js: string[] = [];
+    const dts: string[] = [];
+    for (const decl of declarations) {
+        const params = decl.params.map((p) => p.name).join(", ");
+        const body = decl.statements.map((s) => stmtToJs(s, "    ")).join("\n");
+        js.push(`export function ${decl.name}(${params}) {\n${body}\n}`);
+
+        const dtsParams = decl.params.map((p) => `${p.name}: ${irTypeToTs(p.type, embeddedNames)}`).join(", ");
+        dts.push(`export declare function ${decl.name}(${dtsParams}): ${irTypeToTs(decl.returnType, embeddedNames)};`);
+    }
+    return { functionsJs: js.join("\n\n") + "\n", functionsDts: dts.join("\n") + "\n" };
 }
 
 function emitValidatorFactoriesJs(declarations: IRValidatorDeclaration[]): string {
@@ -64,12 +106,12 @@ function emitValidatorFactoriesDts(declarations: IRValidatorDeclaration[]): stri
     return lines.join("\n") + "\n";
 }
 
-function emitValidatorRegistryJs(declarations: IRValidatorDeclaration[]): string {
+function emitValidatorRegistryJs(declarations: IRValidatorDeclaration[], opts: RegistryOptions): string {
     const entries: string[] = [];
     for (const decl of declarations) {
         entries.push(emitValidatorEntry(decl));
     }
-    return [
+    return functionsImport(opts.functionNames) + [
         `export function createValidatorRegistry() {`,
         `    return new Map([`,
         entries.map((e) => `        ${e}`).join(",\n"),
@@ -91,10 +133,17 @@ function emitValidatorEntry(decl: IRValidatorDeclaration): string {
         .map((p) => `        const ${p.name} = ${specParam}.${p.name};`)
         .join("\n");
 
+    // Runtime input guard: reject values that do not match the declared input type.
+    const guard = jsTypeGuard(decl.inputType, valueParam);
+    const guardLine = guard !== null
+        ? `        if (!(${guard})) return ${JSON.stringify(`expected ${irTypeLabel(decl.inputType)}`)};`
+        : "";
+
     const body = decl.body.statements.map((s) => stmtToJs(s, "        ")).join("\n");
 
     const fnBody = [
         factoryExtractions,
+        guardLine,
         body,
     ].filter(Boolean).join("\n");
 
@@ -112,11 +161,14 @@ function emitValidatorRegistryDts(): string {
 
 // ─── Formatters ───────────────────────────────────────────────────────────────
 
-export function emitFormatterFiles(declarations: IRFormatterDeclaration[]): FormatterEmitFiles {
+export function emitFormatterFiles(
+    declarations: IRFormatterDeclaration[],
+    opts: RegistryOptions,
+): FormatterEmitFiles {
     return {
         factoriesJs: emitFormatterFactoriesJs(declarations),
         factoriesDts: emitFormatterFactoriesDts(declarations),
-        registryJs: emitFormatterRegistryJs(declarations),
+        registryJs: emitFormatterRegistryJs(declarations, opts),
         registryDts: emitFormatterRegistryDts(),
     };
 }
@@ -155,12 +207,12 @@ function emitFormatterFactoriesDts(declarations: IRFormatterDeclaration[]): stri
     return lines.join("\n") + "\n";
 }
 
-function emitFormatterRegistryJs(declarations: IRFormatterDeclaration[]): string {
+function emitFormatterRegistryJs(declarations: IRFormatterDeclaration[], opts: RegistryOptions): string {
     const entries: string[] = [];
     for (const decl of declarations) {
         entries.push(emitFormatterEntry(decl));
     }
-    return [
+    return functionsImport(opts.functionNames) + [
         `export function createFormatterRegistry() {`,
         `    return new Map([`,
         entries.map((e) => `        ${e}`).join(",\n"),
@@ -180,9 +232,15 @@ function emitFormatterEntry(decl: IRFormatterDeclaration): string {
         .map((p) => `        const ${p.name} = ${specParam}.${p.name};`)
         .join("\n");
 
+    // Runtime input guard: formatters throw on a type mismatch.
+    const guard = jsTypeGuard(decl.inputType, valueParam);
+    const guardLine = guard !== null
+        ? `        if (!(${guard})) throw new TypeError(${JSON.stringify(`${decl.name} formatter expected ${irTypeLabel(decl.inputType)}`)});`
+        : "";
+
     const body = decl.body.statements.map((s) => stmtToJs(s, "        ")).join("\n");
 
-    const fnBody = [factoryExtractions, body].filter(Boolean).join("\n");
+    const fnBody = [factoryExtractions, guardLine, body].filter(Boolean).join("\n");
 
     return `[${JSON.stringify(decl.name)}, (${paramNames.join(", ")}) => {\n${fnBody}\n    }]`;
 }

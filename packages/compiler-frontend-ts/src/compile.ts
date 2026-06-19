@@ -5,7 +5,8 @@ import type { KeymaIR, IRDiagnostic } from "@keyma/ir";
 import { createProgram, DEFAULT_COMPILER_OPTIONS, type VirtualFiles } from "./program.js";
 import { discoverSchemas } from "./discover.js";
 import { discoverValidators, discoverFormatters } from "./discover-validators.js";
-import { lowerValidatorDeclaration, lowerFormatterDeclaration } from "./lower-validator.js";
+import { lowerValidatorDeclaration, lowerFormatterDeclaration, type LowerDeps } from "./lower-validator.js";
+import { createFunctionCollector } from "./lower-function.js";
 import { extractSchema } from "./extract-schema.js";
 import { flattenAll } from "./flatten.js";
 import {
@@ -138,15 +139,28 @@ function compileProgram(program: ts.Program, config: FrontendConfig): CompileRes
     // Post-processing: every Reference<T> target schema must declare an ID field
     checkReferenceTargetsHaveId(schemas, diagnostics);
 
+    // Utility-function collector: resolves project-local functions referenced from
+    // validator/formatter bodies and compiles them (transitively) after lowering.
+    const functionCollector = createFunctionCollector({ checker, dslModuleName, schemaClassNames, diagnostics });
+    const lowerDeps: LowerDeps = {
+        checker,
+        dslModuleName,
+        schemaClassNames,
+        classifyFunction: functionCollector.classify,
+    };
+
     // Pass 4: lower Validator() declarations to IR
     const validatorDeclarations = discoveredValidatorDecls.map((d) =>
-        lowerValidatorDeclaration(d, diagnostics)
+        lowerValidatorDeclaration(d, diagnostics, lowerDeps)
     );
 
     // Pass 5: lower Formatter() declarations to IR
     const formatterDeclarations = discoveredFormatterDecls.map((d) =>
-        lowerFormatterDeclaration(d, diagnostics)
+        lowerFormatterDeclaration(d, diagnostics, lowerDeps)
     );
+
+    // Pass 6: lower the utility functions referenced (transitively) from the bodies above.
+    const functionDeclarations = functionCollector.drain();
 
     const ir: KeymaIR = {
         irVersion: config.irVersion ?? "1.0.0",
@@ -158,6 +172,7 @@ function compileProgram(program: ts.Program, config: FrontendConfig): CompileRes
 
     if (validatorDeclarations.length > 0) ir.validatorDeclarations = validatorDeclarations;
     if (formatterDeclarations.length > 0) ir.formatterDeclarations = formatterDeclarations;
+    if (functionDeclarations.length > 0) ir.functionDeclarations = functionDeclarations;
 
     return { ir, diagnostics };
 }

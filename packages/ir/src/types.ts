@@ -76,7 +76,16 @@ export type IRExpression =
     | { kind: "object"; properties: Array<{ key: string; value: IRExpression }> }
     | { kind: "regexp"; pattern: string; flags: string }
     | { kind: "arrow"; params: string[]; body: IRExpression }
-    | { kind: "new"; callee: IRExpression; args: IRExpression[] };
+    | { kind: "new"; callee: IRExpression; args: IRExpression[] }
+    /**
+     * A canonical, language-neutral operation that each backend translates to an
+     * idiomatic form (string/array methods, `typeof`, `instanceof`). `op` is an id
+     * from the intrinsic registry (see `intrinsics.ts`), e.g. `"string.includes"`,
+     * `"array.length"`, `"type-is"`, `"instance-of"`. `receiver` is the value the op
+     * acts on (null for free-standing ops). For `type-is`/`instance-of` the target
+     * type/constructor name rides in `args[0]` as a string `literal`.
+     */
+    | { kind: "intrinsic"; op: string; receiver: IRExpression | null; args: IRExpression[] };
 
 // ─── Statement IR (for validator / formatter function bodies) ─────────────────
 
@@ -95,6 +104,8 @@ export type IRValidatorDeclaration = {
     name: string;
     /** Names of the outer factory function's parameters; become spec keys at code-gen time. */
     factoryParams: { name: string }[];
+    /** Declared type of the inner function's `value` parameter; backends emit a runtime guard from it. */
+    inputType: IRType;
     body: IRFunctionBody;
     source: IRSourceLocation;
 };
@@ -103,7 +114,27 @@ export type IRFormatterDeclaration = {
     name: string;
     /** Names of the outer factory function's parameters; become spec keys at code-gen time. */
     factoryParams: { name: string }[];
+    /** Declared type of the inner function's `value` parameter; backends emit a runtime guard from it. */
+    inputType: IRType;
     body: IRFunctionBody;
+    source: IRSourceLocation;
+};
+
+// ─── Compiled utility functions ───────────────────────────────────────────────
+
+/** A typed parameter of a compiled project-local utility function. */
+export type IRFunctionParam = { name: string; type: IRType };
+
+/**
+ * A project-local utility function referenced from a validator/formatter body and
+ * lowered into the IR so backends can re-emit it. Body uses the same portable
+ * statement/expression subset as validator/formatter bodies.
+ */
+export type IRFunctionDeclaration = {
+    name: string;
+    params: IRFunctionParam[];
+    returnType: IRType;
+    statements: IRStatement[];
     source: IRSourceLocation;
 };
 
@@ -170,5 +201,7 @@ export type KeymaIR = {
     schemas: IRSchema[];
     validatorDeclarations?: IRValidatorDeclaration[];
     formatterDeclarations?: IRFormatterDeclaration[];
+    /** Project-local utility functions referenced (transitively) from validator/formatter bodies. */
+    functionDeclarations?: IRFunctionDeclaration[];
     diagnostics: IRDiagnostic[];
 };

@@ -1,64 +1,65 @@
 import { Formatter } from "@keyma/dsl";
 
 // Built-in formatters. Each is a `Formatter(name, factory)` whose factory returns
-// the implementation `(value) => ...`. The Keyma compiler reads these factories,
+// the implementation `(value) => …`. The Keyma compiler reads these factories,
 // lowers their bodies to IR, and emits a formatter registry consumed at runtime.
-// Bodies are restricted to the portable expression subset (string methods, regex
-// literals, conditionals, arrow callbacks) so they re-emit in any target language.
-// Non-string values pass through unchanged.
+// Bodies use the portable expression subset (string methods, regex literals,
+// conditionals, arrow callbacks) so they re-emit in any target language.
+//
+// Each `value` is typed `string` (the type these formatters operate on); the
+// compiler emits a runtime guard from that type, so a non-string raises rather than
+// being passed through silently.
 
 // ─── String normalisation ─────────────────────────────────────────────────────
 
 export const trim = Formatter("trim", () =>
-    (value: unknown) => (typeof value === "string" ? value.trim() : value),
+    (value: string) => value.trim(),
 );
 
 export const lowercase = Formatter("lowercase", () =>
-    (value: unknown) => (typeof value === "string" ? value.toLowerCase() : value),
+    (value: string) => value.toLowerCase(),
 );
 
 export const uppercase = Formatter("uppercase", () =>
-    (value: unknown) => (typeof value === "string" ? value.toUpperCase() : value),
+    (value: string) => value.toUpperCase(),
 );
 
 export const capitalize = Formatter("capitalize", () =>
-    (value: unknown) => (typeof value === "string" ? value.charAt(0).toUpperCase() + value.slice(1).toLowerCase() : value),
+    (value: string) => value.charAt(0).toUpperCase() + value.slice(1).toLowerCase(),
 );
 
 export const titleCase = Formatter("titleCase", () =>
-    (value: unknown) => (typeof value === "string" ? value.toLowerCase().replace(/\b\w/g, (c: string) => c.toUpperCase()) : value),
+    (value: string) => value.toLowerCase().replace(/\b\w/g, (c: string) => c.toUpperCase()),
 );
 
 export const normalizeWhitespace = Formatter("normalizeWhitespace", () =>
-    (value: unknown) => (typeof value === "string" ? value.trim().replace(/\s+/g, " ") : value),
+    (value: string) => value.trim().replace(/\s+/g, " "),
 );
 
 export const stripNonDigits = Formatter("stripNonDigits", () =>
-    (value: unknown) => (typeof value === "string" ? value.replace(/\D+/g, "") : value),
+    (value: string) => value.replace(/\D+/g, ""),
 );
 
 // ─── Contact normalisation ──────────────────────────────────────────────────────
 
 export const normalizeEmail = Formatter("normalizeEmail", () =>
-    (value: unknown) => (typeof value === "string" ? value.trim().toLowerCase() : value),
+    (value: string) => value.trim().toLowerCase(),
 );
 
 export const normalizeUrl = Formatter("normalizeUrl", () =>
-    (value: unknown) => (typeof value === "string" ? value.trim().replace(/\/+$/, "") : value),
+    (value: string) => value.trim().replace(/\/+$/, ""),
 );
 
 export const normalizePhone = Formatter("normalizePhone", () =>
-    (value: unknown) => (typeof value === "string" ? "+" + value.replace(/\D+/g, "") : value),
+    (value: string) => "+" + value.replace(/\D+/g, ""),
 );
 
 // ─── Slugs & truncation ──────────────────────────────────────────────────────
 
 export const slugify = Formatter("slugify", () =>
-    (value: unknown) => (typeof value === "string"
-        ? value.toLowerCase().trim().replace(/[^a-z0-9]+/g, "-").replace(/^-+/, "").replace(/-+$/, "")
-        : value),
+    (value: string) => value.toLowerCase().trim().replace(/[^a-z0-9]+/g, "-").replace(/^-+/, "").replace(/-+$/, ""),
 );
 
 export const truncate = Formatter("truncate", (maxLength: number) =>
-    (value: unknown) => (typeof value === "string" && value.length > maxLength ? value.slice(0, maxLength) : value),
+    (value: string) => (value.length > maxLength ? value.slice(0, maxLength) : value),
 );
