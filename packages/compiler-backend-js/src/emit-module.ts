@@ -8,6 +8,7 @@ import { buildSchemaData, buildMaterializer, hasComputedFields } from "./schema-
 import { emitLiteral } from "./emit-literal.js";
 import { factoryIdent } from "./emit-validators.js";
 import { relModuleSpecifier } from "./module-path.js";
+import { TYPES_REF } from "./emit-types.js";
 
 export type ModuleEmitDeps = {
     /** Include private fields and private computed getters. */
@@ -112,10 +113,7 @@ function emitSchemaClassJs(schema: IRSchema, deps: ModuleEmitDeps): string {
 /** Emit one model module `.d.ts` declaring every schema authored in a source file. */
 export function emitModuleDts(moduleRef: string, schemas: readonly IRSchema[], deps: ModuleEmitDeps): string {
     const lines: string[] = [];
-    lines.push(`import type { SchemaMetadata } from "@keyma/runtime-js";`);
-    if (schemas.some((s) => s.edge !== undefined)) {
-        lines.push(`import type { EdgeBrand } from "@keyma/dsl";`);
-    }
+    lines.push(`import type { SchemaMetadata } from "${relModuleSpecifier(moduleRef, TYPES_REF)}";`);
     lines.push(...buildImports(moduleRef, schemas, deps, true));
     lines.push("");
 
@@ -175,7 +173,7 @@ function emitSchemaClassDts(schema: IRSchema, deps: ModuleEmitDeps): string {
     if (isEdge && schema.edge !== undefined) {
         lines.push("");
         lines.push(
-            `export declare const ${className}: typeof ${declName} & EdgeBrand<${schema.edge.from}, ${schema.edge.to}>;`,
+            `export declare const ${className}: typeof ${declName} & { readonly __edge?: { from: ${schema.edge.from}; to: ${schema.edge.to} } };`,
         );
         lines.push(`export type ${className} = InstanceType<typeof ${declName}>;`);
     }

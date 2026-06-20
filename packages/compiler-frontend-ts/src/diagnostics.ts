@@ -70,6 +70,13 @@ export const KEYMA091 = "KEYMA091"; // OBSOLETE — defaults are now property in
 // Method / setter behavior errors
 export const KEYMA092 = "KEYMA092"; // Method/setter parameter or return type must be explicitly annotated (portable subset)
 
+// Service (remote function call) errors
+export const KEYMA093 = "KEYMA093"; // Service method must be abstract (a signature with no body)
+export const KEYMA094 = "KEYMA094"; // Duplicate method name within a service
+export const KEYMA095 = "KEYMA095"; // @Service combined with @Schema/@Edge on the same class
+export const KEYMA096 = "KEYMA096"; // Public service method exposes a private schema via a parameter/return type
+export const KEYMA097 = "KEYMA097"; // Duplicate service name, or service name collides with a schema name
+
 export function mkError(
     code: string,
     message: string,

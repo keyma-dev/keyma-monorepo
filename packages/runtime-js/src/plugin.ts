@@ -1,20 +1,14 @@
-import type { SchemaMetadata } from "./types.js";
+import type { SchemaMetadata, RequestContext } from "./types.js";
 import type { AdapterProjection, KeymaDatabaseAdapter } from "./adapter.js";
 import type { KeymaOperation, KeymaLeafResult } from "./protocol.js";
+
+// `RequestContext` lives in types.ts (it's part of the inlined, dependency-free
+// type surface); re-exported here so existing `./plugin.js` imports keep working.
+export type { RequestContext };
 
 export type KeymaReadAction = "read" | "list" | "traverse" | "count";
 export type KeymaWriteAction = "create" | "update" | "delete";
 export type KeymaAction = KeymaReadAction | KeymaWriteAction;
-
-export type RequestContext = {
-    identity?: {
-        id?: string;
-        roles?: readonly string[];
-        isSystem?: boolean;
-        [key: string]: unknown;
-    };
-    [key: string]: unknown;
-};
 
 export interface KeymaServerPlugin {
     readonly name: string;

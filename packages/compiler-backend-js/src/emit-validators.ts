@@ -46,7 +46,7 @@ export function emitValidatorsJs(
 }
 
 export function emitValidatorsDts(decls: readonly IRValidatorDeclaration[]): string {
-    const lines = [`import type { ValidatorFn } from "@keyma/runtime-js";`, ""];
+    const lines = [`import type { ValidatorFn } from "./types.js";`, ""];
     for (const d of decls) lines.push(`export declare const ${factoryIdent(d.name)}: (...args: unknown[]) => ValidatorFn;`);
     return lines.join("\n") + "\n";
 }
@@ -79,7 +79,7 @@ export function emitFormattersJs(
 }
 
 export function emitFormattersDts(decls: readonly IRFormatterDeclaration[]): string {
-    const lines = [`import type { FormatterFn } from "@keyma/runtime-js";`, ""];
+    const lines = [`import type { FormatterFn } from "./types.js";`, ""];
     for (const d of decls) lines.push(`export declare const ${factoryIdent(d.name)}: (...args: unknown[]) => FormatterFn;`);
     return lines.join("\n") + "\n";
 }

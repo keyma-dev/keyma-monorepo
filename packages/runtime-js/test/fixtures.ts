@@ -1,7 +1,7 @@
 // Shared test fixtures: schema metadata + branded model classes.
 
-import { brandSchema, type SchemaMetadata, type SchemaClass, type ValidatorFn, type FormatterFn } from "../src/types.js";
-import type { EdgeBrand } from "@keyma/dsl";
+import type { SchemaMetadata, SchemaClass, ValidatorFn, FormatterFn } from "../src/types.js";
+import { brandSchema } from "../src/brand.js";
 
 // Direct-ref validators/formatters — the shape the compiler now emits into metadata.
 const required: ValidatorFn = (value, field) =>
@@ -197,7 +197,7 @@ export const Company: SchemaClass<CompanyRecord> = brandSchema(
 );
 
 // Edge schemas. The runtime SchemaMetadata carries the `edge` field; the
-// class value gets the EdgeBrand intersection via cast (in real generated
+// class value gets the structural `__edge` marker via cast (in real generated
 // code the JS backend's .d.ts emission does this).
 
 export interface KnowsRecord { id: string; from: string; to: string; since: string }
@@ -238,11 +238,11 @@ class WorksAtCtor {
 
 export const Knows = brandSchema(
     KnowsCtor as new (v?: Partial<KnowsRecord>) => KnowsRecord, KNOWS_SCHEMA,
-) as SchemaClass<KnowsRecord> & EdgeBrand<PersonRecord, PersonRecord>;
+) as SchemaClass<KnowsRecord> & { readonly __edge?: { from: PersonRecord; to: PersonRecord } };
 
 export const WorksAt = brandSchema(
     WorksAtCtor as new (v?: Partial<WorksAtRecord>) => WorksAtRecord, WORKS_AT_SCHEMA,
-) as SchemaClass<WorksAtRecord> & EdgeBrand<PersonRecord, CompanyRecord>;
+) as SchemaClass<WorksAtRecord> & { readonly __edge?: { from: PersonRecord; to: CompanyRecord } };
 
 // ─── Private schemas (for visibility tests) ──────────────────────────────────
 

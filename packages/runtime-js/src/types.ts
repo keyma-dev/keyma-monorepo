@@ -148,17 +148,70 @@ export interface SchemaClass<T = unknown> {
 
 export type RecordOf<C> = C extends new (value?: never) => infer T ? T : never;
 
-// Used in tests (and as a fallback during the codegen transition) to brand a
-// plain class with SchemaMetadata at runtime.
-export function brandSchema<T>(
-    cls: new (value?: Partial<T>) => T,
-    schema: SchemaMetadata,
-): SchemaClass<T> {
-    Object.defineProperty(cls, "schema", {
-        value: schema,
-        enumerable: false,
-        writable: false,
-        configurable: false,
-    });
-    return cls as SchemaClass<T>;
+// ── Service metadata ────────────────────────────────────────────────────────
+//
+// Generated service classes carry their contract as a static `service` property
+// (the analog of a model's static `schema`). The server reads it off each
+// registered instance's constructor to discover callable methods; the client
+// reads it (plus `refs`) to marshal calls and hydrate results.
+
+export type ServiceParamMetadata = {
+    name: string;
+    /** Schema `name` when the param type is a schema reference — used for
+     *  argument validation on the server and (via `refs`) nothing on the client.
+     *  Absent for primitive params. */
+    schema?: string;
+};
+
+export type ServiceMethodMetadata = {
+    name: string;
+    /** Omitted ≡ "public". Private methods are emitted only into server bundles
+     *  and are uncallable by non-system callers. */
+    visibility?: "public" | "private";
+    params: ServiceParamMetadata[];
+    /** Schema `name` of the return value when it is a schema (drives client
+     *  hydration). Absent for primitive returns. */
+    returnSchema?: string;
+    /** Whether the return value is an array of `returnSchema` (element-wise hydration). */
+    returnArray?: boolean;
+};
+
+export type ServiceMetadata = {
+    name: string;
+    /** Omitted ≡ "public". Private services are emitted only into server bundles. */
+    visibility?: "public" | "private";
+    methods: ServiceMethodMetadata[];
+    /** Schema name → generated model class, for hydrating schema-typed returns.
+     *  Present on client bundles. */
+    refs?: ReadonlyMap<string, SchemaClass>;
+};
+
+/** A generated service class carrying its contract as a static `service`. */
+export interface ServiceClass {
+    readonly service: ServiceMetadata;
 }
+
+/** A constructed service instance. Its class carries the contract as a `static
+ *  service` (read off `instance.constructor` at registration). Typed loosely
+ *  because TypeScript types an instance's `.constructor` as plain `Function`;
+ *  the real contract guarantee comes from extending the generated abstract class. */
+export type ServiceInstance = object;
+
+/** What the application registers with `KeymaServer({ services })`: an instance
+ *  or a zero-arg factory producing one. */
+export type ServiceProvider = ServiceInstance | (() => ServiceInstance);
+
+// ── Request context ─────────────────────────────────────────────────────────
+//
+// Ambient per-request context threaded through server operations, plugin hooks,
+// and service-method calls. Free-form; `identity` is the conventional auth slot.
+
+export type RequestContext = {
+    identity?: {
+        id?: string;
+        roles?: readonly string[];
+        isSystem?: boolean;
+        [key: string]: unknown;
+    };
+    [key: string]: unknown;
+};

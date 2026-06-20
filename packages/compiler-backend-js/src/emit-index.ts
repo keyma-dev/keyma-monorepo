@@ -16,6 +16,7 @@ export function emitIndexJs(
     schemas: readonly IRSchema[],
     schemaModule: ReadonlyMap<string, string>,
     opts: IndexEmitOptions,
+    serviceNames: readonly string[] = [],
 ): string {
     const visible = opts.includePrivate ? schemas : schemas.filter((s) => s.visibility === "public");
 
@@ -34,6 +35,9 @@ export function emitIndexJs(
     const lines = [...byModule.entries()]
         .sort((a, b) => a[0].localeCompare(b[0]))
         .map(([ref, exports]) => `export { ${exports.join(", ")} } from "./${ref}.js";`);
+    if (serviceNames.length > 0) {
+        lines.push(`export { ${[...serviceNames].sort().join(", ")} } from "./services.js";`);
+    }
     lines.push("");
     return lines.join("\n");
 }
@@ -44,6 +48,7 @@ export function emitIndexDts(
     schemas: readonly IRSchema[],
     schemaModule: ReadonlyMap<string, string>,
     opts: IndexEmitOptions,
+    serviceNames: readonly string[] = [],
 ): string {
-    return emitIndexJs(schemas, schemaModule, opts);
+    return emitIndexJs(schemas, schemaModule, opts, serviceNames);
 }

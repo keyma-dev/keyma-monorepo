@@ -1,4 +1,4 @@
-import type { SchemaClass, RecordOf } from "./types.js";
+import type { SchemaClass, RecordOf, ServiceClass } from "./types.js";
 import type {
     KeymaOperation,
     KeymaRequest,
@@ -11,8 +11,15 @@ import type {
     TraversalDirection,
     TraversalEmit,
 } from "./protocol.js";
-import type { EdgeBrand } from "@keyma/dsl";
 import { deserialize } from "./deserialize.js";
+
+// Structural phantom markers emitted on generated edge/service classes. They carry
+// type parameters (edge From/To node types; service method→args/ret contract) for
+// `Keyma.traverse` / `Keyma.call` inference. Unlike a nominal brand, there is no
+// shared `unique symbol` to import — the generated code and these builders agree by
+// shape, so generated bundles need no `@keyma/dsl` / `@keyma/runtime-js` brand type.
+type EdgeMarker<From, To> = { readonly __edge?: { from: From; to: To } };
+type ServiceMarker<Contract> = { readonly __service?: Contract };
 
 // ── Input placeholders ──────────────────────────────────────────────────────
 
@@ -96,7 +103,9 @@ declare const LEAF_BRAND: unique symbol;
 
 interface BaseLeaf {
     readonly op: KeymaOperation["op"];
-    readonly schemaClass: SchemaClass;
+    /** The schema class for hydration. Absent on `call` leaves (which carry their
+     *  own `returnClass`). */
+    readonly schemaClass?: SchemaClass;
     readonly where?: Record<string, unknown>;
     readonly data?: Record<string, unknown>;
     readonly project?: ProjectionSpec;
@@ -139,6 +148,17 @@ export interface CountLeaf<I = {}> extends BaseLeaf {
     readonly [LEAF_BRAND]: { kind: "count"; out: number; inputs: I };
 }
 
+export interface CallLeaf<T, I = {}> extends BaseLeaf {
+    readonly op: "call";
+    readonly service: string;
+    readonly method: string;
+    readonly args?: Record<string, unknown>;
+    /** Schema class for hydrating the return value; null for primitive returns. */
+    readonly returnClass: SchemaClass | null;
+    readonly returnArray: boolean;
+    readonly [LEAF_BRAND]: { kind: "call"; out: T; inputs: I };
+}
+
 export type AnyLeaf =
     | ListLeaf<unknown, unknown, unknown>
     | ReadLeaf<unknown, unknown>
@@ -146,16 +166,19 @@ export type AnyLeaf =
     | UpdateLeaf<unknown, unknown>
     | DeleteLeaf<unknown>
     | TraverseLeaf<unknown, unknown, unknown>
-    | CountLeaf;
+    | CountLeaf
+    | CallLeaf<unknown, unknown>;
 
 export type QueryLeaf =
     | ListLeaf<unknown, unknown, unknown>
     | ReadLeaf<unknown, unknown>
-    | TraverseLeaf<unknown, unknown, unknown>;
+    | TraverseLeaf<unknown, unknown, unknown>
+    | CallLeaf<unknown, unknown>;
 export type MutationLeaf =
     | CreateLeaf<unknown, unknown>
     | UpdateLeaf<unknown, unknown>
-    | DeleteLeaf<unknown>;
+    | DeleteLeaf<unknown>
+    | CallLeaf<unknown, unknown>;
 
 type LeafOut<L> = L extends { readonly [LEAF_BRAND]: { out: infer O } } ? O : never;
 type LeafInputs<L> = L extends { readonly [LEAF_BRAND]: { inputs: infer I } } ? I : never;
@@ -249,6 +272,22 @@ function hydrate(leaf: AnyLeaf, result: KeymaLeafResult): KeymaLeafResult {
     if (leaf.op === "count") return result;
     const data = result.data;
     if (data === null || data === undefined) return result;
+    if (leaf.op === "call") {
+        // Primitive returns pass through; schema-typed returns are reconstructed.
+        if (leaf.returnClass === null) return result;
+        const Class = leaf.returnClass as unknown as new (value?: Record<string, unknown>) => unknown;
+        const schema = leaf.returnClass.schema;
+        if (leaf.returnArray) {
+            if (!Array.isArray(data)) return result;
+            return {
+                ok: true,
+                data: data.map((r) => (isPlainObject(r) ? new Class(deserialize(schema, r)) : r)),
+            };
+        }
+        if (!isPlainObject(data)) return result;
+        return { ok: true, data: new Class(deserialize(schema, data)) };
+    }
+    if (leaf.schemaClass === undefined) return result;
     const Class = leaf.schemaClass as unknown as new (value?: Record<string, unknown>) => unknown;
     const schema = leaf.schemaClass.schema;
     if (leaf.op === "list" || leaf.op === "traverse") {
@@ -273,7 +312,16 @@ function buildOperation(
     leafOptions: Record<string, unknown>,
     leafInputs: Record<string, unknown>,
 ): KeymaOperation {
-    const schemaName = leaf.schemaClass.schema.name;
+    if (leaf.op === "call") {
+        return {
+            op: "call",
+            service: leaf.service,
+            method: leaf.method,
+            args: substitute(leaf.args ?? {}, leafInputs),
+        };
+    }
+
+    const schemaName = leaf.schemaClass!.schema.name;
 
     switch (leaf.op) {
         case "list": {
@@ -514,17 +562,17 @@ function del<C extends SchemaClass, W extends WhereArg<RecordOf<C>>>(
 
 // ── Graph traversal ─────────────────────────────────────────────────────────
 //
-// A step's `via` is an edge class carrying `EdgeBrand<From, To>`. Given the
-// current node type and a direction, `OtherEnd` computes the other endpoint.
+// A step's `via` is an edge class carrying the `__edge` marker. Given the current
+// node type and a direction, `OtherEnd` computes the other endpoint.
 
 type StepInput = {
-    via: EdgeBrand<unknown, unknown>;
+    via: EdgeMarker<unknown, unknown>;
     direction: TraversalDirection;
     edgeWhere?: Record<string, unknown>;
 };
 
-type EdgeFromOf<E> = E extends EdgeBrand<infer F, unknown> ? F : never;
-type EdgeToOf<E> = E extends EdgeBrand<unknown, infer T> ? T : never;
+type EdgeFromOf<E> = E extends EdgeMarker<infer F, unknown> ? F : never;
+type EdgeToOf<E> = E extends EdgeMarker<unknown, infer T> ? T : never;
 
 type OtherEnd<E, N, D> =
     D extends "out"
@@ -558,7 +606,7 @@ type TypedSteps<Cur, Steps extends readonly StepInput[]> =
         ? readonly []
         : Steps extends readonly [infer Head, ...infer Tail]
             ? Head extends { via: infer V; direction: infer D }
-                ? V extends EdgeBrand<unknown, unknown>
+                ? V extends EdgeMarker<unknown, unknown>
                     ? D extends TraversalDirection
                         ? Tail extends readonly StepInput[]
                             ? readonly [
@@ -598,7 +646,7 @@ type TraverseArgsHeterogeneous<
 
 type TraverseArgsHomogeneous<
     NodeSchema extends SchemaClass,
-    Via extends EdgeBrand<unknown, unknown>,
+    Via extends EdgeMarker<unknown, unknown>,
     P extends Projection<RecordOf<NodeSchema>> | undefined,
 > = {
     start: StartArg<NodeSchema>;
@@ -631,7 +679,7 @@ function traverse<
 // Overload 2: homogeneous repeat — start and terminal share `cls`.
 function traverse<
     NodeSchema extends SchemaClass,
-    Via extends EdgeBrand<unknown, unknown>,
+    Via extends EdgeMarker<unknown, unknown>,
     P extends Projection<RecordOf<NodeSchema>> | undefined = undefined,
 >(
     cls: NodeSchema,
@@ -698,6 +746,48 @@ function count<C extends SchemaClass, W extends WhereArg<RecordOf<C>>>(
     } as CountLeaf<InputsIn<RecordOf<C>, W>>;
 }
 
+// ── Service call inference ──────────────────────────────────────────────────
+
+type ServiceContractOf<S> = S extends ServiceMarker<infer C> ? C : never;
+type MethodArgs<S, M extends keyof ServiceContractOf<S>> =
+    ServiceContractOf<S>[M] extends { args: infer A } ? A : never;
+type MethodRet<S, M extends keyof ServiceContractOf<S>> =
+    ServiceContractOf<S>[M] extends { ret: infer R } ? R : never;
+
+/** A call's argument object: each declared param, or an `Input<>` placeholder. */
+type CallArgsArg<Args> = { [K in keyof Args]: Args[K] | Input<string> };
+
+/** Map of parameter names that were supplied as `Input<>` placeholders to the
+ *  value type the placeholder must be filled with — mirrors `InputsIn`. */
+type InputsInCall<Args, X> = {
+    [K in keyof X as X[K] extends Input<infer N> ? N : never]: K extends keyof Args ? Args[K] : never;
+};
+
+function call<
+    S extends ServiceClass & ServiceMarker<Record<string, unknown>>,
+    M extends keyof ServiceContractOf<S> & string,
+    A extends CallArgsArg<MethodArgs<S, M>>,
+>(
+    service: S,
+    method: M,
+    args: A,
+): CallLeaf<MethodRet<S, M>, InputsInCall<MethodArgs<S, M>, A>> {
+    const meta = service.service;
+    const methodMeta = meta.methods.find((m) => m.name === method);
+    const returnSchema = methodMeta?.returnSchema;
+    const returnClass =
+        returnSchema !== undefined ? meta.refs?.get(returnSchema) ?? null : null;
+    const leaf = {
+        op: "call" as const,
+        service: meta.name,
+        method,
+        args: args as unknown as Record<string, unknown>,
+        returnClass,
+        returnArray: methodMeta?.returnArray ?? false,
+    };
+    return leaf as unknown as CallLeaf<MethodRet<S, M>, InputsInCall<MethodArgs<S, M>, A>>;
+}
+
 function query<Tmpl extends Record<string, QueryLeaf>>(template: Tmpl): QueryDocument<Tmpl>;
 function query<Tmpl extends Record<string, QueryLeaf | CountLeaf>>(template: Tmpl): QueryDocument<Tmpl>;
 function query<Tmpl extends Record<string, QueryLeaf | CountLeaf>>(template: Tmpl): QueryDocument<Tmpl> {
@@ -724,6 +814,7 @@ export const Keyma = {
     delete: del,
     traverse,
     count,
+    call,
     input,
 } as const;
 

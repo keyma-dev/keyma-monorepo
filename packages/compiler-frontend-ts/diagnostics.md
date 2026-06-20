@@ -429,3 +429,47 @@ signatures must be explicit and concrete. Use `: void` for a method that returns
 ```
 
 > Async and generator methods are not portable; they are rejected with **KEYMA082**.
+
+---
+
+## Service (remote function call) errors (0093–0099)
+
+`@Service`-decorated abstract classes declare remotely-callable methods. Only the
+method *signatures* are lowered to IR — implementations live in server runtime code,
+supplied by extending the generated abstract class. Service method signatures must be
+explicitly typed (reuses **KEYMA092**) and their parameter/return types must be
+mappable (reuses **KEYMA010**). Service methods may be `async`/`Promise<T>` (the
+`Promise<...>` wrapper is peeled) — they are *not* lowered like portable behaviors, so
+**KEYMA082** does not apply.
+
+### KEYMA093 — service method must be abstract
+
+A method on a `@Service` class has a body. Service methods are contracts; implement
+them in server code by extending the generated class.
+
+```typescript
+@Service() abstract class UserService {
+    abstract sendInvite(input: InviteInput): InviteResult;  // OK
+    greet(): string { return "hi"; }                         // KEYMA093 — has a body
+}
+```
+
+### KEYMA094 — duplicate method name within a service
+
+Two methods on the same `@Service` class share a name.
+
+### KEYMA095 — @Service combined with @Schema/@Edge
+
+A class carries `@Service` together with `@Schema` or `@Edge`. A service declares
+callable methods, not a data model — keep them on separate classes.
+
+### KEYMA096 — public service exposes a private schema
+
+A public method on a public service has a parameter or return type that references a
+`@Schema({ private: true })` schema, which would leak it into the client bundle. Make
+the schema public, or the service/method private.
+
+### KEYMA097 — duplicate service name / collides with a schema
+
+Two services resolve to the same name, or a service name collides with a schema name.
+Service names double as generated class names and must be unique across the program.

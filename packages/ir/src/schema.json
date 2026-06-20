@@ -29,6 +29,10 @@
       "type": "array",
       "items": { "$ref": "#/$defs/IRFunctionDeclaration" }
     },
+    "services": {
+      "type": "array",
+      "items": { "$ref": "#/$defs/IRService" }
+    },
     "diagnostics": {
       "type": "array",
       "items": { "$ref": "#/$defs/IRDiagnostic" }
@@ -371,6 +375,38 @@
         "statements": {
           "type": "array",
           "items": { "type": "object", "required": ["kind"], "properties": { "kind": { "type": "string" } } }
+        },
+        "source": { "$ref": "#/$defs/IRSourceLocation" }
+      }
+    },
+    "IRServiceMethod": {
+      "type": "object",
+      "required": ["name", "params", "visibility", "source"],
+      "additionalProperties": false,
+      "properties": {
+        "name": { "type": "string", "minLength": 1 },
+        "params": {
+          "type": "array",
+          "items": { "$ref": "#/$defs/IRFunctionParam" }
+        },
+        "returnType": { "$ref": "#/$defs/IRType" },
+        "visibility": { "type": "string", "enum": ["public", "private"] },
+        "source": { "$ref": "#/$defs/IRSourceLocation" }
+      }
+    },
+    "IRService": {
+      "type": "object",
+      "required": ["id", "name", "sourceName", "visibility", "methods", "source"],
+      "additionalProperties": false,
+      "properties": {
+        "id": { "type": "string", "minLength": 1 },
+        "name": { "type": "string", "minLength": 1 },
+        "sourceName": { "type": "string", "minLength": 1 },
+        "visibility": { "type": "string", "enum": ["public", "private"] },
+        "description": { "type": "string" },
+        "methods": {
+          "type": "array",
+          "items": { "$ref": "#/$defs/IRServiceMethod" }
         },
         "source": { "$ref": "#/$defs/IRSourceLocation" }
       }

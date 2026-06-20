@@ -7,7 +7,10 @@
     },
     "main": "./dist/src/index.js",
     "scripts": {
+        "gen-types": "node scripts/gen-emitted-types.mjs",
+        "prebuild": "node scripts/gen-emitted-types.mjs",
         "build": "tsc",
+        "pretest": "node scripts/gen-emitted-types.mjs",
         "test": "tsc && cp -r test/snapshots dist/test/ && node --test dist/test/*.test.js"
     },
     "dependencies": {

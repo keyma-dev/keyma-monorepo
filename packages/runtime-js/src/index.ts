@@ -10,8 +10,15 @@ export type {
     SchemaClass,
     RecordOf,
     SchemaDefaultsFn,
+    ServiceParamMetadata,
+    ServiceMethodMetadata,
+    ServiceMetadata,
+    ServiceClass,
+    ServiceInstance,
+    ServiceProvider,
+    RequestContext,
 } from "./types.js";
-export { brandSchema } from "./types.js";
+export { brandSchema, brandService } from "./brand.js";
 
 export type {
     KeymaOperation,
@@ -77,6 +84,7 @@ export type {
     DeleteLeaf,
     TraverseLeaf,
     CountLeaf,
+    CallLeaf,
     TerminalNode,
     QueryDocument,
     MutationDocument,
@@ -92,7 +100,6 @@ export { createDirectTransport } from "./client.js";
 export type {
     KeymaServerPlugin,
     PluginServerHandle,
-    RequestContext,
     KeymaAction,
     KeymaWriteAction,
     KeymaReadAction

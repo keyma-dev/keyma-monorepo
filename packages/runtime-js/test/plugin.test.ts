@@ -278,7 +278,7 @@ describe("KeymaServer — plugin surface", () => {
         const plugin: KeymaServerPlugin = {
             name: "boom",
             beforeOperation(_ctx, op) {
-                if (op.schema === "user") throw new Error("kaboom");
+                if ("schema" in op && op.schema === "user") throw new Error("kaboom");
             },
         };
         const { server, adapter } = makeServer([plugin]);

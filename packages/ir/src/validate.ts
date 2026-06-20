@@ -76,12 +76,69 @@ function checkDocument(doc: unknown, _path: string): IRValidationError[] {
         }
     }
 
+    if ("services" in doc && doc["services"] !== undefined) {
+        if (!isArr(doc["services"])) {
+            errors.push(e("services", "must be an array when present"));
+        } else {
+            doc["services"].forEach((s, i) => errors.push(...checkService(s, `services[${i}]`)));
+        }
+    }
+
     if (!isArr(doc["diagnostics"])) {
         errors.push(e("diagnostics", "must be an array"));
     } else {
         doc["diagnostics"].forEach((d, i) => errors.push(...checkDiagnostic(d, `diagnostics[${i}]`)));
     }
 
+    return errors;
+}
+
+/** Shared check for a `{ name, type }` typed parameter. */
+function checkParam(p: unknown, path: string): IRValidationError[] {
+    if (!isObj(p)) return [e(path, "must be an object")];
+    const errors: IRValidationError[] = [];
+    if (!isStr(p["name"]) || p["name"] === "") errors.push(e(`${path}.name`, "must be a non-empty string"));
+    errors.push(...checkType(p["type"], `${path}.type`));
+    return errors;
+}
+
+function checkService(svc: unknown, path: string): IRValidationError[] {
+    if (!isObj(svc)) return [e(path, "must be an object")];
+    const errors: IRValidationError[] = [];
+    if (!isStr(svc["id"]) || svc["id"] === "") errors.push(e(`${path}.id`, "must be a non-empty string"));
+    if (!isStr(svc["name"]) || svc["name"] === "") errors.push(e(`${path}.name`, "must be a non-empty string"));
+    if (!isStr(svc["sourceName"]) || svc["sourceName"] === "") errors.push(e(`${path}.sourceName`, "must be a non-empty string"));
+    if (svc["visibility"] !== "public" && svc["visibility"] !== "private") {
+        errors.push(e(`${path}.visibility`, 'must be "public" or "private"'));
+    }
+    if ("description" in svc && svc["description"] !== undefined && !isStr(svc["description"])) {
+        errors.push(e(`${path}.description`, "must be a string when present"));
+    }
+    if (!isArr(svc["methods"])) {
+        errors.push(e(`${path}.methods`, "must be an array"));
+    } else {
+        svc["methods"].forEach((m, i) => errors.push(...checkServiceMethod(m, `${path}.methods[${i}]`)));
+    }
+    errors.push(...checkSourceLocation(svc["source"], `${path}.source`));
+    return errors;
+}
+
+function checkServiceMethod(m: unknown, path: string): IRValidationError[] {
+    if (!isObj(m)) return [e(path, "must be an object")];
+    const errors: IRValidationError[] = [];
+    if (!isStr(m["name"]) || m["name"] === "") errors.push(e(`${path}.name`, "must be a non-empty string"));
+    if (!isArr(m["params"])) {
+        errors.push(e(`${path}.params`, "must be an array"));
+    } else {
+        m["params"].forEach((p, i) => errors.push(...checkParam(p, `${path}.params[${i}]`)));
+    }
+    if ("returnType" in m && m["returnType"] !== undefined) {
+        errors.push(...checkType(m["returnType"], `${path}.returnType`));
+    }
+    if (m["visibility"] !== "public" && m["visibility"] !== "private") {
+        errors.push(e(`${path}.visibility`, 'must be "public" or "private"'));
+    }
+    errors.push(...checkSourceLocation(m["source"], `${path}.source`));
     return errors;
 }
 
@@ -563,11 +620,7 @@ function checkFunctionDeclaration(decl: unknown, path: string): IRValidationErro
     if (!isArr(decl["params"])) {
         errors.push(e(`${path}.params`, "must be an array"));
     } else {
-        decl["params"].forEach((p, i) => {
-            if (!isObj(p)) { errors.push(e(`${path}.params[${i}]`, "must be an object")); return; }
-            if (!isStr(p["name"]) || p["name"] === "") errors.push(e(`${path}.params[${i}].name`, "must be a non-empty string"));
-            errors.push(...checkType(p["type"], `${path}.params[${i}].type`));
-        });
+        decl["params"].forEach((p, i) => errors.push(...checkParam(p, `${path}.params[${i}]`)));
     }
     errors.push(...checkType(decl["returnType"], `${path}.returnType`));
     if (!isArr(decl["statements"])) {
@@ -611,11 +664,7 @@ function checkMethod(m: unknown, path: string): IRValidationError[] {
     if (!isArr(m["params"])) {
         errors.push(e(`${path}.params`, "must be an array"));
     } else {
-        m["params"].forEach((p, i) => {
-            if (!isObj(p)) { errors.push(e(`${path}.params[${i}]`, "must be an object")); return; }
-            if (!isStr(p["name"]) || p["name"] === "") errors.push(e(`${path}.params[${i}].name`, "must be a non-empty string"));
-            errors.push(...checkType(p["type"], `${path}.params[${i}].type`));
-        });
+        m["params"].forEach((p, i) => errors.push(...checkParam(p, `${path}.params[${i}]`)));
     }
     if ("returnType" in m && m["returnType"] !== undefined) {
         errors.push(...checkType(m["returnType"], `${path}.returnType`));

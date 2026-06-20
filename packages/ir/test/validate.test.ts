@@ -536,4 +536,66 @@ describe("validateIR — intrinsics & declarations", () => {
         };
         assert.equal(validateIR(doc).valid, false);
     });
+
+    it("accepts services with method contracts (signatures only)", () => {
+        const doc = {
+            ...goldenIR,
+            services: [{
+                id: "service:Greeter",
+                name: "Greeter",
+                sourceName: "Greeter",
+                visibility: "public",
+                methods: [
+                    {
+                        name: "greet",
+                        params: [{ name: "input", type: { kind: "reference", schema: "In" } }],
+                        returnType: { kind: "reference", schema: "Out" },
+                        visibility: "public",
+                        source: minimalSource,
+                    },
+                    { name: "ping", params: [], visibility: "private", source: minimalSource },
+                ],
+                source: minimalSource,
+            }],
+        };
+        const result = validateIR(doc);
+        assert.equal(result.valid, true, JSON.stringify(result.errors));
+    });
+
+    it("rejects a service method with a malformed param type (right path)", () => {
+        const doc = {
+            ...goldenIR,
+            services: [{
+                id: "service:S",
+                name: "S",
+                sourceName: "S",
+                visibility: "public",
+                methods: [{
+                    name: "m",
+                    params: [{ name: "p", type: { kind: "nope" } }],
+                    visibility: "public",
+                    source: minimalSource,
+                }],
+                source: minimalSource,
+            }],
+        };
+        const result = validateIR(doc);
+        assert.equal(result.valid, false);
+        assert.ok(result.errors.some((e) => e.path.includes("services[0].methods[0].params[0].type")));
+    });
+
+    it("rejects a service method missing visibility", () => {
+        const doc = {
+            ...goldenIR,
+            services: [{
+                id: "service:S",
+                name: "S",
+                sourceName: "S",
+                visibility: "public",
+                methods: [{ name: "m", params: [], source: minimalSource }],
+                source: minimalSource,
+            }],
+        };
+        assert.equal(validateIR(doc).valid, false);
+    });
 });

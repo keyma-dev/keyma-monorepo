@@ -8,6 +8,8 @@ import {
     emitFormattersJs, emitFormattersDts,
     emitFunctionFiles,
 } from "./emit-validators.js";
+import { emitServicesJs, emitServicesDts, type ServiceEmitDeps } from "./emit-service.js";
+import { emitTypesJs, emitTypesDts } from "./emit-types.js";
 import { moduleOf, identitySanitizer } from "./module-path.js";
 import { resolveJsTarget, type JsTargetConfig } from "./types.js";
 
@@ -25,7 +27,10 @@ type SharedDeps = Pick<
     ModuleEmitDeps,
     "schemaModule" | "embeddedTypeNames" | "validatorDecls" | "formatterDecls" | "functionNames"
     | "validatorsModuleRef" | "formattersModuleRef" | "functionsModuleRef"
->;
+> & {
+    /** sourceName → schema runtime name (used by service metadata for validation/refs keys). */
+    schemaName: ReadonlyMap<string, string>;
+};
 
 type Decls = {
     validators: readonly IRValidatorDeclaration[];
@@ -59,6 +64,7 @@ export async function emitJs(
     const shared: SharedDeps = {
         schemaModule,
         embeddedTypeNames: new Map(ir.schemas.map((s) => [s.sourceName, s.sourceName])),
+        schemaName: new Map(ir.schemas.map((s) => [s.sourceName, s.name])),
         validatorDecls: new Map(decls.validators.map((d) => [d.name, d])),
         formatterDecls: new Map(decls.formatters.map((d) => [d.name, d])),
         functionNames: new Set(decls.functions.map((d) => d.name)),
@@ -101,6 +107,11 @@ function emitBundle(
     const files: EmitFile[] = [];
     const deps: ModuleEmitDeps = { ...opts, ...shared };
 
+    // Inlined, dependency-free type surface — every generated `.d.ts` imports its
+    // runtime types from here instead of `@keyma/runtime-js`.
+    files.push({ path: path.posix.join(bundleDir, "types.js"), content: emitTypesJs() });
+    files.push({ path: path.posix.join(bundleDir, "types.d.ts"), content: emitTypesDts() });
+
     const visibleSchemas: IRSchema[] = opts.includePrivate
         ? ir.schemas
         : ir.schemas.filter((s) => s.visibility === "public");
@@ -134,9 +145,24 @@ function emitBundle(
         files.push({ path: path.posix.join(bundleDir, "formatters.d.ts"), content: emitFormattersDts(decls.formatters) });
     }
 
+    // Remotely-callable services (gated by visibility like schemas).
+    const services = ir.services ?? [];
+    const visibleServices = opts.includePrivate ? services : services.filter((s) => s.visibility === "public");
+    if (visibleServices.length > 0) {
+        const serviceDeps: ServiceEmitDeps = {
+            includePrivate: opts.includePrivate,
+            schemaModule: shared.schemaModule,
+            embeddedTypeNames: shared.embeddedTypeNames,
+            schemaName: shared.schemaName,
+        };
+        files.push({ path: path.posix.join(bundleDir, "services.js"), content: emitServicesJs(services, serviceDeps) });
+        files.push({ path: path.posix.join(bundleDir, "services.d.ts"), content: emitServicesDts(services, serviceDeps) });
+    }
+
+    const serviceNames = visibleServices.map((s) => s.sourceName);
     const indexOpts = { includePrivate: opts.includePrivate, emitMaterializers: opts.emitMaterializers };
-    files.push({ path: path.posix.join(bundleDir, "index.js"), content: emitIndexJs(visibleSchemas, shared.schemaModule, indexOpts) });
-    files.push({ path: path.posix.join(bundleDir, "index.d.ts"), content: emitIndexDts(visibleSchemas, shared.schemaModule, indexOpts) });
+    files.push({ path: path.posix.join(bundleDir, "index.js"), content: emitIndexJs(visibleSchemas, shared.schemaModule, indexOpts, serviceNames) });
+    files.push({ path: path.posix.join(bundleDir, "index.d.ts"), content: emitIndexDts(visibleSchemas, shared.schemaModule, indexOpts, serviceNames) });
 
     return files;
 }

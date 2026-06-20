@@ -98,8 +98,8 @@ function tryDiscoverSchema(
     return result;
 }
 
-/** Find a named class-level decorator (e.g. "Schema" or "Edge") from the DSL module. */
-function findKeymaClassDecorator(
+/** Find a named class-level decorator (e.g. "Schema", "Edge", "Service") from the DSL module. */
+export function findKeymaClassDecorator(
     node: ts.ClassDeclaration,
     checker: ts.TypeChecker,
     dslModuleName: string,
@@ -121,8 +121,8 @@ function findKeymaClassDecorator(
     return undefined;
 }
 
-/** Extract @Schema decorator options from a call expression. */
-function extractSchemaOptions(
+/** Extract @Schema/@Edge/@Service decorator options from a call expression. */
+export function extractSchemaOptions(
     decorator: ts.Decorator,
     ctx: DiscoverContext
 ): DiscoveredSchema["schemaOptions"] {

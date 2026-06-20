@@ -26,6 +26,8 @@ export type {
     IRFormatterDeclaration,
     IRFunctionParam,
     IRFunctionDeclaration,
+    IRService,
+    IRServiceMethod,
     IREnumDeclaration,
     IRDiagnostic,
     IRSourceLocation,

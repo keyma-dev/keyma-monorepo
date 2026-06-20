@@ -63,6 +63,56 @@ export function lowerMethod(
     return method;
 }
 
+/**
+ * Lower just the SIGNATURE of a method — its typed parameters and return type —
+ * without lowering a body. Used for `@Service` contracts, whose methods are
+ * abstract (no body) and may be `async`/`Promise<T>` at the implementation site.
+ * Unlike {@link lowerMethod}, this does NOT reject async (no `isPortableCallable`)
+ * and peels a `Promise<...>` return wrapper. Returns `null` on a type-mapping
+ * error (a diagnostic is pushed). A `void`/`Promise<void>` return yields no
+ * `returnType`. Parameter types use the bare-class-reference mapping (a bare
+ * `@Schema` class means the whole record).
+ */
+export function lowerSignature(
+    member: ts.MethodDeclaration,
+    name: string,
+    ctx: MethodLowerCtx,
+): { params: IRFunctionParam[]; returnType?: IRType } | null {
+    const typeMapCtx = mkTypeMapCtx(ctx);
+    const params = lowerParams(member.parameters, name, typeMapCtx, ctx);
+    if (params === null) return null;
+
+    if (member.type === undefined) {
+        ctx.diagnostics.push(mkError(
+            KEYMA092,
+            `Service method "${name}" must declare an explicit return type (use \`: void\` when it returns nothing)`,
+            getLocation(member, ctx.sourceFile),
+        ));
+        return null;
+    }
+
+    const peeled = peelPromise(member.type);
+    if (peeled.kind === ts.SyntaxKind.VoidKeyword) {
+        return { params };
+    }
+    const mapped = mapAnnotated(peeled, typeMapCtx, ctx);
+    if (mapped === null) return null;
+    return { params, returnType: mapped };
+}
+
+/** Unwrap a `Promise<T>` return annotation to `T`; pass other nodes through. */
+function peelPromise(t: ts.TypeNode): ts.TypeNode {
+    if (
+        ts.isTypeReferenceNode(t) &&
+        ts.isIdentifier(t.typeName) &&
+        t.typeName.text === "Promise" &&
+        t.typeArguments?.length === 1
+    ) {
+        return t.typeArguments[0]!;
+    }
+    return t;
+}
+
 /** Lower a setter to an `IRMethod` behavior (`kind: "setter"`, one typed value param). */
 export function lowerSetter(
     member: ts.SetAccessorDeclaration,

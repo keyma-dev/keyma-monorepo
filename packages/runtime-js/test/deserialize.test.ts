@@ -1,7 +1,8 @@
 import { describe, it } from "node:test";
 import assert from "node:assert/strict";
 import { deserialize } from "../src/deserialize.js";
-import { brandSchema, type SchemaMetadata, type SchemaClass } from "../src/types.js";
+import type { SchemaMetadata, SchemaClass } from "../src/types.js";
+import { brandSchema } from "../src/brand.js";
 
 // ─── Reusable mini-schemas ───────────────────────────────────────────────────
 

@@ -284,6 +284,37 @@ export type IRSchema = {
 };
 
 /**
+ * A single remotely-callable method of a service. Only the SIGNATURE is lowered
+ * — there is no body (service implementations live in server runtime code, never
+ * compiled). `params` are the declared data parameters; the injected request
+ * context is not represented here. `returnType` is the value type (any
+ * `Promise<...>` wrapper is peeled by the frontend); absent for `void` returns.
+ */
+export type IRServiceMethod = {
+    name: string;
+    params: IRFunctionParam[];
+    returnType?: IRType;
+    visibility: "public" | "private";
+    source: IRSourceLocation;
+};
+
+/**
+ * A service: a group of remotely-callable functions authored as an `abstract
+ * class` decorated with `@Service(...)`. Each abstract method becomes an
+ * `IRServiceMethod`. Backends generate a client stub (for `Keyma.call`) and a
+ * server abstract base class the application extends to implement the methods.
+ */
+export type IRService = {
+    id: string;
+    name: string;
+    sourceName: string;
+    visibility: "public" | "private";
+    description?: string;
+    methods: IRServiceMethod[];
+    source: IRSourceLocation;
+};
+
+/**
  * A named, reusable enum authored as a TypeScript `enum` and referenced across
  * schemas. Members carry both their identifier and string value.
  */
@@ -304,5 +335,7 @@ export type KeymaIR = {
     formatterDeclarations?: IRFormatterDeclaration[];
     /** Project-local utility functions referenced (transitively) from validator/formatter bodies. */
     functionDeclarations?: IRFunctionDeclaration[];
+    /** Remotely-callable service contracts authored with `@Service(...)`. */
+    services?: IRService[];
     diagnostics: IRDiagnostic[];
 };

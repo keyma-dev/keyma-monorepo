@@ -81,7 +81,16 @@ export type KeymaOperation =
           spec: TraversalSpec;
           project?: ProjectionSpec;
       }
-    | { op: "count"; schema: string; where?: Record<string, unknown> };
+    | { op: "count"; schema: string; where?: Record<string, unknown> }
+    | {
+          op: "call";
+          /** Service name (the generated class name / `@Service({ name })`). */
+          service: string;
+          /** Method name on the service. */
+          method: string;
+          /** Call arguments, keyed by the method's declared parameter names. */
+          args: Record<string, unknown>;
+      };
 
 export type KeymaRequest = {
     operations: Record<string, KeymaOperation>;

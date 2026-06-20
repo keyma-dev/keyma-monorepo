@@ -36,12 +36,13 @@ export {
     Edge,
     From,
     To,
+    Service,
 } from "./decorators.js";
 export type {
     SchemaOptions,
     IndexOptions,
     EdgeOptions,
-    EdgeBrand,
     FormatPhase,
     FormFieldOptions,
+    ServiceOptions,
 } from "./decorators.js";

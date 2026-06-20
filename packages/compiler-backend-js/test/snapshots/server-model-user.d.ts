@@ -1,4 +1,4 @@
-import type { SchemaMetadata } from "@keyma/runtime-js";
+import type { SchemaMetadata } from "../types.js";
 
 export declare class User {
     static readonly schema: SchemaMetadata;

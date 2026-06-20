@@ -10,7 +10,10 @@ import { createValidatorFormatterCollector } from "./discover-validators.js";
 import { lowerValidatorDeclaration, lowerFormatterDeclaration, type LowerDeps } from "./lower-validator.js";
 import { createFunctionCollector } from "./lower-function.js";
 import { extractSchema } from "./extract-schema.js";
+import { discoverServices } from "./discover-services.js";
+import { extractService } from "./extract-service.js";
 import { flattenAll } from "./flatten.js";
+import type { IRService, IRType } from "@keyma/ir";
 import {
     mkError,
     mkWarning,
@@ -22,6 +25,8 @@ import {
     KEYMA060,
     KEYMA064,
     KEYMA070,
+    KEYMA096,
+    KEYMA097,
 } from "./diagnostics.js";
 
 export type FrontendConfig = {
@@ -98,6 +103,9 @@ function compileProgram(program: ts.Program, config: FrontendConfig): CompileRes
     // Pass 1b: discover TS enum declarations referenced by schema fields
     const enums = discoverEnums(program);
 
+    // Pass 1c: discover @Service classes (remote-call contracts)
+    const discoveredServices = discoverServices(program, discoverCtx);
+
     const schemaClassNames = new Set(discovered.map((d) => d.className));
 
     // Validator/formatter collector: resolves each `@Validate`/`@Format` factory at
@@ -170,6 +178,20 @@ function compileProgram(program: ts.Program, config: FrontendConfig): CompileRes
     // Pass 6: lower the utility functions referenced (transitively) from the bodies above.
     const functionDeclarations = functionCollector.drain();
 
+    // Pass 7: extract @Service contracts (signatures only — no bodies). Runs after
+    // schemas so param/return types can resolve schema class names.
+    const services = discoveredServices.map((d) =>
+        extractService(d, {
+            checker,
+            dslModuleName,
+            schemaClassNames,
+            ...(enums !== undefined && { enums }),
+            diagnostics,
+        }),
+    );
+    checkServiceVisibilityLeaks(schemas, services, diagnostics);
+    checkServiceNameCollisions(schemas, services, diagnostics);
+
     const ir: KeymaIR = {
         irVersion: config.irVersion ?? "3.0.0",
         compilerVersion: config.compilerVersion ?? "0.1.0",
@@ -185,8 +207,80 @@ function compileProgram(program: ts.Program, config: FrontendConfig): CompileRes
     if (validatorDeclarations.length > 0) ir.validatorDeclarations = validatorDeclarations;
     if (formatterDeclarations.length > 0) ir.formatterDeclarations = formatterDeclarations;
     if (functionDeclarations.length > 0) ir.functionDeclarations = functionDeclarations;
+    if (services.length > 0) ir.services = services;
 
     return { ir, diagnostics };
+}
+
+/** A public service method must not expose a private schema via a param/return type. */
+function checkServiceVisibilityLeaks(
+    schemas: IRSchema[],
+    services: IRService[],
+    diagnostics: IRDiagnostic[],
+): void {
+    const privateSchemas = new Set(
+        schemas.filter((s) => s.visibility === "private").map((s) => s.sourceName),
+    );
+    const leakedSchema = (t: IRType): string | undefined => {
+        const inner = t.kind === "array" ? t.of : t;
+        if ((inner.kind === "reference" || inner.kind === "embedded") && privateSchemas.has(inner.schema)) {
+            return inner.schema;
+        }
+        return undefined;
+    };
+
+    for (const service of services) {
+        if (service.visibility !== "public") continue;
+        for (const method of service.methods) {
+            if (method.visibility !== "public") continue;
+            const types: IRType[] = [...method.params.map((p) => p.type)];
+            if (method.returnType !== undefined) types.push(method.returnType);
+            for (const t of types) {
+                const leaked = leakedSchema(t);
+                if (leaked !== undefined) {
+                    diagnostics.push(
+                        mkError(
+                            KEYMA096,
+                            `Public service "${service.sourceName}" method "${method.name}" exposes private schema "${leaked}"`,
+                            method.source,
+                        ),
+                    );
+                }
+            }
+        }
+    }
+}
+
+/** Service names must be unique and must not collide with a schema name. */
+function checkServiceNameCollisions(
+    schemas: IRSchema[],
+    services: IRService[],
+    diagnostics: IRDiagnostic[],
+): void {
+    const schemaNames = new Set(schemas.map((s) => s.name));
+    const seen = new Set<string>();
+    for (const service of services) {
+        if (schemaNames.has(service.name)) {
+            diagnostics.push(
+                mkError(
+                    KEYMA097,
+                    `Service name "${service.name}" collides with a schema of the same name`,
+                    service.source,
+                ),
+            );
+        }
+        if (seen.has(service.name)) {
+            diagnostics.push(
+                mkError(
+                    KEYMA097,
+                    `Duplicate service name "${service.name}"`,
+                    service.source,
+                ),
+            );
+        } else {
+            seen.add(service.name);
+        }
+    }
 }
 
 function checkDuplicateNames(schemas: import("@keyma/ir").IRSchema[], diagnostics: IRDiagnostic[]): void {

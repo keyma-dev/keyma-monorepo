@@ -12,16 +12,6 @@ export type SchemaOptions = {
     description?: string;
 };
 
-/**
- * Phantom brand carried on edge classes at the type level. Reads as
- * "this class represents an edge whose source is `From` and target is `To`."
- * Used by Keyma.traverse(...) to type-check step chains.
- */
-declare const __edgeBrand: unique symbol;
-export interface EdgeBrand<From, To> {
-    readonly [__edgeBrand]: { from: From; to: To };
-}
-
 export type EdgeOptions = SchemaOptions & {
     /** Defaults to true. Undirected edges are traversable both ways. */
     directed?: boolean;
@@ -170,10 +160,9 @@ export function Format(
  * node schema is its declared type (bare class `T` or `Reference<T>`); the
  * endpoint fields are indexed automatically.
  *
- * The compiler-generated edge class is branded with `EdgeBrand<From, To>` at
- * the type level (derived from the `@From()`/`@To()` field types) so
- * `Keyma.traverse(...)` can type-check step chains. The authored DSL class
- * itself is not branded.
+ * The compiler-generated edge class carries a structural `__edge` type marker
+ * (derived from the `@From()`/`@To()` field types) so `Keyma.traverse(...)` can
+ * type-check step chains. The authored DSL class itself is not marked.
  *
  * No-op at runtime — the decorator implementation does nothing.
  */
@@ -200,5 +189,30 @@ export function From(): PropertyDecorator {
  * No-op at runtime — the decorator implementation does nothing.
  */
 export function To(): PropertyDecorator {
+    return () => undefined;
+}
+
+export type ServiceOptions = {
+    /** Service name used on the wire and as the generated class name. Defaults to the class name. */
+    name?: string;
+    /** When true, this service is excluded from client-side bundles and is uncallable by non-system callers. */
+    private?: boolean;
+    /** Human-readable description of this service. */
+    description?: string;
+};
+
+/**
+ * Marks an `abstract class` as a Keyma service — a group of remotely-callable
+ * functions. The compiler extracts each abstract method's signature (name, typed
+ * parameters, return type, visibility) into IR; bodies are never compiled. The
+ * server implements the service by extending the generated abstract base class;
+ * the client invokes methods type-safely via `Keyma.call(Service, "method", args)`.
+ *
+ * Service inputs/outputs are typically `@Schema({ ephemeral: true })` classes so
+ * arguments are validated and results hydrated, but primitives are allowed too.
+ *
+ * No-op at runtime — the decorator implementation does nothing.
+ */
+export function Service(_options?: ServiceOptions): ClassDecorator {
     return () => undefined;
 }

@@ -2,6 +2,10 @@ import type {
     SchemaMetadata,
     FieldType,
     ValidationError,
+    ServiceClass,
+    ServiceMetadata,
+    ServiceInstance,
+    ServiceProvider,
 } from "./types.js";
 import type {
     KeymaDatabaseAdapter,
@@ -35,11 +39,18 @@ type ServerOptions = {
     schemas: SchemaMetadata[];
     adapter: KeymaDatabaseAdapter;
     plugins?: KeymaServerPlugin[];
+    /** Remotely-callable services. Each entry is a service instance (or a zero-arg
+     *  factory producing one) whose class extends the generated abstract base and
+     *  carries a static `service` contract. */
+    services?: ServiceProvider[];
 };
+
+type ServiceEntry = { instance: ServiceInstance; metadata: ServiceMetadata };
 
 export class KeymaServer {
     private readonly schemaMap: Map<string, SchemaMetadata>;
     private readonly plugins: readonly KeymaServerPlugin[];
+    private readonly serviceMap = new Map<string, ServiceEntry>();
     private initialized = false;
 
     constructor(private readonly opts: ServerOptions) {
@@ -82,6 +93,32 @@ export class KeymaServer {
         return schema;
     }
 
+    /** Build the service dispatch map from the registered providers. Factories are
+     *  invoked once here (lazy singleton); the metadata rides on the instance's
+     *  constructor (`static service`), inherited through the subclass. */
+    private registerServices(): void {
+        for (const provider of this.opts.services ?? []) {
+            const instance: ServiceInstance =
+                typeof provider === "function"
+                    ? (provider as () => ServiceInstance)()
+                    : provider;
+            const metadata = (instance.constructor as Partial<ServiceClass>).service;
+            if (metadata === undefined) {
+                throw new KeymaRuntimeError(
+                    "INVALID_SERVICE",
+                    `Service ${instance.constructor.name} is missing static service metadata — does it extend the generated service class?`,
+                );
+            }
+            if (this.serviceMap.has(metadata.name)) {
+                throw new KeymaRuntimeError(
+                    "DUPLICATE_SERVICE",
+                    `Service "${metadata.name}" is registered more than once`,
+                );
+            }
+            this.serviceMap.set(metadata.name, { instance, metadata });
+        }
+    }
+
     /** Release adapter-owned resources (connections). Symmetric with
      *  `ensureSchemas()`; safe to call even if the adapter manages no connection. */
     async close(): Promise<void> {
@@ -91,6 +128,7 @@ export class KeymaServer {
     private async ensureInitialized(): Promise<void> {
         if (this.initialized) return;
         this.initialized = true;
+        this.registerServices();
         await this.opts.adapter.connect?.();
         const handle: PluginServerHandle = {
             schemas: this.opts.schemas,
@@ -121,40 +159,51 @@ export class KeymaServer {
                     if (next !== undefined) op = next;
                 }
             }
-            const schema = this.resolveSchema(op.schema, context);
-            // Ephemeral schemas are never persisted and cannot be queried through
-            // the server — they exist only for validation/serialization.
-            if (schema.ephemeral) {
-                throw new KeymaRuntimeError(
-                    "NOT_PERSISTED",
-                    `Schema "${op.schema}" is ephemeral and cannot be queried`,
-                );
-            }
-            for (const p of this.plugins) {
-                if (p.beforeOperation !== undefined) await p.beforeOperation(context, op);
-            }
-            switch (op.op) {
-                case "list":
-                    result = await this.handleList(schema, op, context);
-                    break;
-                case "read":
-                    result = await this.handleRead(schema, op, context);
-                    break;
-                case "create":
-                    result = await this.handleCreate(schema, op, context);
-                    break;
-                case "update":
-                    result = await this.handleUpdate(schema, op, context);
-                    break;
-                case "delete":
-                    result = await this.handleDelete(schema, op, context);
-                    break;
-                case "traverse":
-                    result = await this.handleTraverse(schema, op, context);
-                    break;
-                case "count":
-                    result = await this.handleCount(schema, op, context);
-                    break;
+            // A `call` op targets a service, not a schema — it has no `op.schema`,
+            // so it branches out before schema resolution. Op-level plugin hooks
+            // (transformOperation above, beforeOperation/afterOperation) still run;
+            // schema-scoped hooks do not apply.
+            if (op.op === "call") {
+                for (const p of this.plugins) {
+                    if (p.beforeOperation !== undefined) await p.beforeOperation(context, op);
+                }
+                result = await this.handleCall(op, context);
+            } else {
+                const schema = this.resolveSchema(op.schema, context);
+                // Ephemeral schemas are never persisted and cannot be queried through
+                // the server — they exist only for validation/serialization.
+                if (schema.ephemeral) {
+                    throw new KeymaRuntimeError(
+                        "NOT_PERSISTED",
+                        `Schema "${op.schema}" is ephemeral and cannot be queried`,
+                    );
+                }
+                for (const p of this.plugins) {
+                    if (p.beforeOperation !== undefined) await p.beforeOperation(context, op);
+                }
+                switch (op.op) {
+                    case "list":
+                        result = await this.handleList(schema, op, context);
+                        break;
+                    case "read":
+                        result = await this.handleRead(schema, op, context);
+                        break;
+                    case "create":
+                        result = await this.handleCreate(schema, op, context);
+                        break;
+                    case "update":
+                        result = await this.handleUpdate(schema, op, context);
+                        break;
+                    case "delete":
+                        result = await this.handleDelete(schema, op, context);
+                        break;
+                    case "traverse":
+                        result = await this.handleTraverse(schema, op, context);
+                        break;
+                    case "count":
+                        result = await this.handleCount(schema, op, context);
+                        break;
+                }
             }
         } catch (err) {
             result = errorToResult(err);
@@ -338,6 +387,66 @@ export class KeymaServer {
         const where = await this.runFilterHooks(context, schema, op.where ?? {}, "count");
         let n: number = await this.opts.adapter.count(schema, where);
         return { ok: true, data: n };
+    }
+
+    private async handleCall(
+        op: Extract<KeymaOperation, { op: "call" }>,
+        context: RequestContext,
+    ): Promise<KeymaLeafResult> {
+        const isSystem = context.identity?.isSystem === true;
+
+        // Resolve the service. Private services are treated as non-existent for
+        // non-system callers (probing-resistant, like resolveSchema).
+        const entry = this.serviceMap.get(op.service);
+        if (
+            entry === undefined ||
+            (entry.metadata.visibility === "private" && !isSystem)
+        ) {
+            throw new KeymaRuntimeError("SERVICE_NOT_FOUND", `Unknown service: ${op.service}`);
+        }
+
+        // Resolve the method. Private methods are likewise hidden from non-system callers.
+        const method = entry.metadata.methods.find((m) => m.name === op.method);
+        if (
+            method === undefined ||
+            (method.visibility === "private" && !isSystem)
+        ) {
+            throw new KeymaRuntimeError(
+                "METHOD_NOT_FOUND",
+                `Unknown method "${op.method}" on service "${op.service}"`,
+            );
+        }
+
+        const impl = (entry.instance as Record<string, unknown>)[op.method];
+        if (typeof impl !== "function") {
+            throw new KeymaRuntimeError(
+                "METHOD_NOT_IMPLEMENTED",
+                `Service "${op.service}" does not implement "${op.method}"`,
+            );
+        }
+
+        // Validate schema-typed arguments against their (ephemeral) input schemas.
+        const errors: ValidationError[] = [];
+        for (const param of method.params) {
+            if (param.schema === undefined) continue;
+            const paramSchema = this.schemaMap.get(param.schema);
+            if (paramSchema === undefined) continue;
+            const value = op.args[param.name];
+            if (value !== undefined && value !== null) {
+                errors.push(...(await validate(paramSchema, value as Record<string, unknown>)));
+            }
+        }
+        if (errors.length > 0) {
+            throw new ValidationFailedError(errors);
+        }
+
+        // Invoke positionally in declared param order, with request context appended.
+        const args = method.params.map((p) => op.args[p.name]);
+        const data = await (impl as (...a: unknown[]) => unknown).apply(entry.instance, [
+            ...args,
+            context,
+        ]);
+        return { ok: true, data: data ?? null };
     }
 
     // ── Hook folds ───────────────────────────────────────────────────────────
