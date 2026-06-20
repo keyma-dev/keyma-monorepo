@@ -1,15 +1,28 @@
 import { describe, it } from "node:test";
 import assert from "node:assert/strict";
 
-import { Schema, Validate, Indexed, Format, Validator, Formatter, Ephemeral } from "../src/decorators.js";
-import type { ValidatorRef, FormatterRef } from "../src/types.js";
+import { Schema, Validate, Indexed, Format, Ephemeral } from "../src/decorators.js";
+import type { ValidatorFn, FormatterFn } from "../src/types.js";
 
-// ── Sample ValidatorRef and FormatterRef for testing ─────────────────────────
+// ── Sample ValidatorFn / FormatterFn factories for testing ────────────────────
 
-const testValidator: ValidatorRef = { __validatorName: "required" };
-const testValidator2: ValidatorRef = { __validatorName: "minLength", params: { value: 2 } };
-const testFormatter: FormatterRef = { __formatterName: "trim" };
-const testFormatter2: FormatterRef = { __formatterName: "lowercase" };
+function required(): ValidatorFn<string> {
+    return (value, field) => (value.length > 0 ? null : { field, code: "required", message: `${field} is required` });
+}
+function minLength(m: number): ValidatorFn<string> {
+    return (value, field) => (value.length >= m ? null : { field, code: "minLength", message: `${field} too short` });
+}
+function trim(): FormatterFn<string> {
+    return (value) => value.trim();
+}
+function lowercase(): FormatterFn<string> {
+    return (value) => value.toLowerCase();
+}
+
+const testValidator = required();
+const testValidator2 = minLength(2);
+const testFormatter = trim();
+const testFormatter2 = lowercase();
 
 // ── Decorator smoke tests ─────────────────────────────────────────────────────
 
@@ -49,43 +62,20 @@ describe("@keyma/dsl decorators", () => {
     });
 });
 
-// ── Validator / Formatter function tests ─────────────────────────────────────
+// ── Validator / Formatter authoring tests ────────────────────────────────────
 
-describe("Validator(name, fn)", () => {
-    it("returns a factory function", () => {
-        const minLength = Validator("minLength", (value: number) => (_raw: unknown) => null);
-        assert.equal(typeof minLength, "function");
+describe("validator/formatter factories", () => {
+    it("a validator factory returns a ValidatorFn that produces an error or null", () => {
+        const fn = minLength(2);
+        assert.equal(typeof fn, "function");
+        assert.equal(fn("ok", "name", { object: {} }), null);
+        assert.deepEqual(fn("x", "name", { object: {} }), { field: "name", code: "minLength", message: "name too short" });
     });
 
-    it("calling the factory returns a ValidatorRef with the registered name", () => {
-        const minLength = Validator("minLength", (value: number) => (_raw: unknown) => null);
-        const ref = minLength(5);
-        assert.equal(ref.__validatorName, "minLength");
-    });
-
-    it("works with zero factory params", () => {
-        const isRequired = Validator("required", () => (_raw: unknown) => null);
-        const ref = isRequired();
-        assert.equal(ref.__validatorName, "required");
-    });
-});
-
-describe("Formatter(name, fn)", () => {
-    it("returns a factory function", () => {
-        const trim = Formatter("trim", () => (v: unknown) => v);
-        assert.equal(typeof trim, "function");
-    });
-
-    it("calling the factory returns a FormatterRef with the registered name", () => {
-        const trim = Formatter("trim", () => (v: unknown) => v);
-        const ref = trim();
-        assert.equal(ref.__formatterName, "trim");
-    });
-
-    it("works with factory params", () => {
-        const maxLen = Formatter("maxLen", (limit: number) => (v: unknown) => v);
-        const ref = maxLen(100);
-        assert.equal(ref.__formatterName, "maxLen");
+    it("a formatter factory returns a FormatterFn that transforms the value", () => {
+        const fn = trim();
+        assert.equal(typeof fn, "function");
+        assert.equal(fn("  hi  ", { object: {} }), "hi");
     });
 });
 
@@ -114,7 +104,7 @@ describe("DSL usage example", () => {
 // ── New authoring-surface API (Phase 5/6) ─────────────────────────────────────
 
 import {
-    Computed, Default, Now, Uuid, Phase, FormField, Deprecated,
+    Computed, Phase, FormField, Deprecated,
 } from "../src/decorators.js";
 
 describe("@keyma/dsl new authoring API", () => {
@@ -122,31 +112,15 @@ describe("@keyma/dsl new authoring API", () => {
         assert.deepEqual(Phase, { Change: "change", Blur: "blur", Submit: "submit", Save: "save" });
     });
 
-    it("@Computed/@FormField/@Deprecated/@Default are no-op property decorators", () => {
+    it("@Computed/@FormField/@Deprecated are no-op property decorators", () => {
         for (const make of [
             () => Computed(),
             () => FormField({ title: "x" }),
             () => Deprecated("gone"),
-            () => Default("a"),
-            () => Default(Now),
         ]) {
             const d = make();
             assert.equal(typeof d, "function");
             assert.equal(d({}, "field"), undefined);
         }
-    });
-
-    it("Now and Uuid are generator functions", () => {
-        assert.equal(typeof Now, "function");
-        assert.equal(typeof Uuid, "function");
-    });
-
-    it("Validator infers a name (single-arg) and accepts an explicit name", () => {
-        const inferred = Validator((n: number) => (v: string) => v.length >= n ? null : null);
-        const explicit = Validator("emailAddress", () => (v: string) => v.includes("@") ? null : null);
-        assert.equal(typeof inferred, "function");
-        assert.equal(typeof explicit, "function");
-        // explicit form carries its name into the ref at runtime
-        assert.equal((explicit() as { __validatorName: string }).__validatorName, "emailAddress");
     });
 });

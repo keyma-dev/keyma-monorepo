@@ -1,4 +1,4 @@
-import type { ValidatorRef, FormatterRef, UserValidatorFn, UserFormatterFn, DateTime, ID } from "./types.js";
+import type { ValidatorFn, FormatterFn } from "./types.js";
 
 export type SchemaOptions = {
     /** Database/canonical collection name. Defaults to the class name (lowercased). */
@@ -49,75 +49,14 @@ export function Schema(_options?: SchemaOptions): ClassDecorator {
 }
 
 /**
- * Declares a named validator factory. The Keyma compiler reads the factory
- * parameter list and the returned inner function body from the AST and lowers
- * them to IRValidatorDeclaration. At runtime the returned wrapper calls the
- * factory and produces a ValidatorRef used by @Validate().
- *
- * The name is inferred from the exported `const` binding (`Validator(fn)`), or
- * given explicitly when it must differ (`Validator("name", fn)`).
- *
- * @remarks
- * The factory and its inner function must use the portable expression subset —
- * the `value` parameter must be concretely typed, and only intrinsic method calls
- * are allowed. See the "@keyma/dsl" README → "Portable expression subset".
- *
- * @example
- * export const minLength = Validator((value: number) =>
- *     (raw: string, fieldKey: string, ctx: ValidatorContext): ValidationError | undefined => {
- *         if (raw.length < value)
- *             return { field: fieldKey, code: "MIN_LENGTH", message: `${fieldKey} must be at least ${value} characters` };
- *     }
- * );
- */
-export function Validator<F extends Factory>(
-    factory: F,
-): (...args: Parameters<F>) => ValidatorRef<string>;
-export function Validator<N extends string, F extends Factory>(
-    name: N,
-    factory: F,
-): (...args: Parameters<F>) => ValidatorRef<N>;
-export function Validator(
-    nameOrFactory: string | Factory,
-    _factory?: Factory,
-): (...args: unknown[]) => ValidatorRef {
-    const name = typeof nameOrFactory === "string" ? nameOrFactory : "";
-    return () => ({ __validatorName: name });
-}
-
-/** A validator/formatter factory: outer args → an inner `(value, ...) => result` function. */
-type Factory = (...factoryArgs: any[]) => ((...innerArgs: any[]) => any);
-
-/**
- * Declares a named formatter factory. The Keyma compiler reads the factory
- * parameter list and the returned inner function body from the AST and lowers
- * them to IRFormatterDeclaration. At runtime the returned wrapper calls the
- * factory and produces a FormatterRef used by @Format().
- */
-export function Formatter<F extends Factory>(
-    factory: F,
-): (...args: Parameters<F>) => FormatterRef<string>;
-export function Formatter<N extends string, F extends Factory>(
-    name: N,
-    factory: F,
-): (...args: Parameters<F>) => FormatterRef<N>;
-export function Formatter(
-    nameOrFactory: string | Factory,
-    _factory?: Factory,
-): (...args: unknown[]) => FormatterRef {
-    const name = typeof nameOrFactory === "string" ? nameOrFactory : "";
-    return () => ({ __formatterName: name });
-}
-
-/**
- * Attaches validators to a field. The compiler reads each argument from the AST
- * and lowers it to the corresponding IRValidator.
- *
- * Accepts ValidatorRef markers (from factory functions) or direct UserValidatorFn references.
+ * Attaches validators to a field. Each argument is a {@link ValidatorFn} produced
+ * by calling a validator factory, e.g. `@Validate(minLength(2), isEmail())`. The
+ * compiler resolves each factory to its declaration, lowers its body to IR, and
+ * re-emits the implementation directly into the generated schema.
  *
  * No-op at runtime — the decorator implementation does nothing.
  */
-export function Validate(..._validators: (ValidatorRef | UserValidatorFn)[]): PropertyDecorator {
+export function Validate(..._validators: ValidatorFn<any>[]): PropertyDecorator {
     return () => undefined;
 }
 
@@ -127,26 +66,6 @@ export function Validate(..._validators: (ValidatorRef | UserValidatorFn)[]): Pr
  * No-op at runtime — the decorator implementation does nothing.
  */
 export function Indexed(_options?: IndexOptions): PropertyDecorator {
-    return () => undefined;
-}
-
-/**
- * Default-value generators recognized by `@Default(...)`. The compiler resolves
- * them by identity (name), lowering to a `{ kind: "generator" }` default that the
- * runtime evaluates at create time. Their runtime bodies are illustrative only.
- */
-export const Now: () => DateTime = () => new Date();
-export const Uuid: () => ID = () => "" as ID;
-
-/**
- * Sets a field's default value, applied on create when the key is absent. Accepts
- * a literal (`@Default("active")`, `@Default(0)`) or a named generator
- * (`@Default(Now)`, `@Default(Uuid)`). A defaulted field is optional on create
- * input but always present in the stored record.
- *
- * No-op at runtime — the decorator implementation does nothing.
- */
-export function Default(_value: unknown): PropertyDecorator {
     return () => undefined;
 }
 
@@ -234,7 +153,7 @@ export type FormatPhase = (typeof Phase)[keyof typeof Phase];
  */
 export function Format(
     _phase: FormatPhase,
-    ..._formatters: (FormatterRef | UserFormatterFn)[]
+    ..._formatters: FormatterFn<any>[]
 ): PropertyDecorator {
     return () => undefined;
 }

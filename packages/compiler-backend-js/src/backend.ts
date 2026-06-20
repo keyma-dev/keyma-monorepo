@@ -1,15 +1,36 @@
 import path from "node:path";
-import type { KeymaIR, IRSchema } from "@keyma/ir";
+import type { KeymaIR, IRSchema, IRValidatorDeclaration, IRFormatterDeclaration, IRFunctionDeclaration } from "@keyma/ir";
 import type { KeymaBackend, KeymaTargetConfig, ResolvedConfig, EmitFile, EmitResult } from "@keyma/compiler";
-import { emitModelJs, emitModelDts } from "./emit-model.js";
+import { emitModuleJs, emitModuleDts, type ModuleEmitDeps } from "./emit-module.js";
 import { emitIndexJs, emitIndexDts } from "./emit-index.js";
-import { emitValidatorFiles, emitFormatterFiles, emitFunctionFiles } from "./emit-validators.js";
+import {
+    emitValidatorsJs, emitValidatorsDts,
+    emitFormattersJs, emitFormattersDts,
+    emitFunctionFiles,
+} from "./emit-validators.js";
+import { moduleOf, identitySanitizer } from "./module-path.js";
 import { resolveJsTarget, type JsTargetConfig } from "./types.js";
+
+const VALIDATORS_REF = "validators";
+const FORMATTERS_REF = "formatters";
+const FUNCTIONS_REF = "functions";
 
 export const jsBackend: KeymaBackend = {
     name: "@keyma/compiler-backend-js",
     target: "js",
     emit: emitJs,
+};
+
+type SharedDeps = Pick<
+    ModuleEmitDeps,
+    "schemaModule" | "embeddedTypeNames" | "validatorDecls" | "formatterDecls" | "functionNames"
+    | "validatorsModuleRef" | "formattersModuleRef" | "functionsModuleRef"
+>;
+
+type Decls = {
+    validators: readonly IRValidatorDeclaration[];
+    formatters: readonly IRFormatterDeclaration[];
+    functions: readonly IRFunctionDeclaration[];
 };
 
 export async function emitJs(
@@ -20,157 +41,102 @@ export async function emitJs(
     const jsTarget = resolveJsTarget(target as JsTargetConfig);
     const files: EmitFile[] = [];
 
-    // sourceName → file path relative to models dir, e.g. "User" → "auth/user"
-    const schemaPaths = new Map<string, string>(
+    const decls: Decls = {
+        validators: ir.validatorDeclarations ?? [],
+        formatters: ir.formatterDeclarations ?? [],
+        functions: ir.functionDeclarations ?? [],
+    };
+
+    // sourceName → bundle-relative module ref under models/ (e.g. "models/user/user"),
+    // derived from the SOURCE file — schemas authored in one file share one module.
+    const schemaModule = new Map<string, string>(
         ir.schemas.map((s) => [
             s.sourceName,
-            path.posix.join(getRelativeModelDir(s.source.file, ir.sourceRoot), s.name),
+            path.posix.join("models", moduleOf(s.source.file, ir.sourceRoot, identitySanitizer)),
         ])
     );
 
-    // sourceName → TypeScript class name (for embedded type references in .d.ts)
-    const embeddedTypeNames = new Map<string, string>(
-        ir.schemas.map((s) => [s.sourceName, s.sourceName])
-    );
+    const shared: SharedDeps = {
+        schemaModule,
+        embeddedTypeNames: new Map(ir.schemas.map((s) => [s.sourceName, s.sourceName])),
+        validatorDecls: new Map(decls.validators.map((d) => [d.name, d])),
+        formatterDecls: new Map(decls.formatters.map((d) => [d.name, d])),
+        functionNames: new Set(decls.functions.map((d) => d.name)),
+        validatorsModuleRef: VALIDATORS_REF,
+        formattersModuleRef: FORMATTERS_REF,
+        functionsModuleRef: FUNCTIONS_REF,
+    };
 
     if (jsTarget.emitClient) {
-        files.push(...emitBundle(ir, path.posix.join(jsTarget.outDir, "client"), schemaPaths, embeddedTypeNames, {
-            includePrivate: false,
-            includeIndexes: false,
-            emitMaterializers: false,
-            formPhasesOnly: true,
+        files.push(...emitBundle(ir, path.posix.join(jsTarget.outDir, "client"), shared, decls, {
+            includePrivate: false, includeIndexes: false, emitMaterializers: false, formPhasesOnly: true, includeDefaults: false,
         }));
     }
-
     if (jsTarget.emitServer) {
-        files.push(...emitBundle(ir, path.posix.join(jsTarget.outDir, "server"), schemaPaths, embeddedTypeNames, {
-            includePrivate: true,
-            includeIndexes: true,
-            emitMaterializers: true,
-            formPhasesOnly: false,
+        files.push(...emitBundle(ir, path.posix.join(jsTarget.outDir, "server"), shared, decls, {
+            includePrivate: true, includeIndexes: true, emitMaterializers: true, formPhasesOnly: false, includeDefaults: true,
         }));
     }
-
     if (jsTarget.emitLibrary) {
-        files.push(...emitBundle(ir, jsTarget.outDir, schemaPaths, embeddedTypeNames, {
-            includePrivate: true,
-            includeIndexes: true,
-            emitMaterializers: true,
-            formPhasesOnly: false,
+        files.push(...emitBundle(ir, jsTarget.outDir, shared, decls, {
+            includePrivate: true, includeIndexes: true, emitMaterializers: true, formPhasesOnly: false, includeDefaults: true,
         }));
-    }
-
-    // Validator and formatter declarations go into each enabled bundle (same content).
-    const validatorDecls = ir.validatorDeclarations ?? [];
-    const formatterDecls = ir.formatterDeclarations ?? [];
-    const functionDecls = ir.functionDeclarations ?? [];
-    const functionNames = functionDecls.map((d) => d.name);
-
-    const bundleDirs: string[] = [
-        ...(jsTarget.emitClient ? [path.posix.join(jsTarget.outDir, "client")] : []),
-        ...(jsTarget.emitServer ? [path.posix.join(jsTarget.outDir, "server")] : []),
-        ...(jsTarget.emitLibrary ? [jsTarget.outDir] : []),
-    ];
-
-    if (functionDecls.length > 0) {
-        const fn = emitFunctionFiles(functionDecls, embeddedTypeNames);
-        for (const bundleDir of bundleDirs) {
-            files.push({ path: `${bundleDir}/functions.js`, content: fn.functionsJs });
-            files.push({ path: `${bundleDir}/functions.d.ts`, content: fn.functionsDts });
-        }
-    }
-
-    if (validatorDecls.length > 0) {
-        const vf = emitValidatorFiles(validatorDecls, { functionNames });
-        for (const bundleDir of bundleDirs) {
-            files.push({ path: `${bundleDir}/validators.js`, content: vf.factoriesJs });
-            files.push({ path: `${bundleDir}/validators.d.ts`, content: vf.factoriesDts });
-            files.push({ path: `${bundleDir}/registry.js`, content: vf.registryJs });
-            files.push({ path: `${bundleDir}/registry.d.ts`, content: vf.registryDts });
-        }
-    }
-
-    if (formatterDecls.length > 0) {
-        const ff = emitFormatterFiles(formatterDecls, { functionNames });
-        for (const bundleDir of bundleDirs) {
-            files.push({ path: `${bundleDir}/formatters.js`, content: ff.factoriesJs });
-            files.push({ path: `${bundleDir}/formatters.d.ts`, content: ff.factoriesDts });
-            files.push({ path: `${bundleDir}/formatter-registry.js`, content: ff.registryJs });
-            files.push({ path: `${bundleDir}/formatter-registry.d.ts`, content: ff.registryDts });
-        }
     }
 
     return { files, diagnostics: [] };
 }
 
-type BundleOptions = {
-    includePrivate: boolean;
-    includeIndexes: boolean;
-    emitMaterializers: boolean;
-    formPhasesOnly: boolean;
-};
+type BundleOptions = Pick<
+    ModuleEmitDeps,
+    "includePrivate" | "includeIndexes" | "emitMaterializers" | "formPhasesOnly" | "includeDefaults"
+>;
 
 function emitBundle(
     ir: KeymaIR,
     bundleDir: string,
-    schemaPaths: ReadonlyMap<string, string>,
-    embeddedTypeNames: ReadonlyMap<string, string>,
-    opts: BundleOptions
+    shared: SharedDeps,
+    decls: Decls,
+    opts: BundleOptions,
 ): EmitFile[] {
     const files: EmitFile[] = [];
+    const deps: ModuleEmitDeps = { ...opts, ...shared };
 
     const visibleSchemas: IRSchema[] = opts.includePrivate
         ? ir.schemas
         : ir.schemas.filter((s) => s.visibility === "public");
 
-    const modelOpts = {
-        includePrivate: opts.includePrivate,
-        includeIndexes: opts.includeIndexes,
-        emitMaterializers: opts.emitMaterializers,
-        formPhasesOnly: opts.formPhasesOnly,
-        schemaPaths,
-        embeddedTypeNames,
-    };
-
-    // One model file per schema — each file owns its class, schema metadata, and materializer.
-    for (const schema of visibleSchemas) {
-        const relPath = schemaPaths.get(schema.sourceName)!;
-        files.push({
-            path: path.posix.join(bundleDir, "models", `${relPath}.js`),
-            content: emitModelJs(schema, modelOpts),
-        });
-        files.push({
-            path: path.posix.join(bundleDir, "models", `${relPath}.d.ts`),
-            content: emitModelDts(schema, modelOpts),
-        });
+    // One model file per source module (multiple schemas grouped together).
+    const groups = new Map<string, IRSchema[]>();
+    for (const s of visibleSchemas) {
+        const ref = shared.schemaModule.get(s.sourceName)!;
+        const list = groups.get(ref) ?? [];
+        list.push(s);
+        groups.set(ref, list);
+    }
+    for (const [ref, schemas] of groups) {
+        files.push({ path: path.posix.join(bundleDir, `${ref}.js`), content: emitModuleJs(ref, schemas, deps) });
+        files.push({ path: path.posix.join(bundleDir, `${ref}.d.ts`), content: emitModuleDts(ref, schemas, deps) });
     }
 
-    const indexOpts = {
-        includePrivate: opts.includePrivate,
-        emitMaterializers: opts.emitMaterializers,
-        hasValidators: (ir.validatorDeclarations ?? []).length > 0,
-        hasFormatters: (ir.formatterDeclarations ?? []).length > 0,
-    };
+    // Shared direct-ref factory modules at the bundle root.
+    const functionNames = decls.functions.map((d) => d.name);
+    if (decls.functions.length > 0) {
+        const fn = emitFunctionFiles(decls.functions, shared.embeddedTypeNames);
+        files.push({ path: path.posix.join(bundleDir, "functions.js"), content: fn.functionsJs });
+        files.push({ path: path.posix.join(bundleDir, "functions.d.ts"), content: fn.functionsDts });
+    }
+    if (decls.validators.length > 0) {
+        files.push({ path: path.posix.join(bundleDir, "validators.js"), content: emitValidatorsJs(decls.validators, functionNames) });
+        files.push({ path: path.posix.join(bundleDir, "validators.d.ts"), content: emitValidatorsDts(decls.validators) });
+    }
+    if (decls.formatters.length > 0) {
+        files.push({ path: path.posix.join(bundleDir, "formatters.js"), content: emitFormattersJs(decls.formatters, functionNames) });
+        files.push({ path: path.posix.join(bundleDir, "formatters.d.ts"), content: emitFormattersDts(decls.formatters) });
+    }
 
-    // index.js + index.d.ts
-    files.push({
-        path: path.posix.join(bundleDir, "index.js"),
-        content: emitIndexJs(ir.schemas, schemaPaths, indexOpts),
-    });
-    files.push({
-        path: path.posix.join(bundleDir, "index.d.ts"),
-        content: emitIndexDts(ir.schemas, schemaPaths, indexOpts),
-    });
+    const indexOpts = { includePrivate: opts.includePrivate, emitMaterializers: opts.emitMaterializers };
+    files.push({ path: path.posix.join(bundleDir, "index.js"), content: emitIndexJs(visibleSchemas, shared.schemaModule, indexOpts) });
+    files.push({ path: path.posix.join(bundleDir, "index.d.ts"), content: emitIndexDts(visibleSchemas, shared.schemaModule, indexOpts) });
 
     return files;
-}
-
-function getRelativeModelDir(sourceFile: string, sourceRoot?: string): string {
-    if (!sourceRoot) return "";
-    // path.relative uses platform separators.
-    const rel = path.relative(sourceRoot, sourceFile);
-    const dirname = path.dirname(rel);
-    if (dirname === ".") return "";
-    // Convert to POSIX for consistency in EmitFile paths.
-    return dirname.split(path.sep).join(path.posix.sep);
 }

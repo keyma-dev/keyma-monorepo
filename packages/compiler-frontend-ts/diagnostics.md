@@ -100,18 +100,18 @@ get shout() { return this.first; }          // KEYMA019 (warning) — ignored
 
 ## Validator / formatter errors (0020–0029)
 
-### KEYMA020 — Unknown validator
+### KEYMA020 — Not a validator factory
 
-An identifier passed to `@Validate()` is not a known built-in validator and is not a call expression.
+The argument to `@Validate()` does not resolve to a validator factory — a function returning `ValidatorFn` (e.g. `minLength(2)`).
 
 ```typescript
 @Validate(someRandomValue) // KEYMA020
 declare field: string;
 ```
 
-### KEYMA021 — Unknown formatter
+### KEYMA021 — Not a formatter factory
 
-An identifier passed to `@Format()` is not a known built-in formatter.
+The argument to `@Format()` does not resolve to a formatter factory — a function returning `FormatterFn` (e.g. `trim()`).
 
 ### KEYMA022 — Unknown custom validator (not registered)
 
@@ -341,35 +341,37 @@ A field is typed as a bare `@Schema` class. Relationship intent must be explicit
 These fire when a `Validator("name", fn)` / `Formatter("name", fn)` declaration (or a
 utility function it references) is lowered to portable IR.
 
-### KEYMA080 — declaration is not an exported function
+### KEYMA080 — _(retired)_
 
-`Validator()`/`Formatter()` must be assigned to an exported `const` with an arrow/function-
-expression factory. The name is either given explicitly (`Validator("name", fn)`) or inferred
-from the const binding (`Validator(fn)`).
+Was: `Validator()`/`Formatter()` must be assigned to an exported const. Obsolete since validators/
+formatters are now plain factory functions returning `ValidatorFn`/`FormatterFn` (no markers). The
+code is retained but no longer emitted.
 
 ### KEYMA081 — factory does not return an inner function
 
 The factory must return an inner `(value[, field[, context]]) => …` function (directly, or
 via a single `return`).
 
+```typescript
+export function minLen(n: number): ValidatorFn<string> {
+    return (value, field) => value.length >= n ? null : { field, code: "MIN", message: "…" };
+}
+```
+
 ### KEYMA082 — unsupported statement/expression in body
 
-The body uses a construct outside the portable subset (loops, unsupported operators, etc.).
+The body uses a construct outside the portable subset (loops, unsupported operators, shorthand
+object properties, etc.).
 
 ### KEYMA083 — inner function has wrong arity
 
 The inner function must take 1–3 parameters: `value`, optional `field`, optional `context`.
 
-### KEYMA084 — input (`value`) parameter must be typed
+### KEYMA084 — _(retired)_
 
-The inner function's first (`value`) parameter must declare an explicit, concrete type so the
-compiler knows what it operates on and backends can emit a runtime type-guard. `unknown`,
-`any`, and a missing annotation are rejected.
-
-```typescript
-export const minLen = Validator("minLen", (n: number) => (value: unknown) => …); // KEYMA084
-export const minLen = Validator("minLen", (n: number) => (value: string) => …);  // OK
-```
+Was: the inner `value` parameter must declare a concrete type. The input type now comes from the
+factory's `ValidatorFn<T>`/`FormatterFn<T>` return annotation (`<T>` is the guard type; absent ≡
+`json`/no guard). The code is retained but no longer emitted.
 
 ### KEYMA085 — unsupported string/array intrinsic
 
@@ -394,22 +396,21 @@ portable constructor set (`Date`, `RegExp`, `Uint8Array`, `Array`).
 
 ### KEYMA090 — default value incompatible with field type
 
-A `@Default(...)` literal does not match the field's type (e.g. a number default on a string
-field).
+A field's literal property initializer does not match the field's type (e.g. a number default
+on a string field).
 
 ```typescript
-@Default(5) declare status: string; // KEYMA090
+status: string = 5; // KEYMA090
 ```
 
-### KEYMA091 — unsupported @Default form
+### KEYMA091 — obsolete
 
-`@Default(...)` received something other than a literal value or a named generator (`Now`,
-`Uuid`) — e.g. an arrow function or an arbitrary call.
-
-```typescript
-@Default(() => compute()) declare x: string; // KEYMA091
-@Default(Now) declare createdOn: DateTime;   // OK
-```
+Defaults are now authored as native TypeScript property initializers rather than a `@Default`
+decorator, so there is no longer an "unsupported `@Default` form" to report. A literal
+initializer is checked by KEYMA090; a non-literal initializer (`= (() => new Date())()`,
+`= myFn()`) is lowered through the portable expression engine and any unsupported construct
+self-reports via the portable-subset codes (KEYMA082/085/086/087). The code is retained (never
+renumbered) but no longer emitted.
 
 ### KEYMA092 — method/setter signature must be explicitly typed
 

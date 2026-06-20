@@ -5,10 +5,11 @@ import type {
 import { mkError, mkWarning, KEYMA017, KEYMA019, KEYMA040, KEYMA061, KEYMA065, KEYMA066 } from "./diagnostics.js";
 import { getLocation, isFromModule, stringLiteralValue } from "./util.js";
 import { mapTypeNode } from "./map-type.js";
-import { lowerValidateArgs, lowerFormatArgs, lowerIndexedArgs, lowerDefaultArg, lowerFormFieldArg } from "./lower-decorator.js";
+import { lowerValidateArgs, lowerFormatArgs, lowerIndexedArgs, lowerInitializerDefault, lowerFormFieldArg } from "./lower-decorator.js";
 import { lowerGetterBody } from "./lower-expression.js";
 import { lowerMethod, lowerSetter, type MethodLowerCtx } from "./lower-method.js";
 import type { FnRefVerdict } from "./lower-portable-expr.js";
+import type { ResolvedFactory } from "./discover-validators.js";
 import type { DiscoveredSchema } from "./discover.js";
 import type { EnumInfo } from "./discover-enums.js";
 
@@ -19,10 +20,10 @@ type ExtractContext = {
     /** Named TS enum declarations, keyed by name. */
     enums?: ReadonlyMap<string, EnumInfo>;
     diagnostics: IRDiagnostic[];
-    /** Optional: maps function name → validator name from @Validator-decorated declarations. */
-    discoveredValidators?: Map<string, string>;
-    /** Optional: maps function name → formatter name from @Formatter-decorated declarations. */
-    discoveredFormatters?: Map<string, string>;
+    /** Resolve a `@Validate(...)` callee to a validator factory (enqueues it for lowering). */
+    resolveValidator?: (callee: ts.Identifier) => ResolvedFactory | undefined;
+    /** Resolve a `@Format(...)` callee to a formatter factory (enqueues it for lowering). */
+    resolveFormatter?: (callee: ts.Identifier) => ResolvedFactory | undefined;
     /** Classify a call target in method bodies so project-local utilities compile. */
     classifyFunction?: (ident: ts.Identifier) => FnRefVerdict;
 };
@@ -363,8 +364,10 @@ function extractField(
         diagnostics: ctx.diagnostics,
         sourceFile: sf,
         dslModuleName: ctx.dslModuleName,
-        ...(ctx.discoveredValidators !== undefined && { discoveredValidators: ctx.discoveredValidators }),
-        ...(ctx.discoveredFormatters !== undefined && { discoveredFormatters: ctx.discoveredFormatters }),
+        schemaClassNames: ctx.schemaClassNames,
+        ...(ctx.resolveValidator !== undefined && { resolveValidator: ctx.resolveValidator }),
+        ...(ctx.resolveFormatter !== undefined && { resolveFormatter: ctx.resolveFormatter }),
+        ...(ctx.classifyFunction !== undefined && { classifyFunction: ctx.classifyFunction }),
     };
 
     for (const deco of decorators) {
@@ -387,9 +390,6 @@ function extractField(
             if (idx !== null) fieldIndexes.push(idx);
         } else if (decoName === "Ephemeral") {
             ephemeral = true;
-        } else if (decoName === "Default") {
-            const d = lowerDefaultArg(expr.arguments, irType, lowerCtx);
-            if (d !== null) defaultValue = d;
         } else if (decoName === "FormField") {
             form = lowerFormFieldArg(expr.arguments, lowerCtx);
         } else if (decoName === "Deprecated") {
@@ -411,6 +411,12 @@ function extractField(
     // Promote number → integer if @Validate(isInteger) is present
     if (irType.kind === "number" && validators.some((v) => v.name === "integer")) {
         irType = { kind: "integer" };
+    }
+
+    // Default value from the field's TypeScript property initializer (`= <expr>`).
+    if (prop.initializer !== undefined) {
+        const d = lowerInitializerDefault(prop.initializer, irType, lowerCtx);
+        if (d !== null) defaultValue = d;
     }
 
     const field: IRField = {
@@ -488,8 +494,8 @@ function extractComputedField(
         diagnostics: ctx.diagnostics,
         sourceFile: sf,
         dslModuleName: ctx.dslModuleName,
-        ...(ctx.discoveredValidators !== undefined && { discoveredValidators: ctx.discoveredValidators }),
-        ...(ctx.discoveredFormatters !== undefined && { discoveredFormatters: ctx.discoveredFormatters }),
+        ...(ctx.resolveValidator !== undefined && { resolveValidator: ctx.resolveValidator }),
+        ...(ctx.resolveFormatter !== undefined && { resolveFormatter: ctx.resolveFormatter }),
     };
 
     for (const deco of ts.getDecorators(getter) ?? []) {

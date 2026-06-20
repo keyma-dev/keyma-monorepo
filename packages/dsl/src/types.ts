@@ -1,33 +1,48 @@
 declare const __brand: unique symbol;
 type Brand<T, B extends string> = T & { readonly [__brand]: B };
 
-// ─── Validator / formatter reference types ───────────────────────────────────
-
-/**
- * Opaque reference to a named validator, optionally carrying compile-time params.
- * The name is a type parameter so it survives into emitted `.d.ts` files — the
- * compiler reads it off the call expression's type, which is how it resolves
- * validators imported from compiled packages (e.g. `@keyma/validators`).
- */
-export type ValidatorRef<N extends string = string> = { readonly __validatorName: N; readonly params?: Record<string, unknown> };
-
-/** Opaque reference to a named formatter, optionally carrying compile-time params. */
-export type FormatterRef<N extends string = string> = { readonly __formatterName: N; readonly params?: Record<string, unknown> };
+// ─── Validator / formatter authoring types ───────────────────────────────────
 
 /** Error shape returned by validator implementations. */
 export type ValidationError = { field: string; code: string; message: string };
 
-/** Context object passed to validator/formatter implementations. */
+/** Context passed to validator implementations (carries the whole record). */
 export type ValidatorContext = { object: Record<string, unknown> };
 
-/** Context object passed to formatter implementations. */
+/** Context passed to formatter implementations (carries the whole record). */
 export type FormatterContext = { object: Record<string, unknown> };
 
-/** Required function signature for user-defined validator implementations. */
-export type UserValidatorFn = (value: unknown, spec: Record<string, unknown>, ctx: ValidatorContext) => ValidationError | null;
+/**
+ * A validator: inspects a single field `value` and returns a {@link ValidationError}
+ * or `null`. Authored as a plain factory function returning this signature, e.g.
+ *
+ * ```ts
+ * export function minLength(m: number): ValidatorFn<string> {
+ *     return (value, field) => value.length < m
+ *         ? { field, code: "minLength", message: `${field} must be at least ${m} characters` }
+ *         : null;
+ * }
+ * ```
+ *
+ * The Keyma compiler reads the factory's parameter list and the returned function's
+ * body from the AST, lowers them to IR, and re-emits the implementation directly
+ * into the generated schema (no runtime registry). The `<T>` type argument is the
+ * value type the field carries; backends emit a runtime guard from it. The body must
+ * use the portable expression subset (see the "@keyma/dsl" README).
+ */
+export type ValidatorFn<T = unknown> = (value: T, field: string, ctx: ValidatorContext) => ValidationError | null;
 
-/** Required function signature for user-defined formatter implementations. */
-export type UserFormatterFn = (value: unknown, spec: Record<string, unknown>, ctx: FormatterContext) => unknown;
+/**
+ * A formatter: transforms a single field `value`, returning the new value. Authored
+ * as a plain factory function returning this signature, e.g.
+ *
+ * ```ts
+ * export function trim(): FormatterFn<string> {
+ *     return (value) => value.trim();
+ * }
+ * ```
+ */
+export type FormatterFn<T = unknown> = (value: T, ctx: FormatterContext) => T;
 
 /**
  * Opaque database identifier. Covers string IDs, integer IDs, ObjectId, UUID-based IDs, etc.

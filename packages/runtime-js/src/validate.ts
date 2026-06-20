@@ -1,41 +1,24 @@
-import type { SchemaMetadata, ValidatorSpec, ValidationError } from "./types.js";
+import type { SchemaMetadata, ValidationError, ValidatorContext, ValidatorFn } from "./types.js";
 
-export type ValidatorContext = { object: Record<string, unknown> };
+export type { ValidatorContext, ValidatorFn } from "./types.js";
 
-export type ValidatorFn = (
-    value: unknown,
-    spec: ValidatorSpec,
-    field: string,
-    context: ValidatorContext,
-) => ValidationError | null | Promise<ValidationError | null>;
-
-export type ValidatorRegistry = Map<string, ValidatorFn>;
-
+/**
+ * Run every field's validators. Each validator is a direct callable re-emitted
+ * into the schema metadata — there is no registry to pass. A validator returns a
+ * {@link ValidationError} or `null`/`undefined`.
+ */
 export async function validate(
     schema: SchemaMetadata,
     value: Record<string, unknown>,
-    registry: ValidatorRegistry = new Map(),
 ): Promise<ValidationError[]> {
     const errors: ValidationError[] = [];
     const context: ValidatorContext = { object: value };
     for (const field of schema.fields) {
         const raw = value[field.name];
-        for (const v of field.validators ?? []) {
-            const fn = registry.get(v.name);
-            if (fn === undefined) continue;
-            const result = await fn(raw, flattenParams(v), field.name, context);
-            if (result !== null) errors.push(result);
+        for (const fn of (field.validators ?? []) as ValidatorFn[]) {
+            const result = await fn(raw, field.name, context);
+            if (result !== null && result !== undefined) errors.push(result);
         }
     }
     return errors;
-}
-
-// ── Helpers ──────────────────────────────────────────────────────────────────
-
-function flattenParams(spec: ValidatorSpec): ValidatorSpec {
-    const params = spec["params"];
-    if (params !== null && typeof params === "object" && !Array.isArray(params)) {
-        return { ...spec, ...(params as Record<string, unknown>) };
-    }
-    return spec;
 }

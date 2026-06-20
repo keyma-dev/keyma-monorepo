@@ -6,7 +6,7 @@ import { collectFieldRefs } from "@keyma/ir";
 import { createProgram, DEFAULT_COMPILER_OPTIONS, type VirtualFiles } from "./program.js";
 import { discoverSchemas } from "./discover.js";
 import { discoverEnums } from "./discover-enums.js";
-import { discoverValidators, discoverFormatters } from "./discover-validators.js";
+import { createValidatorFormatterCollector } from "./discover-validators.js";
 import { lowerValidatorDeclaration, lowerFormatterDeclaration, type LowerDeps } from "./lower-validator.js";
 import { createFunctionCollector } from "./lower-function.js";
 import { extractSchema } from "./extract-schema.js";
@@ -95,22 +95,15 @@ function compileProgram(program: ts.Program, config: FrontendConfig): CompileRes
     // Pass 1: discover all @Schema classes
     const discovered = discoverSchemas(program, discoverCtx);
 
-    // Pass 1b: discover Validator(name, fn) / Formatter(name, fn) factory declarations
-    const discoveredValidatorDecls = discoverValidators(program, discoverCtx);
-    const discoveredFormatterDecls = discoverFormatters(program, discoverCtx);
-
-    // Build lookup maps: function name → validator/formatter name
-    const discoveredValidators = new Map(
-        discoveredValidatorDecls.map((d) => [d.funcName, d.validatorName])
-    );
-    const discoveredFormatters = new Map(
-        discoveredFormatterDecls.map((d) => [d.funcName, d.formatterName])
-    );
-
-    // Pass 1c: discover TS enum declarations referenced by schema fields
+    // Pass 1b: discover TS enum declarations referenced by schema fields
     const enums = discoverEnums(program);
 
     const schemaClassNames = new Set(discovered.map((d) => d.className));
+
+    // Validator/formatter collector: resolves each `@Validate`/`@Format` factory at
+    // its use site (across imports — including pure-TS library packages), enqueues
+    // its declaration, and yields only the set actually referenced when drained.
+    const vfCollector = createValidatorFormatterCollector({ checker, dslModuleName });
 
     // Utility-function collector: resolves project-local functions referenced from
     // validator/formatter bodies AND method/setter behavior bodies, compiling them
@@ -124,8 +117,8 @@ function compileProgram(program: ts.Program, config: FrontendConfig): CompileRes
         schemaClassNames,
         enums,
         diagnostics,
-        discoveredValidators,
-        discoveredFormatters,
+        resolveValidator: vfCollector.resolveValidator,
+        resolveFormatter: vfCollector.resolveFormatter,
         classifyFunction: functionCollector.classify,
     };
 
@@ -164,21 +157,21 @@ function compileProgram(program: ts.Program, config: FrontendConfig): CompileRes
         classifyFunction: functionCollector.classify,
     };
 
-    // Pass 4: lower Validator() declarations to IR
-    const validatorDeclarations = discoveredValidatorDecls.map((d) =>
-        lowerValidatorDeclaration(d, diagnostics, lowerDeps)
+    // Pass 4: lower the validator factories referenced by @Validate (tree-shaken).
+    const validatorDeclarations = vfCollector.drainValidators().map((c) =>
+        lowerValidatorDeclaration(c, diagnostics, lowerDeps)
     );
 
-    // Pass 5: lower Formatter() declarations to IR
-    const formatterDeclarations = discoveredFormatterDecls.map((d) =>
-        lowerFormatterDeclaration(d, diagnostics, lowerDeps)
+    // Pass 5: lower the formatter factories referenced by @Format (tree-shaken).
+    const formatterDeclarations = vfCollector.drainFormatters().map((c) =>
+        lowerFormatterDeclaration(c, diagnostics, lowerDeps)
     );
 
     // Pass 6: lower the utility functions referenced (transitively) from the bodies above.
     const functionDeclarations = functionCollector.drain();
 
     const ir: KeymaIR = {
-        irVersion: config.irVersion ?? "2.0.0",
+        irVersion: config.irVersion ?? "3.0.0",
         compilerVersion: config.compilerVersion ?? "0.1.0",
         ...(config.baseDir !== undefined ? { sourceRoot: config.baseDir } : {}),
         schemas,

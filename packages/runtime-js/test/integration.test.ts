@@ -4,7 +4,6 @@ import { Keyma } from "../src/query.js";
 import { KeymaServer } from "../src/server.js";
 import { createDirectTransport } from "../src/client.js";
 import { InMemoryAdapter } from "../src/testing.js";
-import type { ValidatorRegistry } from "../src/validate.js";
 import {
     User,
     Organization,
@@ -16,31 +15,12 @@ import {
     KNOWS_SCHEMA,
 } from "./fixtures.js";
 
-const EMAIL_RE = /^[^\s@]+@[^\s@]+\.[^\s@]{2,}$/;
-
-const defaultValidators: ValidatorRegistry = new Map([
-    ["required", (v, _spec, field) =>
-        v === null || v === undefined || v === ""
-            ? { field, code: "required", message: `${field} is required` }
-            : null],
-    ["emailAddress", (v, _spec, field) =>
-        typeof v === "string" && !EMAIL_RE.test(v)
-            ? { field, code: "emailAddress", message: `${field} must be a valid email address` }
-            : null],
-    ["minLength", (v, spec, field) => {
-        const min = typeof spec["value"] === "number" ? spec["value"] : 0;
-        return typeof v === "string" && v.length < min
-            ? { field, code: "minLength", message: `${field} must be at least ${min} characters` }
-            : null;
-    }],
-]);
-
+// Validators ride directly in the schema metadata (see fixtures.ts) — no registry.
 function setupServer() {
     const adapter = new InMemoryAdapter();
     const server = new KeymaServer({
         schemas: [USER_SCHEMA, ORGANIZATION_SCHEMA, ADDRESS_SCHEMA],
         adapter,
-        validators: defaultValidators,
     });
     return { server, adapter, transport: createDirectTransport(server) };
 }

@@ -8,11 +8,11 @@ import type {
     IRType,
     IRDiagnostic,
 } from "@keyma/ir";
-import { mkError, KEYMA081, KEYMA083, KEYMA084 } from "./diagnostics.js";
+import { mkError, KEYMA081, KEYMA083 } from "./diagnostics.js";
 import { getLocation } from "./util.js";
 import { mapTypeNode, type TypeMapContext } from "./map-type.js";
 import { lowerExpr, lowerStatement, type BodyLowerCtx, type FnRefVerdict } from "./lower-body.js";
-import type { DiscoveredValidator, DiscoveredFormatter } from "./discover-validators.js";
+import type { CollectedFactory } from "./discover-validators.js";
 
 /** Dependencies threaded from the compile driver for type-aware body lowering. */
 export type LowerDeps = {
@@ -27,23 +27,23 @@ type LowerCtx = BodyLowerCtx;
 // ─── Public entry points ─────────────────────────────────────────────────────
 
 export function lowerValidatorDeclaration(
-    discovered: DiscoveredValidator,
+    collected: CollectedFactory,
     extraDiagnostics: IRDiagnostic[],
     deps: LowerDeps,
 ): IRValidatorDeclaration {
-    const ctx = mkCtx(discovered.sourceFile, extraDiagnostics, deps);
-    const { factoryParams, inputType, body } = lowerFactory(discovered.funcNode, ctx);
-    return { name: discovered.validatorName, factoryParams, inputType, body, source: discovered.source };
+    const ctx = mkCtx(collected.sourceFile, extraDiagnostics, deps);
+    const { factoryParams, inputType, body } = lowerFactory(collected.node, collected.returnTypeArg, ctx);
+    return { name: collected.name, factoryParams, inputType, body, source: collected.source };
 }
 
 export function lowerFormatterDeclaration(
-    discovered: DiscoveredFormatter,
+    collected: CollectedFactory,
     extraDiagnostics: IRDiagnostic[],
     deps: LowerDeps,
 ): IRFormatterDeclaration {
-    const ctx = mkCtx(discovered.sourceFile, extraDiagnostics, deps);
-    const { factoryParams, inputType, body } = lowerFactory(discovered.funcNode, ctx);
-    return { name: discovered.formatterName, factoryParams, inputType, body, source: discovered.source };
+    const ctx = mkCtx(collected.sourceFile, extraDiagnostics, deps);
+    const { factoryParams, inputType, body } = lowerFactory(collected.node, collected.returnTypeArg, ctx);
+    return { name: collected.name, factoryParams, inputType, body, source: collected.source };
 }
 
 function mkCtx(sourceFile: ts.SourceFile, diagnostics: IRDiagnostic[], deps: LowerDeps): LowerCtx {
@@ -65,10 +65,19 @@ type LoweredFactory = {
     body: IRFunctionBody;
 };
 
-function lowerFactory(func: ts.ArrowFunction | ts.FunctionExpression, ctx: LowerCtx): LoweredFactory {
+function lowerFactory(
+    func: ts.FunctionDeclaration | ts.ArrowFunction | ts.FunctionExpression,
+    returnTypeArg: ts.TypeNode | undefined,
+    ctx: LowerCtx,
+): LoweredFactory {
     const factoryParams: { name: string }[] = func.parameters.map((p) => ({
         name: ts.isIdentifier(p.name) ? p.name.text : "_",
     }));
+
+    // The value type the field carries (and the backend's runtime guard) comes from
+    // the factory's `ValidatorFn<T>`/`FormatterFn<T>` return annotation. An absent
+    // type argument means "no guard" — a neutral `json` input.
+    const inputType = mapInputType(returnTypeArg, ctx);
 
     let innerFn: ts.Expression;
 
@@ -76,20 +85,20 @@ function lowerFactory(func: ts.ArrowFunction | ts.FunctionExpression, ctx: Lower
         // Concise arrow: (factoryParams) => innerFn
         innerFn = func.body;
     } else {
-        const body = func.body as ts.Block;
-        if (body.statements.length !== 1) {
+        const body = func.body as ts.Block | undefined;
+        if (body === undefined || body.statements.length !== 1) {
             ctx.diagnostics.push(mkError(
                 KEYMA081,
                 "Validator/formatter factory body must contain a single return statement returning an inner function",
-                getLocation(body, ctx.sourceFile),
+                getLocation(body ?? func, ctx.sourceFile),
             ));
-            return { factoryParams, inputType: { kind: "json" }, body: emptyBody() };
+            return { factoryParams, inputType, body: emptyBody() };
         }
 
         const stmt = body.statements[0];
         if (!stmt || !ts.isReturnStatement(stmt) || !stmt.expression) {
             ctx.diagnostics.push(mkError(KEYMA081, "Factory body must be a single return statement", getLocation(body, ctx.sourceFile)));
-            return { factoryParams, inputType: { kind: "json" }, body: emptyBody() };
+            return { factoryParams, inputType, body: emptyBody() };
         }
 
         innerFn = stmt.expression;
@@ -97,7 +106,7 @@ function lowerFactory(func: ts.ArrowFunction | ts.FunctionExpression, ctx: Lower
 
     if (!ts.isArrowFunction(innerFn) && !ts.isFunctionExpression(innerFn)) {
         ctx.diagnostics.push(mkError(KEYMA081, "Factory must return an arrow function or function expression", getLocation(innerFn, ctx.sourceFile)));
-        return { factoryParams, inputType: { kind: "json" }, body: emptyBody() };
+        return { factoryParams, inputType, body: emptyBody() };
     }
 
     // Inner params by position: 0=value, 1=field, 2=context
@@ -108,11 +117,8 @@ function lowerFactory(func: ts.ArrowFunction | ts.FunctionExpression, ctx: Lower
             `Inner function must have 1–3 parameters (value[, fieldKey[, context]]), got ${innerParams.length}`,
             getLocation(innerFn, ctx.sourceFile),
         ));
-        return { factoryParams, inputType: { kind: "json" }, body: emptyBody() };
+        return { factoryParams, inputType, body: emptyBody() };
     }
-
-    // The `value` parameter must carry an explicit, concrete type.
-    const inputType = mapValueParamType(innerParams[0], innerFn, ctx);
 
     const roles: Array<"value" | "field" | "context"> = ["value", "field", "context"];
     const irParams: IRParam[] = innerParams.map((p, i) => ({
@@ -138,29 +144,16 @@ function lowerFactory(func: ts.ArrowFunction | ts.FunctionExpression, ctx: Lower
 }
 
 /**
- * Map the `value` parameter's declared type, rejecting an absent annotation or an
- * `unknown`/`any` annotation (KEYMA084). On error, returns a neutral `json` type so
- * the declaration still has a well-formed shape.
+ * Map the input type from a `ValidatorFn<T>`/`FormatterFn<T>` return annotation's
+ * `<T>` argument. The backend emits a runtime guard from it. An absent or
+ * `unknown`/`any` argument yields a neutral `json` input (no guard).
  */
-function mapValueParamType(
-    param: ts.ParameterDeclaration | undefined,
-    innerFn: ts.Node,
-    ctx: LowerCtx,
-): IRType {
-    if (param === undefined || param.type === undefined) {
-        ctx.diagnostics.push(mkError(
-            KEYMA084,
-            "Validator/formatter input (value) parameter must declare an explicit type — `unknown`/`any`/untyped is not allowed",
-            getLocation(param ?? innerFn, ctx.sourceFile),
-        ));
-        return { kind: "json" };
-    }
-    if (param.type.kind === ts.SyntaxKind.UnknownKeyword || param.type.kind === ts.SyntaxKind.AnyKeyword) {
-        ctx.diagnostics.push(mkError(
-            KEYMA084,
-            "Validator/formatter input (value) parameter must declare a concrete type, not `unknown` or `any`",
-            getLocation(param, ctx.sourceFile),
-        ));
+function mapInputType(typeArg: ts.TypeNode | undefined, ctx: LowerCtx): IRType {
+    if (
+        typeArg === undefined ||
+        typeArg.kind === ts.SyntaxKind.UnknownKeyword ||
+        typeArg.kind === ts.SyntaxKind.AnyKeyword
+    ) {
         return { kind: "json" };
     }
     const typeMapCtx: TypeMapContext = {
@@ -171,7 +164,7 @@ function mapValueParamType(
         diagnostics: ctx.diagnostics,
         sourceFile: ctx.sourceFile,
     };
-    const result = mapTypeNode(param.type, typeMapCtx);
+    const result = mapTypeNode(typeArg, typeMapCtx);
     if ("diag" in result) {
         ctx.diagnostics.push(result.diag);
         return { kind: "json" };

@@ -18,13 +18,13 @@ This is what you import when writing Keyma schemas. It:
 ```ts
 import {
     Schema, Validate, Indexed, Format, Phase, FormField,
-    Computed, Ephemeral, Default, Now, Uuid, Deprecated,
-    Edge, From, To, Validator, Formatter,
+    Computed, Ephemeral, Deprecated,
+    Edge, From, To,
 } from "@keyma/dsl";
 ```
 
 ```ts
-import { Schema, Validate, Indexed, Format, Phase, Computed, Default, Now, FormField } from "@keyma/dsl";
+import { Schema, Validate, Indexed, Format, Phase, Computed, FormField } from "@keyma/dsl";
 import type { ID, DateTime, Reference } from "@keyma/dsl";
 import { isEmail, minLength, maxLength } from "@keyma/validators";
 import { trim, normalizeEmail } from "@keyma/formatters";
@@ -49,11 +49,11 @@ class User {
 
     declare lastName: string;
 
-    @Default(Role.Member)
-    declare role: Role;
+    // Defaults are native TypeScript property initializers. A literal is applied
+    // as-is; any other expression is re-emitted and evaluated per record at create.
+    role: Role = Role.Member;
 
-    @Default(Now)
-    declare createdOn: DateTime;
+    createdOn: DateTime = (() => new Date())();
 
     // Computed fields are explicit and use the portable expression subset.
     @Computed() get displayName(): string {
@@ -84,16 +84,20 @@ class Follows {
 | Decorator | Purpose |
 |---|---|
 | `@Schema(opts?)` | Marks a class as a schema. `opts.name` is the canonical name; `opts.private` makes it server-only. |
-| `@Validate(...markers)` | Attaches validators (from `@keyma/validators` or a custom `Validator`). |
+| `@Validate(...validators)` | Attaches validators (from `@keyma/validators` or your own `ValidatorFn` factories). |
 | `@Format(phase, ...markers)` | Attaches formatters for a lifecycle `Phase` (or the equivalent string). |
 | `@Indexed(opts?)` | Declares a field (or computed field) indexed; `{ unique, sparse, … }`. |
 | `@FormField(opts)` | Attaches form metadata (`title`, `hint`, …). |
 | `@Computed()` | Marks a getter as a stored, materialized computed field. |
 | `@Ephemeral()` | Field/schema that is not persisted but may travel over the wire. |
-| `@Default(value)` | Fills a value on create when the key is absent — a literal or a generator (`Now`, `Uuid`). |
 | `@Deprecated(message?)` | Marks a field as deprecated (carried into the IR/metadata). |
 | `@Edge(opts?)` | Marks a class as an edge schema; its `@From()`/`@To()` fields name the connected nodes. |
-| `Validator` / `Formatter` | Factories for authoring custom validators/formatters (see below). |
+
+**Field defaults** are not a decorator — they are native TypeScript property initializers
+(`role: Role = Role.Member;`). A literal initializer is stored and applied as-is; any other
+expression (`createdOn: DateTime = (() => new Date())();`, `id: ID = newId();`) is lowered to
+the portable expression subset, re-emitted, and evaluated per record at create time. A field
+authored with `declare` (no initializer) has no default.
 
 Key authoring rules:
 
@@ -133,24 +137,29 @@ Both are imported directly (`import { isEmail } from "@keyma/validators"`) and p
 
 ### Custom validators & formatters
 
-Declare your own with the `Validator` / `Formatter` factories exported here. The IR `kind` is the registered name — inferred from the exported `const` binding, or given explicitly when it must differ:
+A validator/formatter is just a **plain factory function** that returns a `ValidatorFn` / `FormatterFn`. The compiler resolves each one from its `@Validate`/`@Format` call site, reads the factory params and the returned function's body, lowers them to IR, and re-emits the implementation directly into the generated schema (no runtime registry). The function name doubles as the IR `name`:
 
 ```ts
-import { Validator, Formatter } from "@keyma/dsl";
+import type { ValidatorFn, FormatterFn } from "@keyma/dsl";
 
-// Name inferred from the binding → registered as "minLen".
-export const minLen = Validator((n: number) => (value: string, field) =>
-    value.length >= n ? null : { field, code: "MIN_LEN", message: `min ${n}` });
+export function minLen(n: number): ValidatorFn<string> {
+    return (value, field) =>
+        value.length >= n ? null : { field, code: "MIN_LEN", message: `min ${n}` };
+}
 
-// Explicit name (binding and registered name differ).
-export const isEmail = Validator("emailAddress", () => (value: string, field) =>
-    value.includes("@") ? null : { field, code: "EMAIL", message: "invalid" });
+export function isEmail(): ValidatorFn<string> {
+    return (value, field) =>
+        value.includes("@") ? null : { field, code: "EMAIL", message: "invalid" };
+}
 
-export const collapseDashes = Formatter("collapseDashes", () =>
-    (value: string) => value.replace(/-+/g, "-"));
+export function collapseDashes(): FormatterFn<string> {
+    return (value) => value.replace(/-+/g, "-");
+}
 ```
 
-Contract types are exported for typing your own implementations: `ValidatorRef`, `FormatterRef`, `ValidationError`, `ValidatorContext`, `FormatterContext`, `UserValidatorFn`, `UserFormatterFn`.
+Use them like the built-ins: `@Validate(minLen(2), isEmail())`, `@Format(Phase.Change, collapseDashes())`.
+
+Contract types are exported for typing your own implementations: `ValidatorFn`, `FormatterFn`, `ValidationError`, `ValidatorContext`, `FormatterContext`.
 
 ### Portable expression subset
 

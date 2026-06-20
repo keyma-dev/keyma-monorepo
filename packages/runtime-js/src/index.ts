@@ -1,7 +1,5 @@
 export type {
     FieldType,
-    ValidatorSpec,
-    FormatterSpec,
     FormatterEntry,
     FieldIndex,
     SchemaIndex,
@@ -11,6 +9,7 @@ export type {
     ValidationError,
     SchemaClass,
     RecordOf,
+    SchemaDefaultsFn,
 } from "./types.js";
 export { brandSchema } from "./types.js";
 
@@ -31,10 +30,10 @@ export type {
 } from "./protocol.js";
 
 export { validate } from "./validate.js";
-export type { ValidatorFn, ValidatorRegistry, ValidatorContext } from "./validate.js";
+export type { ValidatorFn, ValidatorContext } from "./validate.js";
 
 export { format } from "./format.js";
-export type { FormatterFn, FormatterRegistry, FormatterContext } from "./format.js";
+export type { FormatterFn, FormatterContext } from "./format.js";
 
 export { serialize } from "./serialize.js";
 export type { SerializeTarget } from "./serialize.js";

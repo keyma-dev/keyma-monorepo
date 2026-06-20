@@ -1,3 +1,6 @@
+import { trim } from "../formatters.js";
+import { minLength, required } from "../validators.js";
+
 export class User {
     constructor(value) {
         if (value) {
@@ -23,9 +26,7 @@ User.schema = Object.freeze({
             },
             "readonly": true,
             "validators": [
-                {
-                    "name": "required"
-                }
+                required()
             ]
         },
         {
@@ -34,19 +35,12 @@ User.schema = Object.freeze({
                 "kind": "string"
             },
             "validators": [
-                {
-                    "name": "minLength",
-                    "params": {
-                        "value": 2
-                    }
-                }
+                minLength(2)
             ],
             "formatters": [
                 {
                     "phase": "change",
-                    "spec": {
-                        "name": "trim"
-                    }
+                    "fn": trim()
                 }
             ]
         },

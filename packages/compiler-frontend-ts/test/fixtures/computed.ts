@@ -1,15 +1,16 @@
 import { Schema, Validate, Computed } from "@keyma/dsl";
-function isRequired() { return { __validatorName: "required" } as const; }
+import type { ValidatorFn, Json } from "@keyma/dsl";
+function required(): ValidatorFn<Json> { return (value, field) => value !== null ? null : { field: field, code: "required", message: "required" }; }
 
 @Schema({ name: "product" })
 class Product {
-    @Validate(isRequired())
+    @Validate(required())
     declare title: string;
 
-    @Validate(isRequired())
+    @Validate(required())
     declare price: number;
 
-    @Validate(isRequired())
+    @Validate(required())
     declare taxRate: number;
 
     @Computed() get displayTitle(): string {

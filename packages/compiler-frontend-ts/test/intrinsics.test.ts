@@ -14,6 +14,24 @@ function cv(sources: Record<string, string>) {
 function errorCodes(r: ReturnType<typeof cv>): string[] {
     return r.diagnostics.filter((d) => d.severity === "error").map((d) => d.code);
 }
+
+/**
+ * Compile a validator `v` (factory returning `ValidatorFn<valueType>`) that is
+ * referenced by a schema field, so the use-driven collector lowers its body.
+ * `decls` injects extra top-level declarations (helper functions, classes).
+ */
+function cvValidator(ret: string, valueType = "string", decls = "") {
+    return cv({
+        "v.ts": `
+            import { Schema, Validate } from "@keyma/dsl";
+            import type { ValidatorFn, Json } from "@keyma/dsl";
+            ${decls}
+            export function v(): ValidatorFn<${valueType}> { return (value) => ${ret}; }
+            @Schema() class Holder { @Validate(v()) declare a: string; }
+        `,
+    });
+}
+
 function validatorBody(r: ReturnType<typeof cv>, name: string): IRStatement[] {
     const d = r.ir.validatorDeclarations?.find((v) => v.name === name);
     assert.ok(d, `validator "${name}" not found`);
@@ -28,13 +46,7 @@ function returnedExpr(stmts: IRStatement[]): IRExpression {
 
 describe("intrinsic recognition", () => {
     it("lowers string methods and members to intrinsics, with input type", () => {
-        const r = cv({
-            "v.ts": `
-                import { Validator } from "@keyma/dsl";
-                export const v = Validator("v", () => (value: string) =>
-                    value.includes("x") && value.length > 3 ? null : "bad");
-            `,
-        });
+        const r = cvValidator(`value.includes("x") && value.length > 3 ? null : "bad"`);
         assert.deepEqual(errorCodes(r), []);
         const d = r.ir.validatorDeclarations?.find((x) => x.name === "v");
         assert.deepEqual(d?.inputType, { kind: "string" });
@@ -52,13 +64,7 @@ describe("intrinsic recognition", () => {
     });
 
     it("lowers `typeof x === \"string\"` to a type-is intrinsic", () => {
-        const r = cv({
-            "v.ts": `
-                import { Validator } from "@keyma/dsl";
-                export const v = Validator("v", () => (value: string) =>
-                    typeof value === "string" ? null : "x");
-            `,
-        });
+        const r = cvValidator(`typeof value === "string" ? null : "x"`);
         assert.deepEqual(errorCodes(r), []);
         const expr = returnedExpr(validatorBody(r, "v"));
         const cond = expr.kind === "conditional" ? expr.condition : undefined;
@@ -70,13 +76,7 @@ describe("intrinsic recognition", () => {
     });
 
     it("lowers `x instanceof Date` to an instance-of intrinsic", () => {
-        const r = cv({
-            "v.ts": `
-                import { Validator } from "@keyma/dsl";
-                export const v = Validator("v", () => (value: string) =>
-                    value instanceof Date ? "x" : null);
-            `,
-        });
+        const r = cvValidator(`value instanceof Date ? "x" : null`);
         assert.deepEqual(errorCodes(r), []);
         const expr = returnedExpr(validatorBody(r, "v"));
         const cond = expr.kind === "conditional" ? expr.condition : undefined;
@@ -85,35 +85,30 @@ describe("intrinsic recognition", () => {
     });
 });
 
-describe("typed validator/formatter inputs", () => {
-    it("KEYMA084 — rejects an untyped (implicit unknown) value param", () => {
-        const r = cv({
-            "v.ts": `
-                import { Validator } from "@keyma/dsl";
-                export const v = Validator("v", () => (value) => value === null ? "x" : null);
-            `,
-        });
-        assert.ok(errorCodes(r).includes("KEYMA084"), JSON.stringify(r.diagnostics));
+describe("validator/formatter input type (from ValidatorFn<T>)", () => {
+    it("maps the `ValidatorFn<T>` argument to the input guard type", () => {
+        const r = cvValidator(`value.length > 0 ? null : "x"`, "string");
+        assert.deepEqual(errorCodes(r), []);
+        const d = r.ir.validatorDeclarations?.find((x) => x.name === "v");
+        assert.deepEqual(d?.inputType, { kind: "string" });
     });
 
-    it("KEYMA084 — rejects an explicit `unknown` value param", () => {
-        const r = cv({
-            "v.ts": `
-                import { Validator } from "@keyma/dsl";
-                export const v = Validator("v", () => (value: unknown) => null);
-            `,
-        });
-        assert.ok(errorCodes(r).includes("KEYMA084"));
+    it("a bare `ValidatorFn` (no type argument) yields an unguarded `json` input", () => {
+        const r = cvValidator(`value === null ? "x" : null`, "");
+        assert.deepEqual(errorCodes(r), []);
+        const d = r.ir.validatorDeclarations?.find((x) => x.name === "v");
+        assert.deepEqual(d?.inputType, { kind: "json" });
     });
 
-    it("allows the DSL `Json` type as a polymorphic input (no error)", () => {
-        const r = cv({
-            "v.ts": `
-                import { Validator } from "@keyma/dsl";
-                import type { Json } from "@keyma/dsl";
-                export const v = Validator("v", () => (value: Json) => value === null ? "x" : null);
-            `,
-        });
+    it("`ValidatorFn<unknown>` yields a `json` input (no guard)", () => {
+        const r = cvValidator(`value === null ? "x" : null`, "unknown");
+        assert.deepEqual(errorCodes(r), []);
+        const d = r.ir.validatorDeclarations?.find((x) => x.name === "v");
+        assert.deepEqual(d?.inputType, { kind: "json" });
+    });
+
+    it("allows the DSL `Json` type as a polymorphic input", () => {
+        const r = cvValidator(`value === null ? "x" : null`, "Json");
         assert.deepEqual(errorCodes(r), []);
         const d = r.ir.validatorDeclarations?.find((x) => x.name === "v");
         assert.deepEqual(d?.inputType, { kind: "json" });
@@ -122,40 +117,24 @@ describe("typed validator/formatter inputs", () => {
 
 describe("unsupported intrinsics & instanceof", () => {
     it("KEYMA085 — rejects an unsupported string method", () => {
-        const r = cv({
-            "v.ts": `
-                import { Validator } from "@keyma/dsl";
-                export const v = Validator("v", () => (value: string) =>
-                    value.padStart(3, "0") === value ? null : "x");
-            `,
-        });
+        const r = cvValidator(`value.padStart(3, "0") === value ? null : "x"`);
         assert.ok(errorCodes(r).includes("KEYMA085"), JSON.stringify(r.diagnostics));
     });
 
     it("KEYMA087 — rejects a non-portable instanceof constructor", () => {
-        const r = cv({
-            "v.ts": `
-                import { Validator } from "@keyma/dsl";
-                class Foo {}
-                export const v = Validator("v", () => (value: string) =>
-                    (value as unknown) instanceof Foo ? "x" : null);
-            `,
-        });
+        const r = cvValidator(`(value as unknown) instanceof Foo ? "x" : null`, "string", "class Foo {}");
         assert.ok(errorCodes(r).includes("KEYMA087"), JSON.stringify(r.diagnostics));
     });
 });
 
 describe("utility-function compilation", () => {
     it("compiles a project-local function called from a validator body (transitively)", () => {
-        const r = cv({
-            "v.ts": `
-                import { Validator } from "@keyma/dsl";
-                function longEnough(s: string): boolean { return atLeast(s, 3); }
-                function atLeast(s: string, n: number): boolean { return s.length >= n; }
-                export const v = Validator("v", () => (value: string) =>
-                    longEnough(value) ? null : "x");
-            `,
-        });
+        const r = cvValidator(
+            `longEnough(value) ? null : "x"`,
+            "string",
+            `function longEnough(s: string): boolean { return atLeast(s, 3); }
+             function atLeast(s: string, n: number): boolean { return s.length >= n; }`,
+        );
         assert.deepEqual(errorCodes(r), []);
         const names = (r.ir.functionDeclarations ?? []).map((f) => f.name).sort();
         assert.deepEqual(names, ["atLeast", "longEnough"], "both functions compiled transitively");
@@ -168,10 +147,11 @@ describe("utility-function compilation", () => {
         const r = cv({
             "ext.d.ts": `export declare function ext(s: string): boolean;`,
             "v.ts": `
-                import { Validator } from "@keyma/dsl";
+                import { Schema, Validate } from "@keyma/dsl";
+                import type { ValidatorFn } from "@keyma/dsl";
                 import { ext } from "./ext.js";
-                export const v = Validator("v", () => (value: string) =>
-                    ext(value) ? null : "x");
+                export function v(): ValidatorFn<string> { return (value) => ext(value) ? null : "x"; }
+                @Schema() class Holder { @Validate(v()) declare a: string; }
             `,
         });
         assert.ok(errorCodes(r).includes("KEYMA086"), JSON.stringify(r.diagnostics));

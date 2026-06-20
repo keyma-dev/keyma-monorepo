@@ -2,7 +2,7 @@ import { describe, it, before } from "node:test";
 import assert from "node:assert/strict";
 import path from "node:path";
 import { fileURLToPath } from "node:url";
-import { readFileSync } from "node:fs";
+import { readFileSync, writeFileSync } from "node:fs";
 import type { KeymaIR } from "@keyma/ir";
 import { emitJs } from "../src/backend.js";
 import { exprToJs } from "../src/emit-expression.js";
@@ -16,6 +16,15 @@ const SNAPSHOTS = path.join(__dirname, "snapshots");
 
 function snap(name: string): string {
     return readFileSync(path.join(SNAPSHOTS, name), "utf-8");
+}
+
+/** Compare against a snapshot, or (re)write it when UPDATE_SNAPSHOTS is set. */
+function matchSnap(content: string, name: string): void {
+    if (process.env["UPDATE_SNAPSHOTS"]) {
+        writeFileSync(path.join(SNAPSHOTS, name), content);
+        return;
+    }
+    assert.equal(content, snap(name));
 }
 
 // ─── Test IR fixtures ─────────────────────────────────────────────────────────
@@ -46,8 +55,18 @@ const BASIC_IR: KeymaIR = {
                 },
             ],
             indexes: [{ fields: [{ name: "firstName", direction: 1 }], unique: false }],
-            source: SRC,
+            source: { file: "user.ts", line: 1, column: 1 },
         },
+    ],
+    validatorDeclarations: [
+        { name: "required", factoryParams: [], inputType: { kind: "json" },
+          body: { params: [{ name: "value", role: "value" }], statements: [{ kind: "return", value: { kind: "binary", op: "!=", left: { kind: "field", name: "value" }, right: { kind: "literal", value: null } } }] }, source: SRC },
+        { name: "minLength", factoryParams: [{ name: "value" }], inputType: { kind: "string" },
+          body: { params: [{ name: "raw", role: "value" }, { name: "field", role: "field" }], statements: [{ kind: "return", value: { kind: "literal", value: null } }] }, source: SRC },
+    ],
+    formatterDeclarations: [
+        { name: "trim", factoryParams: [], inputType: { kind: "string" },
+          body: { params: [{ name: "value", role: "value" }], statements: [{ kind: "return", value: { kind: "call", callee: { kind: "member", object: { kind: "field", name: "value" }, member: "trim" }, args: [] } }] }, source: SRC },
     ],
     diagnostics: [],
 };
@@ -80,7 +99,7 @@ const INHERITANCE_IR: KeymaIR = {
                 { name: "department", type: { kind: "string" }, visibility: "public", readonly: false, required: true, validators: [], formatters: [], indexes: [], source: SRC },
             ],
             indexes: [],
-            source: SRC,
+            source: { file: "employee.ts", line: 1, column: 1 },
         },
     ],
     diagnostics: [],
@@ -106,7 +125,7 @@ const PRIVATE_SCHEMA_IR: KeymaIR = {
             visibility: "private",
             fields: [{ name: "hash", type: { kind: "string" }, visibility: "public", readonly: false, required: true, validators: [], formatters: [], indexes: [], source: SRC }],
             indexes: [],
-            source: SRC,
+            source: { file: "credentials.ts", line: 1, column: 1 },
         },
     ],
     diagnostics: [],
@@ -124,7 +143,7 @@ const EPHEMERAL_SCHEMA_IR: KeymaIR = {
             visibility: "public",
             fields: [{ name: "email", type: { kind: "string" }, visibility: "public", readonly: false, required: true, validators: [], formatters: [], indexes: [], source: SRC }],
             indexes: [],
-            source: SRC,
+            source: { file: "login_input.ts", line: 1, column: 1 },
         },
     ],
     diagnostics: [],
@@ -143,7 +162,7 @@ const REFS_IR: KeymaIR = {
                 { name: "line1", type: { kind: "string" }, visibility: "public", readonly: false, required: true, validators: [], formatters: [], indexes: [], source: SRC },
             ],
             indexes: [],
-            source: SRC,
+            source: { file: "address.ts", line: 1, column: 1 },
         },
         {
             id: "schema:customer",
@@ -155,7 +174,7 @@ const REFS_IR: KeymaIR = {
                 { name: "home", type: { kind: "embedded", schema: "Address" }, visibility: "public", readonly: false, required: false, validators: [], formatters: [], indexes: [], source: SRC },
             ],
             indexes: [],
-            source: SRC,
+            source: { file: "customer.ts", line: 1, column: 1 },
         },
     ],
     diagnostics: [],
@@ -174,7 +193,7 @@ const VALIDATORS_IR: KeymaIR = {
                 { name: "id", type: { kind: "id" }, visibility: "public", readonly: true, required: true, validators: [{ name: "required" }], formatters: [], indexes: [], source: SRC },
             ],
             indexes: [],
-            source: SRC,
+            source: { file: "item.ts", line: 1, column: 1 },
         },
     ],
     validatorDeclarations: [
@@ -205,7 +224,7 @@ const FORMATTERS_IR: KeymaIR = {
                 { name: "name", type: { kind: "string" }, visibility: "public", readonly: false, required: true, validators: [], formatters: [{ phase: "change", spec: { name: "trim" } }], indexes: [], source: SRC },
             ],
             indexes: [],
-            source: SRC,
+            source: { file: "item.ts", line: 1, column: 1 },
         },
     ],
     formatterDeclarations: [
@@ -383,12 +402,12 @@ describe("emitJs — client model", () => {
 
     it("client model .js snapshot", () => {
         const content = fileContent(files, "dist/js/client/models/user.js");
-        assert.equal(content, snap("client-model-user.js"));
+        matchSnap(content, "client-model-user.js");
     });
 
     it("client model .d.ts snapshot", () => {
         const content = fileContent(files, "dist/js/client/models/user.d.ts");
-        assert.equal(content, snap("client-model-user.d.ts"));
+        matchSnap(content, "client-model-user.d.ts");
     });
 
     it("client model attaches schema as a frozen static", () => {
@@ -435,12 +454,12 @@ describe("emitJs — server model", () => {
 
     it("server model .js snapshot", () => {
         const content = fileContent(files, "dist/js/server/models/user.js");
-        assert.equal(content, snap("server-model-user.js"));
+        matchSnap(content, "server-model-user.js");
     });
 
     it("server model .d.ts snapshot", () => {
         const content = fileContent(files, "dist/js/server/models/user.d.ts");
-        assert.equal(content, snap("server-model-user.d.ts"));
+        matchSnap(content, "server-model-user.d.ts");
     });
 
     it("server model includes private field in constructor", () => {
@@ -684,9 +703,9 @@ describe("emitJs — output structure", () => {
     });
 });
 
-// ─── Validators exported from index ──────────────────────────────────────────
+// ─── Validators emitted as a direct-ref module (not via the index/registry) ──
 
-describe("emitJs — validators in index", () => {
+describe("emitJs — validators module", () => {
     let files: { path: string; content: string | Uint8Array }[];
 
     before(async () => {
@@ -694,40 +713,42 @@ describe("emitJs — validators in index", () => {
         files = result.files;
     });
 
-    it("client index.js re-exports validators and registry", () => {
-        const content = fileContent(files, "dist/js/client/index.js");
-        assert.ok(content.includes(`export * from "./validators.js"`), "missing validators re-export in client index.js");
-        assert.ok(content.includes(`export * from "./registry.js"`), "missing registry re-export in client index.js");
+    it("emits a validators.js with direct-ref factory exports (no registry)", () => {
+        const content = fileContent(files, "dist/js/server/validators.js");
+        assert.ok(content.includes(`export const required =`), "missing required factory export");
+        assert.ok(!content.includes("createValidatorRegistry"), "should not emit a registry");
     });
 
-    it("client index.d.ts re-exports validators and registry", () => {
-        const content = fileContent(files, "dist/js/client/index.d.ts");
-        assert.ok(content.includes(`export * from "./validators.js"`), "missing validators re-export in client index.d.ts");
-        assert.ok(content.includes(`export * from "./registry.js"`), "missing registry re-export in client index.d.ts");
+    it("the injected type-guard returns a ValidationError object, not a string", () => {
+        const content = fileContent(files, "dist/js/server/validators.js");
+        // `required` declares no field param, so the field falls back to `undefined`.
+        assert.ok(
+            content.includes(`return { field: undefined, code: "type_error", message: "expected string" }`),
+            "type-guard must return a ValidationError object",
+        );
+        assert.ok(!content.includes(`return "expected string"`), "must not return a bare string");
     });
 
-    it("server index.js re-exports validators and registry", () => {
+    it("does not emit a registry.js", () => {
+        const paths = files.map((f) => f.path);
+        assert.ok(!paths.some((p) => p.endsWith("registry.js")), "registry.js should not be emitted");
+    });
+
+    it("the index does not re-export validators (they are internal)", () => {
         const content = fileContent(files, "dist/js/server/index.js");
-        assert.ok(content.includes(`export * from "./validators.js"`), "missing validators re-export in server index.js");
-        assert.ok(content.includes(`export * from "./registry.js"`), "missing registry re-export in server index.js");
+        assert.ok(!content.includes(`from "./validators.js"`), "index must not re-export validators");
     });
 
-    it("server index.d.ts re-exports validators and registry", () => {
-        const content = fileContent(files, "dist/js/server/index.d.ts");
-        assert.ok(content.includes(`export * from "./validators.js"`), "missing validators re-export in server index.d.ts");
-        assert.ok(content.includes(`export * from "./registry.js"`), "missing registry re-export in server index.d.ts");
-    });
-
-    it("client index.js does not re-export formatters when none declared", () => {
-        const content = fileContent(files, "dist/js/client/index.js");
-        assert.ok(!content.includes(`from "./formatters.js"`), "unexpected formatters export in client index.js");
-        assert.ok(!content.includes(`from "./formatter-registry.js"`), "unexpected formatter-registry export in client index.js");
+    it("a field's metadata references the factory call directly", () => {
+        const content = fileContent(files, "dist/js/server/models/item.js");
+        assert.ok(content.includes(`import { required } from "../validators.js"`), "model should import the factory");
+        assert.ok(content.includes(`"validators": [\n                required()\n            ]`) || content.includes(`required()`), "metadata should call the factory");
     });
 });
 
-// ─── Formatters exported from index ──────────────────────────────────────────
+// ─── Formatters emitted as a direct-ref module ───────────────────────────────
 
-describe("emitJs — formatters in index", () => {
+describe("emitJs — formatters module", () => {
     let files: { path: string; content: string | Uint8Array }[];
 
     before(async () => {
@@ -735,33 +756,33 @@ describe("emitJs — formatters in index", () => {
         files = result.files;
     });
 
-    it("client index.js re-exports formatters and formatter-registry", () => {
-        const content = fileContent(files, "dist/js/client/index.js");
-        assert.ok(content.includes(`export * from "./formatters.js"`), "missing formatters re-export in client index.js");
-        assert.ok(content.includes(`export * from "./formatter-registry.js"`), "missing formatter-registry re-export in client index.js");
+    it("emits a formatters.js with direct-ref factory exports (no registry)", () => {
+        const content = fileContent(files, "dist/js/server/formatters.js");
+        assert.ok(content.includes(`export const trim =`), "missing trim factory export");
+        assert.ok(!content.includes("createFormatterRegistry"), "should not emit a formatter registry");
     });
 
-    it("client index.d.ts re-exports formatters and formatter-registry", () => {
-        const content = fileContent(files, "dist/js/client/index.d.ts");
-        assert.ok(content.includes(`export * from "./formatters.js"`), "missing formatters re-export in client index.d.ts");
-        assert.ok(content.includes(`export * from "./formatter-registry.js"`), "missing formatter-registry re-export in client index.d.ts");
+    it("does not emit a formatter-registry.js", () => {
+        const paths = files.map((f) => f.path);
+        assert.ok(!paths.some((p) => p.endsWith("formatter-registry.js")), "formatter-registry.js should not be emitted");
     });
 
-    it("client index.js does not re-export validators when none declared", () => {
-        const content = fileContent(files, "dist/js/client/index.js");
-        assert.ok(!content.includes(`from "./validators.js"`), "unexpected validators export in client index.js");
-        assert.ok(!content.includes(`from "./registry.js"`), "unexpected registry export in client index.js");
+    it("a field's metadata references the formatter via { phase, fn }", () => {
+        const content = fileContent(files, "dist/js/server/models/item.js");
+        assert.ok(content.includes(`"fn": trim()`), "formatter should be a direct fn call");
     });
 });
 
-// ─── No spurious exports when no declarations ─────────────────────────────────
+// ─── No validator/formatter modules when IR has none ──────────────────────────
 
-describe("emitJs — no validator/formatter exports when IR has none", () => {
-    it("index.js does not include validators/formatters when IR has no declarations", async () => {
-        const result = await emitJs(BASIC_IR, bothTarget(), RESOLVED_CONFIG);
-        const content = fileContent(result.files, "dist/js/client/index.js");
-        assert.ok(!content.includes(`from "./validators.js"`), "no validators should be exported when none declared");
-        assert.ok(!content.includes(`from "./formatters.js"`), "no formatters should be exported when none declared");
+describe("emitJs — no validator/formatter modules when IR has none", () => {
+    it("does not emit validators.js/formatters.js when there are no declarations", async () => {
+        const noDeclIr: KeymaIR = { ...BASIC_IR, validatorDeclarations: [], formatterDeclarations: [],
+            schemas: BASIC_IR.schemas.map((s) => ({ ...s, fields: s.fields.map((f) => ({ ...f, validators: [], formatters: [] })) })) };
+        const result = await emitJs(noDeclIr, bothTarget(), RESOLVED_CONFIG);
+        const paths = result.files.map((f) => f.path);
+        assert.ok(!paths.some((p) => p.endsWith("validators.js")), "no validators.js when none declared");
+        assert.ok(!paths.some((p) => p.endsWith("formatters.js")), "no formatters.js when none declared");
     });
 });
 
@@ -806,18 +827,17 @@ describe("emitJs — library mode", () => {
 });
 
 describe("emitJs — library mode with validators", () => {
-    it("emits validators and registry into outDir directly", async () => {
+    it("emits a validators.js (no registry) into outDir directly", async () => {
         const result = await emitJs(VALIDATORS_IR, libraryTarget(), RESOLVED_CONFIG);
         const paths = result.files.map((f) => f.path);
         assert.ok(paths.includes("dist/js/validators.js"), "validators.js missing in library mode");
-        assert.ok(paths.includes("dist/js/registry.js"), "registry.js missing in library mode");
+        assert.ok(!paths.some((p) => p.endsWith("registry.js")), "registry.js should not be emitted");
     });
 
-    it("index.js re-exports validators in library mode", async () => {
+    it("the library index does not re-export validators (internal impl)", async () => {
         const result = await emitJs(VALIDATORS_IR, libraryTarget(), RESOLVED_CONFIG);
         const content = fileContent(result.files, "dist/js/index.js");
-        assert.ok(content.includes(`export * from "./validators.js"`), "validators not re-exported from library index");
-        assert.ok(content.includes(`export * from "./registry.js"`), "registry not re-exported from library index");
+        assert.ok(!content.includes(`from "./validators.js"`), "validators must not be re-exported from library index");
     });
 });
 
@@ -859,7 +879,7 @@ const BEHAVIORS_IR: KeymaIR = {
                     visibility: "private", source: SRC,
                 },
             ],
-            source: SRC,
+            source: { file: "user.ts", line: 1, column: 1 },
         },
     ],
     diagnostics: [],
@@ -911,7 +931,7 @@ const SELF_REF_IR: KeymaIR = {
                 { name: "id", type: { kind: "id" }, visibility: "public", readonly: true, required: true, validators: [], formatters: [], indexes: [{ unique: true }], source: SRC },
                 { name: "parent", type: { kind: "reference", schema: "Node", idType: { kind: "id" } }, visibility: "public", readonly: false, required: false, validators: [], formatters: [], indexes: [], source: SRC },
             ],
-            indexes: [], source: SRC,
+            indexes: [], source: { file: "node.ts", line: 1, column: 1 },
         },
     ],
     diagnostics: [],

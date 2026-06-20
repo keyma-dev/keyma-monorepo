@@ -18,7 +18,7 @@ const BASIC_IR: KeymaIR = {
             sourceName: "User",
             visibility: "public",
             fields: [
-                { name: "id", type: { kind: "id" }, visibility: "public", readonly: true, required: true, validators: [{ name: "required" }], formatters: [], indexes: [{ unique: true }], source: SRC },
+                { name: "id", type: { kind: "id" }, visibility: "public", readonly: true, required: true, validators: [], formatters: [], indexes: [{ unique: true }], source: SRC },
                 { name: "firstName", type: { kind: "string" }, visibility: "public", readonly: false, required: true, validators: [], formatters: [], indexes: [], source: SRC },
                 { name: "lastName", type: { kind: "string" }, visibility: "public", readonly: false, required: true, validators: [], formatters: [], indexes: [], source: SRC },
                 {
@@ -31,7 +31,7 @@ const BASIC_IR: KeymaIR = {
                 },
             ],
             indexes: [],
-            source: SRC,
+            source: { file: "user.ts", line: 1, column: 1 },
         },
     ],
     diagnostics: [],
@@ -129,7 +129,7 @@ describe("emitPython", () => {
                     fields: [
                         { name: "nickname", type: { kind: "string" }, nullable: true, visibility: "public", readonly: false, required: true, validators: [], formatters: [], indexes: [], source: SRC },
                     ],
-                    indexes: [], source: SRC,
+                    indexes: [], source: { file: "thing.ts", line: 1, column: 1 },
                 },
             ],
             diagnostics: [],
@@ -213,7 +213,7 @@ describe("emitPython", () => {
                             visibility: "public", source: SRC,
                         },
                     ],
-                    source: SRC,
+                    source: { file: "user.ts", line: 1, column: 1 },
                 },
             ],
             diagnostics: [],
@@ -229,5 +229,40 @@ describe("emitPython", () => {
         assert.ok(content.includes("def _set_primaryEmail(self, value):"), "standalone setter helper missing");
         assert.ok(content.includes("self.email = value.strip()"), "standalone setter body wrong");
         assert.ok(content.includes("primaryEmail = property(None, _set_primaryEmail)"), "property wiring missing");
+    });
+});
+
+describe("emitPython — validators module", () => {
+    const VALIDATORS_IR: KeymaIR = {
+        irVersion: "1.0.0", compilerVersion: "0.1.0",
+        schemas: [
+            {
+                id: "schema:item", name: "item", sourceName: "Item", visibility: "public",
+                fields: [{ name: "name", type: { kind: "string" }, visibility: "public", readonly: false, required: true, validators: [{ name: "minLength", params: { value: 2 } }], formatters: [], indexes: [], source: SRC }],
+                indexes: [], source: SRC,
+            },
+        ],
+        validatorDeclarations: [
+            {
+                name: "minLength", factoryParams: [{ name: "value" }], inputType: { kind: "string" },
+                body: {
+                    params: [{ name: "raw", role: "value" }, { name: "field", role: "field" }],
+                    statements: [{ kind: "return", value: { kind: "literal", value: null } }],
+                },
+                source: SRC,
+            },
+        ],
+        diagnostics: [],
+    };
+
+    it("the injected type-guard returns a ValidationError dict, not a string", async () => {
+        const target: PythonTargetConfig = { language: "python", outDir: "dist/python", library: true };
+        const result = await emitPython(VALIDATORS_IR, target, RESOLVED_CONFIG);
+        const content = fileContent(result.files, "dist/python/validators.py");
+        assert.ok(
+            content.includes(`return {"field": field, "code": "type_error", "message": "expected string"}`),
+            "type-guard must return a ValidationError dict",
+        );
+        assert.ok(!content.includes(`return "expected string"`), "must not return a bare string");
     });
 });

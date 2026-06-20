@@ -2,9 +2,11 @@ import ts from "typescript";
 import type { IRValidator, IRFormatterSpec, IRFieldIndex, IRDiagnostic, IRDefault, IRFormField, IRType } from "@keyma/ir";
 import {
     mkError,
-    KEYMA011, KEYMA013, KEYMA016, KEYMA020, KEYMA021, KEYMA090, KEYMA091,
+    KEYMA011, KEYMA013, KEYMA016, KEYMA020, KEYMA021, KEYMA090,
 } from "./diagnostics.js";
-import { getLocation, numericLiteralValue, stringLiteralValue, booleanLiteralValue, resolveAlias, isFromModule } from "./util.js";
+import { getLocation, numericLiteralValue, stringLiteralValue, booleanLiteralValue } from "./util.js";
+import { lowerExpr, type FnRefVerdict } from "./lower-portable-expr.js";
+import type { ResolvedFactory } from "./discover-validators.js";
 
 type LowerContext = {
     checker: ts.TypeChecker;
@@ -12,10 +14,14 @@ type LowerContext = {
     sourceFile: ts.SourceFile;
     /** Module name of the Keyma DSL (e.g. "@keyma/dsl"). */
     dslModuleName: string;
-    /** Map from function name → validator name (from Validator(name, fn) declarations). */
-    discoveredValidators?: Map<string, string>;
-    /** Map from function name → formatter name (from Formatter(name, fn) declarations). */
-    discoveredFormatters?: Map<string, string>;
+    /** Schema class names; enables portable lowering of non-literal initializers. */
+    schemaClassNames?: ReadonlySet<string>;
+    /** Resolve a `@Validate(...)` callee to a validator factory (enqueues it for lowering). */
+    resolveValidator?: (callee: ts.Identifier) => ResolvedFactory | undefined;
+    /** Resolve a `@Format(...)` callee to a formatter factory (enqueues it for lowering). */
+    resolveFormatter?: (callee: ts.Identifier) => ResolvedFactory | undefined;
+    /** Classify a call target inside an initializer so project-local utilities compile. */
+    classifyFunction?: (ident: ts.Identifier) => FnRefVerdict;
 };
 
 // ─── @Validate ───────────────────────────────────────────────────────────────
@@ -34,44 +40,24 @@ export function lowerValidateArgs(
 
 function lowerValidatorArg(expr: ts.Expression, ctx: LowerContext): IRValidator | null {
     const callee = getCalleeIdentifier(expr);
+    // A validator is a factory call like `minLength(2)` / `isEmail()`: the callee
+    // resolves (across imports/aliases) to a function whose return type is the DSL's
+    // `ValidatorFn`. The collector lowers its body into the bundle.
+    const resolved = callee !== undefined ? ctx.resolveValidator?.(callee) : undefined;
 
-    // Path 1: follow the callee to its `Validator("name", fn)` declaration. A
-    // factory call like @Validate(required()) has the generic return type
-    // ValidatorRef, whose __validatorName is `string` (not a literal), so the
-    // name can only be recovered from the originating declaration — across
-    // imports and aliases. The discovered-name map is a same-text fallback.
-    const resolved = callee !== undefined ? resolveFactory(callee, "Validator", ctx) : undefined;
-    let name = resolved?.name ?? (callee !== undefined ? ctx.discoveredValidators?.get(callee.text) : undefined);
-
-    // Path 2: a ValidatorRef carrying a string-literal __validatorName — a
-    // hand-written ref, or an `as const` factory result declared in this file.
-    if (name === undefined) {
-        const nameProp = ctx.checker.getTypeAtLocation(expr).getProperty("__validatorName");
-        if (nameProp !== undefined) {
-            const nameType = ctx.checker.getTypeOfSymbol(nameProp);
-            if (!nameType.isStringLiteral()) {
-                ctx.diagnostics.push(
-                    mkError(KEYMA020, `Cannot determine validator name at compile time — the ValidatorRef must carry a string literal __validatorName (use "as const" on the export)`, getLocation(expr, ctx.sourceFile))
-                );
-                return null;
-            }
-            name = nameType.value;
-        }
-    }
-
-    if (name === undefined) {
+    if (resolved === undefined) {
         ctx.diagnostics.push(
-            mkError(KEYMA020, `Expected a ValidatorRef or a call to a Validator(name, fn) factory`, getLocation(expr, ctx.sourceFile))
+            mkError(KEYMA020, `Expected a call to a validator factory — a function returning ValidatorFn (e.g. minLength(2))`, getLocation(expr, ctx.sourceFile))
         );
         return null;
     }
 
     if (ts.isCallExpression(expr)) {
-        const params = extractCallParams(expr, ctx, resolved?.factoryParams);
+        const params = extractCallParams(expr, ctx, resolved.factoryParams);
         if (params === undefined) return null;
-        if (params !== null) return { name, params };
+        if (params !== null) return { name: resolved.name, params };
     }
-    return { name };
+    return { name: resolved.name };
 }
 
 // ─── @Format ─────────────────────────────────────────────────────────────────
@@ -117,52 +103,28 @@ function resolvePhaseValue(arg: ts.Expression, ctx: LowerContext): string | unde
 
 function lowerFormatterArg(expr: ts.Expression, ctx: LowerContext): IRFormatterSpec | null {
     const callee = getCalleeIdentifier(expr);
+    // A formatter is a factory call like `trim()` / `truncate(20)`: the callee
+    // resolves to a function whose return type is the DSL's `FormatterFn`.
+    const resolved = callee !== undefined ? ctx.resolveFormatter?.(callee) : undefined;
 
-    // Path 1: follow the callee to its `Formatter("name", fn)` declaration. As
-    // with validators, a factory call like @Format("change", trim()) has the
-    // generic return type FormatterRef, whose __formatterName is `string`, so
-    // the name is recovered from the originating declaration (imports/aliases
-    // included). The discovered-name map is a same-text fallback.
-    const resolved = callee !== undefined ? resolveFactory(callee, "Formatter", ctx) : undefined;
-    let name = resolved?.name ?? (callee !== undefined ? ctx.discoveredFormatters?.get(callee.text) : undefined);
-
-    // Path 2: a FormatterRef carrying a string-literal __formatterName — a
-    // hand-written ref, or an `as const` factory result declared in this file.
-    if (name === undefined) {
-        const nameProp = ctx.checker.getTypeAtLocation(expr).getProperty("__formatterName");
-        if (nameProp !== undefined) {
-            const nameType = ctx.checker.getTypeOfSymbol(nameProp);
-            if (!nameType.isStringLiteral()) {
-                ctx.diagnostics.push(
-                    mkError(KEYMA021, `Cannot determine formatter name at compile time — the FormatterRef must carry a string literal __formatterName (use "as const" on the export)`, getLocation(expr, ctx.sourceFile))
-                );
-                return null;
-            }
-            name = nameType.value;
-        }
-    }
-
-    if (name === undefined) {
+    if (resolved === undefined) {
         ctx.diagnostics.push(
-            mkError(KEYMA021, `Expected a FormatterRef or a call to a Formatter(name, fn) factory`, getLocation(expr, ctx.sourceFile))
+            mkError(KEYMA021, `Expected a call to a formatter factory — a function returning FormatterFn (e.g. trim())`, getLocation(expr, ctx.sourceFile))
         );
         return null;
     }
 
     if (ts.isCallExpression(expr)) {
-        const params = extractCallParams(expr, ctx, resolved?.factoryParams);
+        const params = extractCallParams(expr, ctx, resolved.factoryParams);
         if (params === undefined) return null;
-        if (params !== null) return { name, params };
+        if (params !== null) return { name: resolved.name, params };
     }
-    return { name };
+    return { name: resolved.name };
 }
 
-// ─── Factory name resolution ────────────────────────────────────────────────
+// ─── Callee resolution ───────────────────────────────────────────────────────
 
-/** The registered name plus the factory's parameter list, recovered from a declaration. */
-type ResolvedFactory = { name: string; factoryParams: readonly ts.ParameterDeclaration[] };
-
-/** The identifier being called or referenced in a @Validate/@Format argument. */
+/** The identifier being called in a @Validate/@Format argument. */
 function getCalleeIdentifier(expr: ts.Expression): ts.Identifier | undefined {
     if (ts.isCallExpression(expr)) {
         return ts.isIdentifier(expr.expression) ? expr.expression : undefined;
@@ -170,138 +132,84 @@ function getCalleeIdentifier(expr: ts.Expression): ts.Identifier | undefined {
     return ts.isIdentifier(expr) ? expr : undefined;
 }
 
-/**
- * Follow a callee identifier across imports/aliases to its originating
- * `Validator("name", fn)` / `Formatter("name", fn)` declaration and return the
- * registered name plus the factory's parameter list, or undefined if it does
- * not resolve to one.
- *
- * This is the only way to recover the name for a factory call such as
- * `@Validate(required())`: the factory's declared return type is the opaque
- * `ValidatorRef`, whose `__validatorName` is `string` (not a string literal),
- * so the name cannot be read off the call expression's type. The factory's own
- * parameter names (e.g. `value` in `minLength(value)`) are likewise erased to a
- * generic rest parameter on the call site, so they too come from the declaration.
- */
-function resolveFactory(
-    ident: ts.Identifier,
-    factory: "Validator" | "Formatter",
-    ctx: LowerContext,
-): ResolvedFactory | undefined {
-    const symbol = ctx.checker.getSymbolAtLocation(ident);
-    if (symbol === undefined) return undefined;
-    const resolved = resolveAlias(symbol, ctx.checker);
-
-    for (const decl of resolved.getDeclarations() ?? []) {
-        if (!ts.isVariableDeclaration(decl)) continue;
-        const init = decl.initializer;
-        if (init === undefined || !ts.isCallExpression(init) || !ts.isIdentifier(init.expression)) continue;
-        if (init.expression.text !== factory) continue;
-
-        // The factory must be the DSL's Validator/Formatter, not a same-named local.
-        const factorySym = ctx.checker.getSymbolAtLocation(init.expression);
-        if (factorySym === undefined || !isFromModule(factorySym, ctx.checker, ctx.dslModuleName)) continue;
-
-        // Two forms: `Validator("name", fn)` and `Validator(fn)` (name inferred
-        // from the const binding). Recover the name and the factory accordingly.
-        const arg0 = init.arguments[0];
-        let name: string;
-        let factoryFn: ts.Expression | undefined;
-        if (arg0 !== undefined && ts.isStringLiteral(arg0)) {
-            name = arg0.text;
-            factoryFn = init.arguments[1];
-        } else if (arg0 !== undefined && (ts.isArrowFunction(arg0) || ts.isFunctionExpression(arg0)) && ts.isIdentifier(decl.name)) {
-            name = decl.name.text;
-            factoryFn = arg0;
-        } else {
-            continue;
-        }
-
-        const factoryParams = factoryFn !== undefined && (ts.isArrowFunction(factoryFn) || ts.isFunctionExpression(factoryFn))
-            ? factoryFn.parameters
-            : [];
-        return { name, factoryParams };
-    }
-    return undefined;
-}
-
-// ─── @Default ──────────────────────────────────────────────────────────────────
+// ─── Field default (property initializer) ────────────────────────────────────
 
 /**
- * Lower a `@Default(...)` argument to an IRDefault. Accepts a literal value or a
- * named generator (`Now`, `Uuid`) imported from the DSL. The `fieldType` is used
- * for a light literal-vs-type compatibility check (KEYMA090). Returns null on error.
+ * Lower a field's TypeScript property initializer (`= <expr>`) to an IRDefault.
+ * A literal (`"active"`, `0`, `Role.Member`, `[...]`) lowers to `{kind:"literal"}`
+ * with a light value-vs-type compatibility check (KEYMA090). Anything else
+ * (`(() => new Date())()`, `myFn()`, …) lowers through the shared portable
+ * expression engine to `{kind:"expression"}`, to be re-emitted and evaluated per
+ * record at create time. Returns null on error (diagnostic already pushed).
  */
-export function lowerDefaultArg(
-    args: ts.NodeArray<ts.Expression>,
+export function lowerInitializerDefault(
+    init: ts.Expression,
     fieldType: IRType,
     ctx: LowerContext,
 ): IRDefault | null {
-    const arg = args[0];
-    if (arg === undefined) {
-        ctx.diagnostics.push(mkError(KEYMA091, "@Default() requires a value"));
-        return null;
-    }
-
-    // Named generator: @Default(Now) / @Default(Uuid)
-    if (ts.isIdentifier(arg)) {
-        const gen = resolveDefaultGenerator(arg, ctx);
-        if (gen !== undefined) return { kind: "generator", name: gen };
-    }
-
-    // Enum-member / const access (e.g. `Role.Member`) — resolve to its literal value.
-    if (ts.isPropertyAccessExpression(arg)) {
-        const t = ctx.checker.getTypeAtLocation(arg);
+    // Enum-member / const access (e.g. `Role.Member`) that resolves to a literal.
+    if (ts.isPropertyAccessExpression(init)) {
+        const t = ctx.checker.getTypeAtLocation(init);
         const v = t.isStringLiteral() ? t.value : t.isNumberLiteral() ? t.value : undefined;
-        if (v === undefined) {
-            ctx.diagnostics.push(mkError(
-                KEYMA091,
-                "@Default() must be a literal, a named generator (Now, Uuid), or a string-enum member",
-                getLocation(arg, ctx.sourceFile),
-            ));
-            return null;
-        }
-        if (!literalMatchesType(v, fieldType)) {
-            ctx.diagnostics.push(mkError(KEYMA090, `@Default value ${JSON.stringify(v)} is not compatible with field type "${fieldType.kind}"`, getLocation(arg, ctx.sourceFile)));
-            return null;
-        }
-        return { kind: "literal", value: v };
+        if (v !== undefined) return literalDefault(v, fieldType, init, ctx);
+        // A non-literal member access falls through to portable expression lowering.
     }
 
-    // Arrows/functions/calls are not supported as defaults yet.
-    if (ts.isArrowFunction(arg) || ts.isFunctionExpression(arg) || ts.isCallExpression(arg)) {
-        ctx.diagnostics.push(mkError(
-            KEYMA091,
-            "@Default() must be a literal value or a named generator (Now, Uuid)",
-            getLocation(arg, ctx.sourceFile),
-        ));
-        return null;
+    // Plain literal initializers (string/number/boolean/null/array, negative numbers).
+    if (isLiteralInitializer(init)) {
+        const r = evalLiteralValue(init, ctx);
+        if (!r.ok) return null;
+        return literalDefault(r.value as string | number | boolean | null | unknown[], fieldType, init, ctx);
     }
 
-    const r = evalLiteralValue(arg, ctx);
-    if (!r.ok) return null;
-    const value = r.value as string | number | boolean | null | unknown[];
+    // Otherwise: a portable expression default, re-emitted and evaluated per record.
+    const expr = lowerExpr(init, {
+        diagnostics: ctx.diagnostics,
+        sourceFile: ctx.sourceFile,
+        checker: ctx.checker,
+        dslModuleName: ctx.dslModuleName,
+        schemaClassNames: ctx.schemaClassNames ?? new Set<string>(),
+        ...(ctx.classifyFunction !== undefined ? { classifyFunction: ctx.classifyFunction } : {}),
+    });
+    if (expr === null) return null;
+    return { kind: "expression", expression: expr };
+}
 
+/** Build a literal IRDefault, checking value-vs-type compatibility (KEYMA090). */
+function literalDefault(
+    value: string | number | boolean | null | unknown[],
+    fieldType: IRType,
+    node: ts.Node,
+    ctx: LowerContext,
+): IRDefault | null {
     if (!literalMatchesType(value, fieldType)) {
         ctx.diagnostics.push(mkError(
             KEYMA090,
-            `@Default value ${JSON.stringify(value)} is not compatible with field type "${fieldType.kind}"`,
-            getLocation(arg, ctx.sourceFile),
+            `Default value ${JSON.stringify(value)} is not compatible with field type "${fieldType.kind}"`,
+            getLocation(node, ctx.sourceFile),
         ));
         return null;
     }
-
     return { kind: "literal", value };
 }
 
-/** Resolve a DSL default generator identifier (`Now`/`Uuid`) to its IR name. */
-function resolveDefaultGenerator(ident: ts.Identifier, ctx: LowerContext): "now" | "uuid" | undefined {
-    const sym = ctx.checker.getSymbolAtLocation(ident);
-    if (sym === undefined || !isFromModule(sym, ctx.checker, ctx.dslModuleName)) return undefined;
-    const name = resolveAlias(sym, ctx.checker).getName();
-    if (name === "Now") return "now";
-    if (name === "Uuid") return "uuid";
-    return undefined;
+/** Whether an initializer is a plain literal handled by `evalLiteralValue`. */
+function isLiteralInitializer(node: ts.Expression): boolean {
+    switch (node.kind) {
+        case ts.SyntaxKind.StringLiteral:
+        case ts.SyntaxKind.NumericLiteral:
+        case ts.SyntaxKind.TrueKeyword:
+        case ts.SyntaxKind.FalseKeyword:
+        case ts.SyntaxKind.NullKeyword:
+            return true;
+    }
+    if (ts.isArrayLiteralExpression(node)) return true;
+    if (
+        ts.isPrefixUnaryExpression(node) &&
+        node.operator === ts.SyntaxKind.MinusToken &&
+        ts.isNumericLiteral(node.operand)
+    ) return true;
+    return false;
 }
 
 /** A light compatibility check between a literal default and the field's type. */

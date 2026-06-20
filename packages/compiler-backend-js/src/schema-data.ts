@@ -1,5 +1,8 @@
-import type { IRSchema, IRField, IRFieldIndex, IRIndex } from "@keyma/ir";
+import type { IRSchema, IRField, IRFieldIndex, IRIndex, IRValidatorDeclaration, IRFormatterDeclaration } from "@keyma/ir";
 import { exprToJs } from "./emit-expression.js";
+import { raw } from "./emit-literal.js";
+import { buildFactoryCall } from "./emit-validators.js";
+import { buildApplyDefaults } from "./emit-defaults.js";
 
 export type SchemaDataOptions = {
     /** Include private fields. */
@@ -8,15 +11,25 @@ export type SchemaDataOptions = {
     includeIndexes: boolean;
     /** Client-only: restrict formatters to form phases (change/blur/submit). */
     formPhasesOnly: boolean;
+    /** Include the per-schema `applyDefaults` arrow (server/library bundles only). */
+    includeDefaults: boolean;
+    /** Validator declarations keyed by name — for ordering direct-ref factory-call args. */
+    validatorDecls: ReadonlyMap<string, IRValidatorDeclaration>;
+    /** Formatter declarations keyed by name — for ordering direct-ref factory-call args. */
+    formatterDecls: ReadonlyMap<string, IRFormatterDeclaration>;
+    /** Embedded/reference class names this schema needs as a live `refs` Map. */
+    refs: readonly string[];
 };
 
 const CLIENT_PHASES = new Set(["change", "blur", "submit"]);
 
 /**
- * Build the JSON-serializable metadata object for a schema. Caller decides
- * how to embed it (e.g. as a frozen literal in the model file).
+ * Build the metadata object for a schema, ready to be emitted with `emitLiteral`.
+ * Validators/formatters are spliced as live factory calls (`minLength(2)`), `refs`
+ * and `applyDefaults` as live code — the object is no longer pure JSON (functions
+ * and a Map ride along), so the caller emits it via `emitLiteral`, not JSON.
  */
-export function buildSchemaData(schema: IRSchema, opts: SchemaDataOptions): object {
+export function buildSchemaData(schema: IRSchema, opts: SchemaDataOptions): Record<string, unknown> {
     const fields = visibleFields(schema, opts.includePrivate).map((f) => buildFieldData(f, opts));
     const indexes = opts.includeIndexes ? schema.indexes.map(buildIndexData) : [];
 
@@ -29,6 +42,14 @@ export function buildSchemaData(schema: IRSchema, opts: SchemaDataOptions): obje
     if (schema.edge !== undefined) out["edge"] = schema.edge;
     if (schema.visibility === "private") out["visibility"] = "private";
     if (schema.ephemeral) out["ephemeral"] = true;
+    if (opts.refs.length > 0) {
+        const entries = opts.refs.map((c) => `[${JSON.stringify(c)}, ${c}]`).join(", ");
+        out["refs"] = raw(`new Map([${entries}])`);
+    }
+    if (opts.includeDefaults) {
+        const applyDefaults = buildApplyDefaults(schema, opts.includePrivate);
+        if (applyDefaults !== null) out["applyDefaults"] = raw(applyDefaults);
+    }
     return out;
 }
 
@@ -111,8 +132,17 @@ function buildFieldData(field: IRField, opts: SchemaDataOptions): object {
     if (field.readonly) base["readonly"] = true;
     if (!field.required) base["required"] = false;
     if (field.nullable) base["nullable"] = true;
-    if (field.validators.length > 0) base["validators"] = field.validators;
-    if (formatters.length > 0) base["formatters"] = formatters;
+    if (field.validators.length > 0) {
+        base["validators"] = field.validators.map((v) =>
+            raw(buildFactoryCall(v.name, v.params, opts.validatorDecls.get(v.name)?.factoryParams ?? [])),
+        );
+    }
+    if (formatters.length > 0) {
+        base["formatters"] = formatters.map((fmt) => ({
+            phase: fmt.phase,
+            fn: raw(buildFactoryCall(fmt.spec.name, fmt.spec.params, opts.formatterDecls.get(fmt.spec.name)?.factoryParams ?? [])),
+        }));
+    }
     if (indexes.length > 0) base["indexes"] = indexes;
 
     if (field.computed !== undefined) {
@@ -121,7 +151,11 @@ function buildFieldData(field: IRField, opts: SchemaDataOptions): object {
     if (field.ephemeral) {
         base["ephemeral"] = true;
     }
-    if (field.default !== undefined) {
+    // Only literal defaults ride in the metadata (applied generically by the
+    // runtime). Expression defaults are re-emitted as runnable code in the
+    // server `defaults.js` registry, so embedding their IR here would be dead
+    // data — and would needlessly leak the expression into the client bundle.
+    if (field.default !== undefined && field.default.kind === "literal") {
         base["default"] = field.default;
     }
     if (field.form !== undefined) {

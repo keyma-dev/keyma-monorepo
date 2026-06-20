@@ -1,94 +1,68 @@
 import { describe, it } from "node:test";
 import assert from "node:assert/strict";
-import {
-    format,
-    type FormatterRegistry,
-} from "../src/format.js";
-import type { SchemaMetadata } from "../src/types.js";
+import { format } from "../src/format.js";
+import type { SchemaMetadata, FormatterFn } from "../src/types.js";
 
-function schemaWithFormatter(
-    fieldName: string,
-    phase: string,
-    formatterName: string,
-    extra: Record<string, unknown> = {},
-): SchemaMetadata {
+function schemaWithFormatter(fieldName: string, phase: string, fn: FormatterFn): SchemaMetadata {
     return {
         name: "test",
         sourceName: "Test",
-        fields: [
-            {
-                name: fieldName,
-                type: { kind: "string" },
-                required: false,
-                formatters: [{ phase, spec: { name: formatterName, ...extra } }],
-            },
-        ],
+        fields: [{ name: fieldName, type: { kind: "string" }, required: false, formatters: [{ phase, fn }] }],
     };
 }
 
-describe("format — custom registry", () => {
-    it("registered formatter runs by name", async () => {
-        const registry: FormatterRegistry = new Map();
-        registry.set("reverse", (v, _spec, _context) =>
-            typeof v === "string" ? v.split("").reverse().join("") : v,
-        );
-        const s = schemaWithFormatter("v", "save", "reverse");
+const reverse: FormatterFn = (v) => (typeof v === "string" ? v.split("").reverse().join("") : v);
+const lower: FormatterFn = (v) => (typeof v === "string" ? v.toLowerCase() : v);
+const upper: FormatterFn = (v) => (typeof v === "string" ? v.toUpperCase() : v);
+
+describe("format — direct-ref formatters", () => {
+    it("runs a formatter attached directly to the field metadata", async () => {
+        const s = schemaWithFormatter("v", "save", reverse);
         const value: Record<string, unknown> = { v: "abc" };
-        await format(s, value, "save", registry);
+        await format(s, value, "save");
         assert.equal(value["v"], "cba");
     });
 
-    it("unknown names are silently skipped", async () => {
-        const s = schemaWithFormatter("v", "save", "doesNotExist");
-        const value: Record<string, unknown> = { v: "abc" };
-        await format(s, value, "save", new Map());
-        assert.equal(value["v"], "abc");
-    });
-
-    it("default registry is empty — formatters are no-ops without an explicit registry", async () => {
-        const s = schemaWithFormatter("v", "save", "trim");
+    it("fields without formatters are no-ops", async () => {
+        const s: SchemaMetadata = {
+            name: "t", sourceName: "T",
+            fields: [{ name: "v", type: { kind: "string" }, required: false }],
+        };
         const value: Record<string, unknown> = { v: "  hi  " };
         await format(s, value, "save");
         assert.equal(value["v"], "  hi  ");
     });
 
     it("phase filtering: only applies formatters with matching phase", async () => {
-        const registry: FormatterRegistry = new Map();
-        registry.set("lower", (v) => typeof v === "string" ? v.toLowerCase() : v);
-        registry.set("upper", (v) => typeof v === "string" ? v.toUpperCase() : v);
         const s: SchemaMetadata = {
-            name: "t",
-            sourceName: "T",
-            fields: [
-                {
-                    name: "v",
-                    type: { kind: "string" },
-                    required: false,
-                    formatters: [
-                        { phase: "save", spec: { name: "lower" } },
-                        { phase: "change", spec: { name: "upper" } },
-                    ],
-                },
-            ],
+            name: "t", sourceName: "T",
+            fields: [{
+                name: "v", type: { kind: "string" }, required: false,
+                formatters: [{ phase: "save", fn: lower }, { phase: "change", fn: upper }],
+            }],
         };
         const v1: Record<string, unknown> = { v: "AbC" };
-        await format(s, v1, "save", registry);
+        await format(s, v1, "save");
         assert.equal(v1["v"], "abc");
 
         const v2: Record<string, unknown> = { v: "AbC" };
-        await format(s, v2, "change", registry);
+        await format(s, v2, "change");
         assert.equal(v2["v"], "ABC");
     });
 
-    it("flattenParams: params nested under params key are spread into spec for registry fn", async () => {
-        const registry: FormatterRegistry = new Map();
-        registry.set("truncate", (v, spec) => {
-            const max = typeof spec["maxLength"] === "number" ? spec["maxLength"] : Infinity;
-            return typeof v === "string" && v.length > max ? v.slice(0, max) : v;
-        });
-        const s = schemaWithFormatter("v", "save", "truncate", { params: { maxLength: 3 } });
+    it("a parameterized formatter factory closes over its params", async () => {
+        const truncate = (max: number): FormatterFn => (v) => (typeof v === "string" && v.length > max ? v.slice(0, max) : v);
+        const s = schemaWithFormatter("v", "save", truncate(3));
         const value: Record<string, unknown> = { v: "abcdef" };
-        await format(s, value, "save", registry);
+        await format(s, value, "save");
         assert.equal(value["v"], "abc");
+    });
+
+    it("awaits async formatters", async () => {
+        const asyncUpper: FormatterFn = async (v) => (typeof v === "string" ? v.toUpperCase() : v);
+        const s = schemaWithFormatter("v", "save", asyncUpper);
+        const value: Record<string, unknown> = { v: "ab" };
+        await format(s, value, "save");
+        assert.equal(value["v"], "AB");
     });
 });

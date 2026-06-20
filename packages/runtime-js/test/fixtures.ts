@@ -1,7 +1,16 @@
 // Shared test fixtures: schema metadata + branded model classes.
 
-import { brandSchema, type SchemaMetadata, type SchemaClass } from "../src/types.js";
+import { brandSchema, type SchemaMetadata, type SchemaClass, type ValidatorFn, type FormatterFn } from "../src/types.js";
 import type { EdgeBrand } from "@keyma/dsl";
+
+// Direct-ref validators/formatters — the shape the compiler now emits into metadata.
+const required: ValidatorFn = (value, field) =>
+    value !== undefined && value !== null && value !== "" ? null : { field, code: "required", message: `${field} is required` };
+const emailAddress: ValidatorFn = (value, field) =>
+    typeof value === "string" && value.includes("@") ? null : { field, code: "emailAddress", message: `${field} must be an email` };
+const minLength = (n: number): ValidatorFn => (value, field) =>
+    typeof value === "string" && value.length >= n ? null : { field, code: "minLength", message: `${field} too short` };
+const normalizeEmail: FormatterFn = (value) => (typeof value === "string" ? value.trim().toLowerCase() : value);
 
 // ─── Organization ────────────────────────────────────────────────────────────
 
@@ -15,8 +24,8 @@ export const ORGANIZATION_SCHEMA: SchemaMetadata = {
     name: "organization",
     sourceName: "Organization",
     fields: [
-        { name: "id", type: { kind: "id" }, readonly: true, validators: [{ name: "required" }] },
-        { name: "name", type: { kind: "string" }, validators: [{ name: "required" }] },
+        { name: "id", type: { kind: "id" }, readonly: true, validators: [required] },
+        { name: "name", type: { kind: "string" }, validators: [required] },
         { name: "tier", type: { kind: "string" }, required: false },
     ],
 };
@@ -80,9 +89,9 @@ export const USER_SCHEMA: SchemaMetadata = {
     name: "user",
     sourceName: "User",
     fields: [
-        { name: "id", type: { kind: "id" }, readonly: true, validators: [{ name: "required" }] },
-        { name: "email", type: { kind: "string" }, validators: [{ name: "required" }, { name: "emailAddress" }], formatters: [{ phase: "save", spec: { name: "normalizeEmail" } }] },
-        { name: "name", type: { kind: "string" }, validators: [{ name: "required" }, { name: "minLength", params: { value: 2 } }] },
+        { name: "id", type: { kind: "id" }, readonly: true, validators: [required] },
+        { name: "email", type: { kind: "string" }, validators: [required, emailAddress], formatters: [{ phase: "save", fn: normalizeEmail }] },
+        { name: "name", type: { kind: "string" }, validators: [required, minLength(2)] },
         { name: "organization", type: { kind: "reference", schema: "organization" }, required: false },
         { name: "address", type: { kind: "embedded", schema: "address" }, required: false },
         { name: "secret", type: { kind: "string" }, visibility: "private", required: false },
@@ -242,8 +251,8 @@ export const SECRET_SCHEMA: SchemaMetadata = {
     sourceName: "Secret",
     visibility: "private",
     fields: [
-        { name: "id", type: { kind: "id" }, readonly: true, validators: [{ name: "required" }] },
-        { name: "value", type: { kind: "string" }, validators: [{ name: "required" }] },
+        { name: "id", type: { kind: "id" }, readonly: true, validators: [required] },
+        { name: "value", type: { kind: "string" }, validators: [required] },
     ],
 };
 
@@ -252,8 +261,8 @@ export const LOGIN_INPUT_SCHEMA: SchemaMetadata = {
     sourceName: "LoginInput",
     ephemeral: true,
     fields: [
-        { name: "email", type: { kind: "string" }, validators: [{ name: "required" }] },
-        { name: "password", type: { kind: "string" }, validators: [{ name: "required" }] },
+        { name: "email", type: { kind: "string" }, validators: [required] },
+        { name: "password", type: { kind: "string" }, validators: [required] },
     ],
 };
 

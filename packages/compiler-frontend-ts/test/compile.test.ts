@@ -544,13 +544,13 @@ describe("compile IR structure", () => {
         assert.equal(schema.id, "schema:widget");
     });
 
-    it("resolves Validator()/Formatter() factory calls by following the declaration", () => {
+    it("resolves validator/formatter factories (functions returning ValidatorFn/FormatterFn) by following the declaration", () => {
         const result = cv({
             "validators.ts": `
-                import { Validator, Formatter } from "@keyma/dsl";
-                export const required = Validator("required", () => (_raw: string) => null);
-                export const minLength = Validator("minLength", (value: number) => (_raw: string) => null);
-                export const trim = Formatter("trim", () => (v: string) => v);
+                import type { ValidatorFn, FormatterFn } from "@keyma/dsl";
+                export function required(): ValidatorFn<string> { return (raw, field) => raw.length > 0 ? null : { field: field, code: "required", message: "x" }; }
+                export function minLength(value: number): ValidatorFn<string> { return (raw, field) => raw.length < value ? { field: field, code: "minLength", message: "x" } : null; }
+                export function trim(): FormatterFn<string> { return (v) => v.trim(); }
             `,
             "s.ts": `
                 import { Schema, Validate, Format } from "@keyma/dsl";
@@ -568,13 +568,16 @@ describe("compile IR structure", () => {
         assert.ok(f.validators.some((v) => v.name === "required"), "required validator expected");
         assert.ok(f.validators.some((v) => v.name === "minLength" && (v.params as any)?.value === 3), "minLength(3) expected");
         assert.ok(f.formatters.some((fmt) => fmt.phase === "change" && fmt.spec.name === "trim"), "trim formatter expected");
+        // The referenced factory bodies are lowered into IR declarations (re-emitted into the bundle).
+        assert.ok(result.ir.validatorDeclarations?.some((d) => d.name === "required"), "required declaration lowered");
+        assert.ok(result.ir.formatterDeclarations?.some((d) => d.name === "trim"), "trim declaration lowered");
     });
 
     it("resolves factory calls imported under an alias", () => {
         const result = cv({
             "validators.ts": `
-                import { Validator } from "@keyma/dsl";
-                export const required = Validator("required", () => (_raw: string) => null);
+                import type { ValidatorFn } from "@keyma/dsl";
+                export function required(): ValidatorFn<string> { return (raw, field) => raw.length > 0 ? null : { field: field, code: "required", message: "x" }; }
             `,
             "s.ts": `
                 import { Schema, Validate } from "@keyma/dsl";
@@ -591,12 +594,13 @@ describe("compile IR structure", () => {
         assert.ok(f.validators.some((v) => v.name === "required"), "aliased required validator expected");
     });
 
-    it("number field with isInteger validator is promoted to integer type", () => {
+    it("number field with integer validator is promoted to integer type", () => {
         const result = cv({
             "s.ts": `
                 import { Schema, Validate } from "@keyma/dsl";
-                function isInteger() { return { __validatorName: "integer" } as const; }
-                @Schema() class Count { @Validate(isInteger()) declare n: number; }
+                import type { ValidatorFn } from "@keyma/dsl";
+                function integer(): ValidatorFn<number> { return (raw, field) => raw % 1 !== 0 ? { field: field, code: "integer", message: "x" } : null; }
+                @Schema() class Count { @Validate(integer()) declare n: number; }
             `,
         });
         assert.deepEqual(errorCodes(result), []);
@@ -874,13 +878,14 @@ describe("compileVirtual sourceRoot", () => {
     });
 });
 
-// ─── Authoring features (Phase, @Default, named enums, @FormField/@Deprecated) ──
+// ─── Authoring features (Phase, initializer defaults, named enums, @FormField/@Deprecated) ──
 
 describe("authoring features", () => {
     it("resolves @Format(Phase.Save, ...) to the 'save' phase", () => {
         const r = cv({ "schema.ts": `
             import { Schema, Format, Phase } from "@keyma/dsl";
-            function trim() { return { __formatterName: "trim" } as const; }
+            import type { FormatterFn } from "@keyma/dsl";
+            function trim(): FormatterFn<string> { return (v) => v.trim(); }
             @Schema() class Foo { @Format(Phase.Save, trim()) declare name: string; }
         `});
         assert.deepEqual(errorCodes(r), [], JSON.stringify(r.diagnostics));
@@ -888,31 +893,45 @@ describe("authoring features", () => {
         assert.equal(name?.formatters[0]?.phase, "save");
     });
 
-    it("lowers a literal @Default", () => {
+    it("lowers a literal property-initializer default", () => {
         const r = cv({ "schema.ts": `
-            import { Schema, Default } from "@keyma/dsl";
-            @Schema() class Foo { @Default("active") declare status: string; }
+            import { Schema } from "@keyma/dsl";
+            @Schema() class Foo { status: string = "active"; }
         `});
         assert.deepEqual(errorCodes(r), [], JSON.stringify(r.diagnostics));
         const status = schemaByName(r, "Foo").fields.find((f) => f.name === "status");
         assert.deepEqual(status?.default, { kind: "literal", value: "active" });
     });
 
-    it("lowers @Default(Now) to a generator", () => {
+    it("lowers an enum-member initializer to a literal default", () => {
         const r = cv({ "schema.ts": `
-            import { Schema, Default, Now } from "@keyma/dsl";
+            import { Schema } from "@keyma/dsl";
+            enum Role { Member = "member", Admin = "admin" }
+            @Schema() class Foo { role: Role = Role.Member; }
+        `});
+        assert.deepEqual(errorCodes(r), [], JSON.stringify(r.diagnostics));
+        const role = schemaByName(r, "Foo").fields.find((f) => f.name === "role");
+        assert.deepEqual(role?.default, { kind: "literal", value: "member" });
+    });
+
+    it("lowers a non-literal initializer to an expression default", () => {
+        const r = cv({ "schema.ts": `
+            import { Schema } from "@keyma/dsl";
             import type { DateTime } from "@keyma/dsl";
-            @Schema() class Foo { @Default(Now) declare createdOn: DateTime; }
+            @Schema() class Foo { createdOn: DateTime = (() => new Date())(); }
         `});
         assert.deepEqual(errorCodes(r), [], JSON.stringify(r.diagnostics));
         const f = schemaByName(r, "Foo").fields.find((x) => x.name === "createdOn");
-        assert.deepEqual(f?.default, { kind: "generator", name: "now" });
+        assert.equal(f?.default?.kind, "expression");
     });
 
-    it("rejects a type-incompatible @Default (KEYMA090)", () => {
+    it("rejects a type-incompatible literal default (KEYMA090)", () => {
+        // The frontend extracts from the AST and does not gate on TS's own type
+        // check, so a literal-vs-field-type mismatch still surfaces as KEYMA090.
         const r = cv({ "schema.ts": `
-            import { Schema, Default } from "@keyma/dsl";
-            @Schema() class Foo { @Default(5) declare status: string; }
+            import { Schema } from "@keyma/dsl";
+            // @ts-expect-error — number is not assignable to string (checked by KEYMA090)
+            @Schema() class Foo { status: string = 5; }
         `});
         assert.ok(hasError(r, CODES.KEYMA090), JSON.stringify(r.diagnostics));
     });
@@ -959,14 +978,16 @@ describe("authoring features", () => {
     });
 });
 
-// ─── Validator/formatter name inference (single-arg form) ─────────────────────
+// ─── Validator/formatter naming (factory function name) ───────────────────────
 
-describe("validator name inference", () => {
-    it("infers the validator name from the const binding", () => {
+describe("validator naming", () => {
+    it("uses the factory function name as the validator name, with positional params", () => {
         const r = cv({ "schema.ts": `
-            import { Schema, Validate, Validator } from "@keyma/dsl";
-            export const minLen = Validator((n: number) => (value: string) =>
-                value.length >= n ? null : { field: "x", code: "MIN", message: "too short" });
+            import { Schema, Validate } from "@keyma/dsl";
+            import type { ValidatorFn } from "@keyma/dsl";
+            export function minLen(n: number): ValidatorFn<string> {
+                return (value, field) => value.length >= n ? null : { field: field, code: "MIN", message: "too short" };
+            }
             @Schema() class Foo { @Validate(minLen(2)) declare name: string; }
         `});
         assert.deepEqual(errorCodes(r), [], JSON.stringify(r.diagnostics));
@@ -975,17 +996,19 @@ describe("validator name inference", () => {
         assert.deepEqual(name?.validators[0], { name: "minLen", params: { n: 2 } });
     });
 
-    it("still supports the explicit two-arg form", () => {
+    it("lowers each referenced validator's body once (deduped) regardless of reuse", () => {
         const r = cv({ "schema.ts": `
-            import { Schema, Validate, Validator } from "@keyma/dsl";
-            export const tooShort = Validator("minLength", (n: number) => (value: string) =>
-                value.length >= n ? null : { field: "x", code: "MIN", message: "too short" });
-            @Schema() class Foo { @Validate(tooShort(2)) declare name: string; }
+            import { Schema, Validate } from "@keyma/dsl";
+            import type { ValidatorFn } from "@keyma/dsl";
+            export function nonEmpty(): ValidatorFn<string> {
+                return (value, field) => value.length > 0 ? null : { field: field, code: "EMPTY", message: "empty" };
+            }
+            @Schema() class Foo {
+                @Validate(nonEmpty()) declare a: string;
+                @Validate(nonEmpty()) declare b: string;
+            }
         `});
         assert.deepEqual(errorCodes(r), [], JSON.stringify(r.diagnostics));
-        // the registered name is the explicit "minLength", not the binding "tooShort"
-        assert.equal(r.ir.validatorDeclarations?.[0]?.name, "minLength");
-        const name = schemaByName(r, "Foo").fields.find((f) => f.name === "name");
-        assert.deepEqual(name?.validators[0], { name: "minLength", params: { n: 2 } });
+        assert.equal(r.ir.validatorDeclarations?.filter((d) => d.name === "nonEmpty").length, 1);
     });
 });

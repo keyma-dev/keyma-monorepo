@@ -60,21 +60,27 @@ const result = await drive(
 | `server` | `boolean` | `true` | Emit the full server bundle. |
 | `library` | `boolean` | `false` | Emit a single unified bundle in `outDir/` (full surface; ignores `client`/`server`). |
 
-With the defaults, output is split into `outDir/client/` and `outDir/server/`. `library: true` is what packages like `@keyma/validators` use to emit one self-contained bundle.
+With the defaults, output is split into `outDir/client/` and `outDir/server/`. `library: true` emits one self-contained bundle.
 
 ## Output layout
 
 ```
 <outDir>/
   client/
-    models/<schema>.js   models/<schema>.d.ts   # one per schema (path mirrors the source tree)
-    index.js             index.d.ts             # barrel re-export
-    validators.js        registry.js   (+ .d.ts) # when the IR declares validators
-    formatters.js        formatter-registry.js   # when the IR declares formatters
-    functions.js                       (+ .d.ts) # when the IR declares utility functions
+    models/<path>.js     models/<path>.d.ts     # one module per SOURCE file (every schema
+                                                 # authored together stays together; filename
+                                                 # is the source stem, not the schema name)
+    index.js             index.d.ts             # barrel re-export of model classes
+    validators.js                     (+ .d.ts) # direct-ref factory functions (no registry)
+    formatters.js                     (+ .d.ts) # direct-ref factory functions (no registry)
+    functions.js                      (+ .d.ts) # when the IR declares utility functions
   server/
     ... (same files)
 ```
+
+Validators/formatters/expression-defaults are referenced **directly** from each schema's frozen
+metadata (`validators: [minLength(2)]`, `formatters: [{ phase, fn: trim() }]`, an inline
+`applyDefaults`) — there is no name-keyed registry to wire into `KeymaServer`.
 
 ### Client vs. server bundle
 

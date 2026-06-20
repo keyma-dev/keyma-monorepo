@@ -3,80 +3,47 @@ import type { IRSchema } from "@keyma/ir";
 type IndexEmitOptions = {
     includePrivate: boolean;
     emitMaterializers: boolean;
-    hasValidators: boolean;
-    hasFormatters: boolean;
 };
 
 /**
- * Emit the `index.js` barrel file that re-exports every model class (and, for
- * server bundles, the per-schema materializer functions) from their model file.
+ * Emit the `index.js` / `index.d.ts` barrel: one re-export per model module, with
+ * every schema class (and, for server bundles, its materializer) authored in that
+ * source file. Modules are referenced by their bundle-relative path. No registry or
+ * defaults re-exports — validators/formatters/defaults ride directly in the schema
+ * metadata now.
  */
 export function emitIndexJs(
-    schemas: IRSchema[],
-    schemaPaths: ReadonlyMap<string, string>,
-    opts: IndexEmitOptions
+    schemas: readonly IRSchema[],
+    schemaModule: ReadonlyMap<string, string>,
+    opts: IndexEmitOptions,
 ): string {
-    const visible = opts.includePrivate
-        ? schemas
-        : schemas.filter((s) => s.visibility === "public");
+    const visible = opts.includePrivate ? schemas : schemas.filter((s) => s.visibility === "public");
 
-    const lines: string[] = [];
-
+    const byModule = new Map<string, string[]>();
     for (const schema of visible) {
-        const fullPath = schemaPaths.get(schema.sourceName);
-        if (fullPath === undefined) continue;
-        const exports: string[] = [schema.sourceName];
+        const ref = schemaModule.get(schema.sourceName);
+        if (ref === undefined) continue;
+        const exports = byModule.get(ref) ?? [];
+        exports.push(schema.sourceName);
         if (opts.emitMaterializers && schema.fields.some((f) => f.computed !== undefined)) {
             exports.push(`materialize${schema.sourceName}`);
         }
-        lines.push(`export { ${exports.join(", ")} } from "./models/${fullPath}.js";`);
+        byModule.set(ref, exports);
     }
 
-    if (opts.hasValidators) {
-        lines.push(`export * from "./validators.js";`);
-        lines.push(`export * from "./registry.js";`);
-    }
-    if (opts.hasFormatters) {
-        lines.push(`export * from "./formatters.js";`);
-        lines.push(`export * from "./formatter-registry.js";`);
-    }
-
+    const lines = [...byModule.entries()]
+        .sort((a, b) => a[0].localeCompare(b[0]))
+        .map(([ref, exports]) => `export { ${exports.join(", ")} } from "./${ref}.js";`);
     lines.push("");
     return lines.join("\n");
 }
 
-/**
- * Emit the `index.d.ts` barrel declaration file.
- */
+/** The `index.d.ts` content is identical to `index.js` — the same re-exports carry
+ *  both the class values and their types/materializers. */
 export function emitIndexDts(
-    schemas: IRSchema[],
-    schemaPaths: ReadonlyMap<string, string>,
-    opts: IndexEmitOptions
+    schemas: readonly IRSchema[],
+    schemaModule: ReadonlyMap<string, string>,
+    opts: IndexEmitOptions,
 ): string {
-    const visible = opts.includePrivate
-        ? schemas
-        : schemas.filter((s) => s.visibility === "public");
-
-    const lines: string[] = [];
-
-    for (const schema of visible) {
-        const fullPath = schemaPaths.get(schema.sourceName);
-        if (fullPath === undefined) continue;
-        lines.push(`export type { ${schema.sourceName} } from "./models/${fullPath}.js";`);
-        if (opts.emitMaterializers && schema.fields.some((f) => f.computed !== undefined)) {
-            lines.push(`export { materialize${schema.sourceName} } from "./models/${fullPath}.js";`);
-        }
-    }
-
-    if (opts.hasValidators) {
-        lines.push(`export * from "./validators.js";`);
-        lines.push(`export * from "./registry.js";`);
-    }
-    if (opts.hasFormatters) {
-        lines.push(`export * from "./formatters.js";`);
-        lines.push(`export * from "./formatter-registry.js";`);
-    }
-
-    lines.push("");
-    return lines.join("\n");
+    return emitIndexJs(schemas, schemaModule, opts);
 }

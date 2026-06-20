@@ -1,0 +1,21 @@
+{
+  "name": "playground1",
+  "version": "0.1.0",
+  "private": true,
+  "type": "module",
+  "scripts": {
+    "build": "keyma build",
+    "watch": "keyma watch",
+    "inspect": "keyma inspect"
+  },
+  "dependencies": {
+    "@keyma/dsl": "*",
+    "@keyma/runtime-js": "*",
+    "@keyma/validators": "*",
+    "@keyma/formatters": "*"
+  },
+  "devDependencies": {
+    "@keyma/cli": "*",
+    "typescript": "^5.7.0"
+  }
+}

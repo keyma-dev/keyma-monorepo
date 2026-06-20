@@ -29,10 +29,10 @@ const POST_SCHEMA: SchemaMetadata = {
     name: "post",
     sourceName: "Post",
     fields: [
-        { name: "id", type: { kind: "id" }, readonly: true, validators: [{ name: "required" }] },
-        { name: "title", type: { kind: "string" }, validators: [{ name: "required" }] },
+        { name: "id", type: { kind: "id" }, readonly: true },
+        { name: "title", type: { kind: "string" } },
         { name: "body", type: { kind: "string" }, required: false },
-        { name: "author", type: { kind: "string" }, validators: [{ name: "required" }] },
+        { name: "author", type: { kind: "string" } },
         { name: "tenant", type: { kind: "string" }, required: false },
         { name: "flagged", type: { kind: "boolean" }, required: false },
     ],

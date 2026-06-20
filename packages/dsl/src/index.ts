@@ -13,15 +13,13 @@ export type {
     Embedded,
 } from "./types.js";
 
-// Validator/formatter reference and contract types
+// Validator/formatter authoring and contract types
 export type {
-    ValidatorRef,
-    FormatterRef,
+    ValidatorFn,
+    FormatterFn,
     ValidationError,
     ValidatorContext,
     FormatterContext,
-    UserValidatorFn,
-    UserFormatterFn,
 } from "./types.js";
 
 // Decorators
@@ -31,9 +29,6 @@ export {
     Indexed,
     Ephemeral,
     Computed,
-    Default,
-    Now,
-    Uuid,
     Format,
     Phase,
     FormField,
@@ -41,8 +36,6 @@ export {
     Edge,
     From,
     To,
-    Validator,
-    Formatter,
 } from "./decorators.js";
 export type {
     SchemaOptions,

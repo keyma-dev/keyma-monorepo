@@ -64,8 +64,8 @@ export const KEYMA086 = "KEYMA086"; // Referenced utility function cannot be com
 export const KEYMA087 = "KEYMA087"; // Unsupported `instanceof` right-hand constructor (outside the portable set)
 
 // Default value errors
-export const KEYMA090 = "KEYMA090"; // @Default value incompatible with the field type
-export const KEYMA091 = "KEYMA091"; // Unsupported @Default form (not a literal or named generator)
+export const KEYMA090 = "KEYMA090"; // Default initializer value incompatible with the field type
+export const KEYMA091 = "KEYMA091"; // OBSOLETE — defaults are now property initializers; non-literal forms self-report via KEYMA082/085/086/087
 
 // Method / setter behavior errors
 export const KEYMA092 = "KEYMA092"; // Method/setter parameter or return type must be explicitly annotated (portable subset)

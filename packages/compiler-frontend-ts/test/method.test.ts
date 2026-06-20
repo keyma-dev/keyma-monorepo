@@ -165,13 +165,14 @@ describe("assignment is gated to behavior bodies", () => {
     it("rejects assignment inside a validator body", () => {
         const result = cv({
             "schema.ts": `
-                import { Schema, Validate, Validator, ValidatorContext } from "@keyma/dsl";
-                export const mutate = Validator(() => {
-                    return (value: string, field: string, ctx: ValidatorContext) => {
+                import { Schema, Validate } from "@keyma/dsl";
+                import type { ValidatorFn } from "@keyma/dsl";
+                export function mutate(): ValidatorFn<string> {
+                    return (value, field, ctx) => {
                         value = "x";
                         return null;
                     };
-                });
+                }
                 @Schema() class Foo {
                     @Validate(mutate())
                     declare x: string;

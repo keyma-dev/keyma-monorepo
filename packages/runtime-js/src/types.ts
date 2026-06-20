@@ -19,13 +19,35 @@ export type FieldType =
     | { kind: "reference"; schema: string; idType?: FieldType }
     | { kind: "embedded"; schema: string };
 
-export type ValidatorSpec = { name: string } & Record<string, unknown>;
-export type FormatterSpec = { name: string } & Record<string, unknown>;
+/** Context passed to validator/formatter implementations (carries the whole record). */
+export type ValidatorContext = { object: Record<string, unknown> };
+export type FormatterContext = { object: Record<string, unknown> };
 
+/**
+ * A field validator: inspects the value and returns an error or `null`. The
+ * compiler re-emits the implementation directly into the generated schema metadata
+ * (no name-keyed registry), so it is a callable, not a `{ name, params }` spec.
+ */
+export type ValidatorFn = (
+    value: unknown,
+    field: string,
+    context: ValidatorContext,
+) => ValidationError | null | Promise<ValidationError | null>;
+
+/** A field formatter: transforms the value, returning the new value. */
+export type FormatterFn = (
+    value: unknown,
+    context: FormatterContext,
+) => unknown | Promise<unknown>;
+
+/** A formatter bound to a lifecycle phase, attached to a field. */
 export type FormatterEntry = {
     phase: string;
-    spec: FormatterSpec;
+    fn: FormatterFn;
 };
+
+/** Per-schema initializer that fills a create payload's expression-kind defaults. */
+export type SchemaDefaultsFn = (data: Record<string, unknown>) => void;
 
 export type FieldIndex = {
     unique?: boolean;
@@ -43,7 +65,6 @@ export type SchemaIndex = {
 
 export type FieldDefault =
     | { kind: "literal"; value: unknown }
-    | { kind: "generator"; name: "now" | "uuid" }
     | { kind: "expression"; expression: unknown };
 
 export type FormFieldMeta = {
@@ -62,7 +83,7 @@ export type FieldMetadata = {
     required?: boolean;
     /** Whether the value may be `null` (orthogonal to `required`). */
     nullable?: boolean;
-    validators?: ValidatorSpec[];
+    validators?: ValidatorFn[];
     formatters?: FormatterEntry[];
     indexes?: FieldIndex[];
     computed?: true;
@@ -104,6 +125,9 @@ export type SchemaMetadata = {
     refs?: ReadonlyMap<string, SchemaClass>;
     /** Present iff the schema is an edge (compiler-frontend recorded an `@Edge` decorator). */
     edge?: EdgeMetadata;
+    /** Fills expression-kind field defaults on create. Emitted directly onto the
+     *  frozen metadata (no defaults registry). Literal defaults ride in `field.default`. */
+    applyDefaults?: SchemaDefaultsFn;
 };
 
 export type ValidationError = {

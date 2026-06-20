@@ -157,14 +157,14 @@ export type IRFormField = {
 };
 
 /**
- * A field's default value, applied on create when the key is absent.
- * - `literal`: a constant value.
- * - `generator`: a named runtime generator (`now`, `uuid`).
- * - `expression`: a portable expression (e.g. an arrow body) evaluated per-record.
+ * A field's default value, lowered from a TypeScript property initializer and
+ * applied on create when the key is absent.
+ * - `literal`: a constant value (`= "active"`, `= 0`, `= Role.Member`, `= [..]`).
+ * - `expression`: a portable expression (`= (() => new Date())()`, `= myFn()`)
+ *   re-emitted by the backend and evaluated per-record at create time.
  */
 export type IRDefault =
     | { kind: "literal"; value: string | number | boolean | null | unknown[] }
-    | { kind: "generator"; name: "now" | "uuid" }
     | { kind: "expression"; expression: IRExpression };
 
 export type IRComputed = {
@@ -221,7 +221,8 @@ export type IRField = {
     indexes: IRFieldIndex[];
     computed?: IRComputed;
     ephemeral?: boolean;
-    /** Default value applied on create when the key is absent (from `@Default`). */
+    /** Default value applied on create when the key is absent (from the field's
+     *  TypeScript property initializer). */
     default?: IRDefault;
     /** Presentational metadata for form generation (from `@FormField`). */
     form?: IRFormField;

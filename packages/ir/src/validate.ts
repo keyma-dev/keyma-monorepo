@@ -206,14 +206,10 @@ function checkDefault(d: unknown, path: string): IRValidationError[] {
             }
             return [];
         }
-        case "generator":
-            return d["name"] === "now" || d["name"] === "uuid"
-                ? []
-                : [e(`${path}.name`, 'must be "now" or "uuid"')];
         case "expression":
             return checkExpression(d["expression"], `${path}.expression`);
         default:
-            return [e(`${path}.kind`, 'must be "literal", "generator", or "expression"')];
+            return [e(`${path}.kind`, 'must be "literal" or "expression"')];
     }
 }
 

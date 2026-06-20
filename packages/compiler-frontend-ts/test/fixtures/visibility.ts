@@ -1,24 +1,25 @@
 import { Schema, Validate } from "@keyma/dsl";
 import type { ID } from "@keyma/dsl";
 
-function isRequired() { return { __validatorName: "required" } as const; }
+import type { ValidatorFn, Json } from "@keyma/dsl";
+function required(): ValidatorFn<Json> { return (value, field) => value !== null ? null : { field: field, code: "required", message: "required" }; }
 
 @Schema({ name: "credentials", private: true })
 class Credentials {
-    @Validate(isRequired())
+    @Validate(required())
     declare id: ID;
 
-    @Validate(isRequired())
+    @Validate(required())
     declare passwordHash: string;
 }
 
 @Schema({ name: "user" })
 class User {
-    @Validate(isRequired())
+    @Validate(required())
     declare id: ID;
 
     declare private secretToken: string;
 
-    @Validate(isRequired())
+    @Validate(required())
     declare email: string;
 }

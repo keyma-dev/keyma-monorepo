@@ -3,8 +3,6 @@ import assert from "node:assert/strict";
 import { KeymaServer } from "../src/server.js";
 import { InMemoryAdapter } from "../src/testing.js";
 import type { KeymaRequest, KeymaLeafFailure, KeymaLeafSuccess } from "../src/protocol.js";
-import type { ValidatorRegistry } from "../src/validate.js";
-import type { FormatterRegistry } from "../src/format.js";
 import {
     USER_SCHEMA,
     ORGANIZATION_SCHEMA,
@@ -13,16 +11,13 @@ import {
     LOGIN_INPUT_SCHEMA,
 } from "./fixtures.js";
 
-function makeServer(opts: {
-    validators?: ValidatorRegistry;
-    formatters?: FormatterRegistry;
-} = {}): { server: KeymaServer; adapter: InMemoryAdapter } {
+// Validators/formatters now ride directly in the schema metadata (see fixtures.ts) —
+// no registries are wired into the server.
+function makeServer(): { server: KeymaServer; adapter: InMemoryAdapter } {
     const adapter = new InMemoryAdapter();
     const server = new KeymaServer({
         schemas: [USER_SCHEMA, ORGANIZATION_SCHEMA, ADDRESS_SCHEMA],
         adapter,
-        ...(opts.validators !== undefined ? { validators: opts.validators } : {}),
-        ...(opts.formatters !== undefined ? { formatters: opts.formatters } : {}),
     });
     return { server, adapter };
 }
@@ -31,10 +26,7 @@ function makeServer(opts: {
 
 describe("KeymaServer — single-leaf operations", () => {
     it("create: applies save-phase formatters and validates payload", async () => {
-        const formatters: FormatterRegistry = new Map([
-            ["normalizeEmail", (v) => typeof v === "string" ? v.toLowerCase().trim() : v],
-        ]);
-        const { server, adapter } = makeServer({ formatters });
+        const { server, adapter } = makeServer();
         const req: KeymaRequest = {
             operations: {
                 a: {
@@ -53,20 +45,7 @@ describe("KeymaServer — single-leaf operations", () => {
     });
 
     it("create: returns VALIDATION_FAILED with errors when invalid", async () => {
-        const EMAIL_RE = /^[^\s@]+@[^\s@]+\.[^\s@]{2,}$/;
-        const validators: ValidatorRegistry = new Map([
-            ["emailAddress", (v, _spec, field) =>
-                typeof v === "string" && !EMAIL_RE.test(v)
-                    ? { field, code: "emailAddress", message: `${field} must be a valid email address` }
-                    : null],
-            ["minLength", (v, spec, field) => {
-                const min = typeof spec["value"] === "number" ? spec["value"] : 0;
-                return typeof v === "string" && v.length < min
-                    ? { field, code: "minLength", message: `${field} must be at least ${min} characters` }
-                    : null;
-            }],
-        ]);
-        const { server } = makeServer({ validators });
+        const { server } = makeServer();
         const resp = await server.handle({
             operations: {
                 a: { op: "create", schema: "user", data: { email: "not-email", name: "X" } },
@@ -137,10 +116,7 @@ describe("KeymaServer — single-leaf operations", () => {
     });
 
     it("update: applies save-phase formatters", async () => {
-        const formatters: FormatterRegistry = new Map([
-            ["normalizeEmail", (v) => typeof v === "string" ? v.toLowerCase().trim() : v],
-        ]);
-        const { server, adapter } = makeServer({ formatters });
+        const { server, adapter } = makeServer();
         adapter.stores.set(
             "user",
             new Map([["u1", { id: "u1", email: "old@x.com", name: "Alice" }]]),

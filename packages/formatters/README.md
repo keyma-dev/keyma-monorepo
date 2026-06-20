@@ -2,7 +2,7 @@
 
 The built-in **formatter** library for Keyma. Import these markers into your schemas and pass them to `@Format(phase, ...)`. Formatters normalize a field's value at a given lifecycle phase — `Change`, `Blur`, `Submit`, or `Save`.
 
-Like `@keyma/validators`, this package is itself a Keyma library: its formatters are authored with the `Formatter(...)` factory from `@keyma/dsl` and compiled by `keyma build`. The compiled `dist/js` provides both the **authoring markers** and a **runtime registry** — `createFormatterRegistry()` returns the `Map<string, FormatterFn>` that `@keyma/runtime-js`'s `format()` consumes.
+Like `@keyma/validators`, this package is **pure-TypeScript source** — each formatter is a plain factory function returning a `FormatterFn` (see `src/formatters.ts`). It is never compiled by Keyma; the compiler loads its source directly and re-emits the bodies of the formatters you use into your generated bundle. There is no runtime registry.
 
 ## Usage
 
@@ -44,12 +44,12 @@ Markers are **factory functions — call them** (`trim()`). `Phase.Change` is id
 
 ## Custom formatters
 
-Author your own with the `Formatter(...)` factory from `@keyma/dsl` and register the name under `customFormatters` in your `keyma.config`. Bodies use the **portable expression subset** so they re-emit in every target language:
+Author your own as a plain factory function returning a `FormatterFn`. The function name becomes the IR name; bodies use the **portable expression subset** so they re-emit in every target language:
 
 ```ts
-import { Formatter } from "@keyma/dsl";
+import type { FormatterFn } from "@keyma/dsl";
 
-// Name inferred from the binding → "collapseDashes".
-export const collapseDashes = Formatter(() =>
-    (value: string) => value.replace(/-+/g, "-"));
+export function collapseDashes(): FormatterFn<string> {
+    return (value) => value.replace(/-+/g, "-");
+}
 ```

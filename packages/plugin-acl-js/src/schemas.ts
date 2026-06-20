@@ -1,4 +1,13 @@
-import type { SchemaMetadata } from "@keyma/runtime-js";
+import type { SchemaMetadata, ValidatorFn } from "@keyma/runtime-js";
+
+// Direct-ref validators for the internal storage schemas (the runtime no longer
+// resolves validators by name through a registry).
+const required: ValidatorFn = (value, field) =>
+    value === null || value === undefined || value === "" ? { field, code: "required", message: `${field} is required` } : null;
+const oneOf = (...allowed: unknown[]): ValidatorFn => (value, field) =>
+    value === null || value === undefined || allowed.includes(value) ? null : { field, code: "oneOf", message: `${field} must be one of: ${allowed.join(", ")}` };
+const minItems = (n: number): ValidatorFn => (value, field) =>
+    Array.isArray(value) && value.length < n ? { field, code: "minItems", message: `${field} must have at least ${n} items` } : null;
 
 // ── Storage schemas ─────────────────────────────────────────────────────────
 //
@@ -16,13 +25,13 @@ export const ACL_RULE_SCHEMA: SchemaMetadata = {
     visibility: "private",
     sourceName: "KeymaAclRule",
     fields: [
-        { name: "id", type: { kind: "id" }, readonly: true, validators: [{ name: "required" }] },
+        { name: "id", type: { kind: "id" }, readonly: true, validators: [required] },
         {
             name: "subjectKind",
             type: { kind: "string" },
             validators: [
-                { name: "required" },
-                { name: "oneOf", values: ["anon", "any-user", "user", "role"] },
+                required,
+                oneOf(...["anon", "any-user", "user", "role"]),
             ],
         },
         { name: "subjectId", type: { kind: "string" }, required: false },
@@ -30,12 +39,12 @@ export const ACL_RULE_SCHEMA: SchemaMetadata = {
         {
             name: "schema",
             type: { kind: "string" },
-            validators: [{ name: "required" }],
+            validators: [required],
         },
         {
             name: "actions",
             type: { kind: "array", of: { kind: "string" } },
-            validators: [{ name: "required" }, { name: "minItems", value: 1 }],
+            validators: [required, minItems(1)],
         },
         { name: "where", type: { kind: "json" }, required: false },
         { name: "fieldsRead", type: { kind: "array", of: { kind: "string" } }, required: false },
@@ -44,7 +53,7 @@ export const ACL_RULE_SCHEMA: SchemaMetadata = {
             name: "effect",
             type: { kind: "string" },
             required: false,
-            validators: [{ name: "oneOf", values: ["allow", "deny"] }],
+            validators: [oneOf(...["allow", "deny"])],
         },
         { name: "priority", type: { kind: "integer" }, required: false },
     ],
@@ -60,8 +69,8 @@ export const ACL_ROLE_SCHEMA: SchemaMetadata = {
     visibility: "private",
     sourceName: "KeymaAclRole",
     fields: [
-        { name: "id", type: { kind: "id" }, readonly: true, validators: [{ name: "required" }] },
-        { name: "name", type: { kind: "string" }, validators: [{ name: "required" }] },
+        { name: "id", type: { kind: "id" }, readonly: true, validators: [required] },
+        { name: "name", type: { kind: "string" }, validators: [required] },
     ],
     indexes: [{ fields: [{ name: "name", direction: 1 }], unique: true }],
 };
@@ -71,9 +80,9 @@ export const ACL_ROLE_ASSIGNMENT_SCHEMA: SchemaMetadata = {
     visibility: "private",
     sourceName: "KeymaAclRoleAssignment",
     fields: [
-        { name: "id", type: { kind: "id" }, readonly: true, validators: [{ name: "required" }] },
-        { name: "userId", type: { kind: "string" }, validators: [{ name: "required" }] },
-        { name: "role", type: { kind: "string" }, validators: [{ name: "required" }] },
+        { name: "id", type: { kind: "id" }, readonly: true, validators: [required] },
+        { name: "userId", type: { kind: "string" }, validators: [required] },
+        { name: "role", type: { kind: "string" }, validators: [required] },
     ],
     indexes: [
         { fields: [{ name: "userId", direction: 1 }] },

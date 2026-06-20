@@ -1,8 +1,8 @@
 # @keyma/validators
 
-The built-in **validator** library for Keyma. Import these markers into your schemas and pass them to `@Validate(...)`. They cover length, range, numeric, date, array, and string-format checks.
+The built-in **validator** library for Keyma. Import these factories into your schemas and pass them to `@Validate(...)`. They cover length, range, numeric, date, array, and string-format checks.
 
-This package is itself a Keyma library: its validators are authored with the `Validator(...)` factory from `@keyma/dsl` and compiled by `keyma build` (its `build` script *is* `keyma build`). The compiled output in `dist/js` provides both the **authoring markers** used in your schema files and a **runtime registry** — `createValidatorRegistry()` returns the `Map<string, ValidatorFn>` that `@keyma/runtime-js`'s `validate()` consumes to actually run the checks.
+This package is **pure-TypeScript source** — each validator is a plain factory function returning a `ValidatorFn` (see `src/validators.ts`). It is never compiled by Keyma; its `package.json` resolves to `src/*.ts`, and the compiler loads that source directly and re-emits the bodies of the validators you actually use into your generated bundle. There is no runtime registry.
 
 ## Usage
 
@@ -29,7 +29,7 @@ class User {
 }
 ```
 
-Markers are **factory functions — call them** (`minLength(2)`, `isEmail()`). Each lowers to an `IRValidator` kind in the schema's IR.
+These are **factory functions — call them** (`minLength(2)`, `isEmail()`). Each returns a `ValidatorFn` that the compiler lowers and re-emits directly into the schema's metadata.
 
 > There is **no `required` validator.** A field's required-ness is inferred from optionality — a non-optional field (`name: string`) is required; an optional one (`name?: string`) is not. Null-ness is the orthogonal axis, expressed with `Nullable<T>`.
 
@@ -62,15 +62,15 @@ Markers are **factory functions — call them** (`minLength(2)`, `isEmail()`). E
 
 ## Custom validators
 
-For project-specific rules, author your own with the `Validator(...)` factory from `@keyma/dsl` and register the name under `customValidators` in your `keyma.config`. The body uses the **portable expression subset** so it can be re-emitted in every target language (see `@keyma/dsl` for the factory overloads and subset rules):
+For project-specific rules, author your own as a plain factory function returning a `ValidatorFn`. The function name becomes the IR name; the body uses the **portable expression subset** so it re-emits in every target language (see `@keyma/dsl`):
 
 ```ts
-import { Validator } from "@keyma/dsl";
+import type { ValidatorFn } from "@keyma/dsl";
 
-// Name inferred from the binding → "isSlug".
-export const isSlug = Validator(() =>
-    (value: string, field) =>
+export function isSlug(): ValidatorFn<string> {
+    return (value, field) =>
         /^[a-z0-9-]+$/.test(value)
             ? null
-            : { field, code: "slug", message: `${field} must be a slug` });
+            : { field: field, code: "slug", message: `${field} must be a slug` };
+}
 ```

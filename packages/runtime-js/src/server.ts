@@ -20,8 +20,8 @@ import type {
     ProjectionSpec,
     TraversalSpec,
 } from "./protocol.js";
-import { validate, type ValidatorRegistry } from "./validate.js";
-import { format, type FormatterRegistry } from "./format.js";
+import { validate } from "./validate.js";
+import { format } from "./format.js";
 import { applyDefaults } from "./defaults.js";
 import {
     type KeymaAction,
@@ -34,8 +34,6 @@ import { KeymaError, KeymaRuntimeError } from "./errors.js";
 type ServerOptions = {
     schemas: SchemaMetadata[];
     adapter: KeymaDatabaseAdapter;
-    validators?: ValidatorRegistry;
-    formatters?: FormatterRegistry;
     plugins?: KeymaServerPlugin[];
 };
 
@@ -279,12 +277,12 @@ export class KeymaServer {
     ): Promise<KeymaLeafResult> {
         let data = extractEdgeEndpointIds(schema, { ...op.data });
         applyDefaults(schema, data);
-        await format(schema, data, "save", this.opts.formatters);
+        await format(schema, data, "save");
         const writableSchema: SchemaMetadata = {
             ...schema,
             fields: schema.fields.filter((f) => f.name !== 'id'),
         };
-        const errors = await validate(writableSchema, data, this.opts.validators);
+        const errors = await validate(writableSchema, data);
         if (errors.length > 0) {
             throw new ValidationFailedError(errors);
         }
@@ -302,8 +300,14 @@ export class KeymaServer {
         context: RequestContext,
     ): Promise<KeymaLeafResult> {
         let data = extractEdgeEndpointIds(schema, { ...op.data });
-        await format(schema, data, "save", this.opts.formatters);
-        const errors = await validate(schema, data, this.opts.validators);
+        await format(schema, data, "save");
+        // A partial update only validates the fields actually supplied — absent fields
+        // must not trip `required`-style validators (they keep their stored value).
+        const updateSchema: SchemaMetadata = {
+            ...schema,
+            fields: schema.fields.filter((f) => f.name in data),
+        };
+        const errors = await validate(updateSchema, data);
         if (errors.length > 0) {
             throw new ValidationFailedError(errors);
         }

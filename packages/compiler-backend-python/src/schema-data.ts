@@ -1,21 +1,25 @@
-import type { IRSchema, IRField, IRFieldIndex, IRIndex } from "@keyma/ir";
+import type { IRSchema, IRField, IRFieldIndex, IRIndex, IRValidatorDeclaration, IRFormatterDeclaration } from "@keyma/ir";
 import { exprToPython } from "./emit-expression.js";
+import { raw } from "./emit-literal.js";
+import { buildFactoryCall } from "./emit-validators.js";
 
 export type SchemaDataOptions = {
-    /** Include private fields. */
     includePrivate: boolean;
-    /** Include index metadata (field indexes, schema indexes). */
     includeIndexes: boolean;
-    /** Client-only: restrict formatters to form phases (change/blur/submit). */
     formPhasesOnly: boolean;
+    /** Validator/formatter declarations keyed by name — for ordering factory-call args. */
+    validatorDecls: ReadonlyMap<string, IRValidatorDeclaration>;
+    formatterDecls: ReadonlyMap<string, IRFormatterDeclaration>;
+    /** Embedded/reference class names this schema needs as a live `refs` dict. */
+    refs: readonly string[];
+    /** Name of the module-level applyDefaults function to reference, if any. */
+    applyDefaultsRef?: string;
 };
 
 const CLIENT_PHASES = new Set(["change", "blur", "submit"]);
 
-/**
- * Build the JSON-serializable metadata object for a schema.
- */
-export function buildSchemaData(schema: IRSchema, opts: SchemaDataOptions): object {
+/** Build the metadata object for a schema, ready to be emitted with `emitLiteral`. */
+export function buildSchemaData(schema: IRSchema, opts: SchemaDataOptions): Record<string, unknown> {
     const fields = visibleFields(schema, opts.includePrivate).map((f) => buildFieldData(f, opts));
     const indexes = opts.includeIndexes ? schema.indexes.map(buildIndexData) : [];
 
@@ -28,27 +32,22 @@ export function buildSchemaData(schema: IRSchema, opts: SchemaDataOptions): obje
     if (schema.edge !== undefined) out["edge"] = schema.edge;
     if (schema.visibility === "private") out["visibility"] = "private";
     if (schema.ephemeral) out["ephemeral"] = true;
+    if (opts.refs.length > 0) {
+        const entries = opts.refs.map((c) => `"${c}": ${c}`).join(", ");
+        out["refs"] = raw(`{${entries}}`);
+    }
+    if (opts.applyDefaultsRef !== undefined) out["applyDefaults"] = raw(opts.applyDefaultsRef);
     return out;
 }
 
-/**
- * Build the `materialize<Name>` function source as a string.
- */
 export function buildMaterializer(schema: IRSchema, includePrivate: boolean): string | null {
     const computedFields = visibleFields(schema, includePrivate).filter((f) => f.computed !== undefined);
     if (computedFields.length === 0) return null;
 
-    const lines: string[] = [];
-    lines.push(`def materialize${schema.sourceName}(value: dict) -> dict:`);
+    const lines: string[] = [`def materialize${schema.sourceName}(value: dict) -> dict:`];
     for (const field of computedFields) {
         if (field.computed === undefined) continue;
-        // Convert expression to Python, but replace 'self.' with 'value.' access.
-        // Actually for a dict it should be value["name"].
-        // This is tricky with simple regex because of nested properties etc.
-        // For now let's assume computed expressions only access local fields.
-        let pyExpr = exprToPython(field.computed.expression);
-        pyExpr = pyExpr.replace(/self\.([a-zA-Z0-9_]+)/g, 'value["$1"]');
-        
+        const pyExpr = exprToPython(field.computed.expression).replace(/self\.([a-zA-Z0-9_]+)/g, 'value["$1"]');
         lines.push(`    value["${field.name}"] = ${pyExpr}`);
     }
     lines.push(`    return value`);
@@ -67,27 +66,29 @@ function buildFieldData(field: IRField, opts: SchemaDataOptions): object {
     const formatters = opts.formPhasesOnly
         ? field.formatters.filter((fmt) => CLIENT_PHASES.has(fmt.phase))
         : field.formatters;
-
     const indexes: IRFieldIndex[] = opts.includeIndexes ? field.indexes : [];
 
-    const base: Record<string, unknown> = {
-        name: field.name,
-        type: field.type,
-    };
+    const base: Record<string, unknown> = { name: field.name, type: field.type };
 
     if (field.visibility === "private") base["visibility"] = "private";
     if (field.readonly) base["readonly"] = true;
     if (!field.required) base["required"] = false;
-    if (field.validators.length > 0) base["validators"] = field.validators;
-    if (formatters.length > 0) base["formatters"] = formatters;
+    if (field.nullable) base["nullable"] = true;
+    if (field.validators.length > 0) {
+        base["validators"] = field.validators.map((v) =>
+            raw(buildFactoryCall(v.name, v.params, opts.validatorDecls.get(v.name)?.factoryParams ?? [])),
+        );
+    }
+    if (formatters.length > 0) {
+        base["formatters"] = formatters.map((fmt) => ({
+            phase: fmt.phase,
+            fn: raw(buildFactoryCall(fmt.spec.name, fmt.spec.params, opts.formatterDecls.get(fmt.spec.name)?.factoryParams ?? [])),
+        }));
+    }
     if (indexes.length > 0) base["indexes"] = indexes;
-
-    if (field.computed !== undefined) {
-        base["computed"] = true;
-    }
-    if (field.ephemeral) {
-        base["ephemeral"] = true;
-    }
+    if (field.computed !== undefined) base["computed"] = true;
+    if (field.ephemeral) base["ephemeral"] = true;
+    if (field.default !== undefined && field.default.kind === "literal") base["default"] = field.default;
 
     return base;
 }
