@@ -326,6 +326,27 @@ describe("exprToJs", () => {
         };
         assert.equal(exprToJs(expr), `this.expensive ? "premium" : "budget"`);
     });
+
+    it("emits Date accessor intrinsics as identical JS method calls", () => {
+        const intrinsic = (op: string): IRExpression => ({
+            kind: "intrinsic", op, receiver: { kind: "field", name: "created" }, args: [],
+        });
+        assert.equal(exprToJs(intrinsic("date.getMonth")), "this.created.getMonth()");
+        assert.equal(exprToJs(intrinsic("date.getTime")), "this.created.getTime()");
+        assert.equal(exprToJs(intrinsic("date.toISOString")), "this.created.toISOString()");
+    });
+
+    it("emits the static `date.now` intrinsic as Date.now()", () => {
+        assert.equal(exprToJs({ kind: "intrinsic", op: "date.now", receiver: null, args: [] }), "Date.now()");
+    });
+
+    it("re-emits `new Date(...)` verbatim", () => {
+        const expr: IRExpression = {
+            kind: "new", callee: { kind: "identifier", name: "Date" },
+            args: [{ kind: "field", name: "ts" }],
+        };
+        assert.equal(exprToJs(expr), "new Date(this.ts)");
+    });
 });
 
 // ─── irTypeToTs unit tests ────────────────────────────────────────────────────

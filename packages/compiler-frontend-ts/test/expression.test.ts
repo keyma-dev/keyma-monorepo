@@ -155,6 +155,43 @@ describe("computed getters — newly-supported portable expressions", () => {
         assert.equal(expr?.kind, "new");
     });
 
+    it("lowers a Date accessor method to a date intrinsic (now portable in getters)", () => {
+        const expr = lowered(`
+            import { Schema, Computed } from "@keyma/dsl";
+            import type { DateTime } from "@keyma/dsl";
+            @Schema() class Foo {
+                declare created: DateTime;
+                @Computed() get year(): number { return this.created.getFullYear(); }
+            }
+        `, "year");
+        assert.deepEqual(expr, {
+            kind: "intrinsic", op: "date.getFullYear",
+            receiver: { kind: "field", name: "created" }, args: [],
+        });
+    });
+
+    it("lowers the static `Date.now()` to a date.now intrinsic (no receiver)", () => {
+        const expr = lowered(`
+            import { Schema, Computed } from "@keyma/dsl";
+            @Schema() class Foo {
+                @Computed() get t(): number { return Date.now(); }
+            }
+        `, "t");
+        assert.deepEqual(expr, { kind: "intrinsic", op: "date.now", receiver: null, args: [] });
+    });
+
+    it("KEYMA085 — rejects an unsupported Date method (e.g. a mutator) in a getter", () => {
+        const r = cv({ "schema.ts": `
+            import { Schema, Computed } from "@keyma/dsl";
+            import type { DateTime } from "@keyma/dsl";
+            @Schema() class Foo {
+                declare created: DateTime;
+                @Computed() get t(): number { return this.created.setHours(0); }
+            }
+        `});
+        assert.ok(hasError(r, "KEYMA085"), JSON.stringify(r.diagnostics));
+    });
+
     it("lowers an object literal", () => {
         const expr = lowered(`
             import { Schema, Computed } from "@keyma/dsl";

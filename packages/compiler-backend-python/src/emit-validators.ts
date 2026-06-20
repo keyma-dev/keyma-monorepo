@@ -15,7 +15,7 @@ export function factoryIdent(name: string): string {
 
 /** Standard import header for generated validator/formatter/function modules. */
 function moduleHeader(hasFunctions: boolean): string[] {
-    const lines = ["from datetime import datetime", "import re"];
+    const lines = ["from datetime import datetime, timezone", "import re"];
     if (hasFunctions) lines.push("from .functions import *");
     lines.push("", "");
     return lines;

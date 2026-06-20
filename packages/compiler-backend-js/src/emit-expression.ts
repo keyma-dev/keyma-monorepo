@@ -121,6 +121,9 @@ export function exprToJs(expr: IRExpression, opts: ExprEmitOptions = {}): string
                 return `typeof ${recv} === ${args[0]}`;
             case "instance-of":
                 return `${recv} instanceof ${literalText(e.args[0])}`;
+            case "date.now":
+                // Static `Date.now()` — no instance receiver.
+                return `Date.now()`;
             default: {
                 const method = JS_METHOD[e.op];
                 if (method !== undefined) return `${recv}.${method}(${args.join(", ")})`;
@@ -183,6 +186,16 @@ const JS_METHOD: Record<string, string> = {
     "array.join": "join",
     "array.filter": "filter",
     "regexp.test": "test",
+    "date.getTime": "getTime",
+    "date.getFullYear": "getFullYear",
+    "date.getMonth": "getMonth",
+    "date.getDate": "getDate",
+    "date.getDay": "getDay",
+    "date.getHours": "getHours",
+    "date.getMinutes": "getMinutes",
+    "date.getSeconds": "getSeconds",
+    "date.getMilliseconds": "getMilliseconds",
+    "date.toISOString": "toISOString",
 };
 
 /** Read a string-literal arg's raw value (constructor name), or "" if not a literal. */

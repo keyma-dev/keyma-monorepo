@@ -17,10 +17,10 @@ export type IntrinsicTier = "required" | "recommended";
 
 /**
  * Where the intrinsic's value comes from:
- * - `string` / `array` / `regexp`: a method or property call on a receiver of that type.
- * - `value`: a unary op on any value (e.g. `type-is`, `instance-of`).
+ * - `string` / `array` / `regexp` / `date`: a method or property call on a receiver of that type.
+ * - `value`: a unary/free-standing op (e.g. `type-is`, `instance-of`, the static `date.now`).
  */
-export type IntrinsicReceiver = "string" | "array" | "regexp" | "value";
+export type IntrinsicReceiver = "string" | "array" | "regexp" | "date" | "value";
 
 /** How the intrinsic is written in TypeScript source — a method call or a property read. */
 export type IntrinsicForm = "method" | "property";
@@ -62,11 +62,26 @@ export const INTRINSICS: readonly IntrinsicDef[] = [
     // ── Regexp methods ────────────────────────────────────────────────────────
     { op: "regexp.test",        receiver: "regexp", form: "method",   tsName: "test",        minArgs: 1, maxArgs: 1, tier: "recommended" },
 
+    // ── Date methods (read-only accessors; mutators are not portable) ─────────
+    { op: "date.getTime",         receiver: "date", form: "method", tsName: "getTime",         minArgs: 0, maxArgs: 0, tier: "recommended" },
+    { op: "date.getFullYear",     receiver: "date", form: "method", tsName: "getFullYear",     minArgs: 0, maxArgs: 0, tier: "recommended" },
+    { op: "date.getMonth",        receiver: "date", form: "method", tsName: "getMonth",        minArgs: 0, maxArgs: 0, tier: "recommended" },
+    { op: "date.getDate",         receiver: "date", form: "method", tsName: "getDate",         minArgs: 0, maxArgs: 0, tier: "recommended" },
+    { op: "date.getDay",          receiver: "date", form: "method", tsName: "getDay",          minArgs: 0, maxArgs: 0, tier: "recommended" },
+    { op: "date.getHours",        receiver: "date", form: "method", tsName: "getHours",        minArgs: 0, maxArgs: 0, tier: "recommended" },
+    { op: "date.getMinutes",      receiver: "date", form: "method", tsName: "getMinutes",      minArgs: 0, maxArgs: 0, tier: "recommended" },
+    { op: "date.getSeconds",      receiver: "date", form: "method", tsName: "getSeconds",      minArgs: 0, maxArgs: 0, tier: "recommended" },
+    { op: "date.getMilliseconds", receiver: "date", form: "method", tsName: "getMilliseconds", minArgs: 0, maxArgs: 0, tier: "recommended" },
+    { op: "date.toISOString",     receiver: "date", form: "method", tsName: "toISOString",     minArgs: 0, maxArgs: 0, tier: "recommended" },
+
     // ── Type inspection (no member; synthesized by the frontend) ─────────────
     // `type-is`: result of `typeof x === "<literal>"`. args[0] is the type name literal.
     { op: "type-is",            receiver: "value",  form: "method",   tsName: "",            minArgs: 1, maxArgs: 1, tier: "required" },
     // `instance-of`: result of `x instanceof Ctor`. args[0] is the constructor-name literal.
     { op: "instance-of",        receiver: "value",  form: "method",   tsName: "",            minArgs: 1, maxArgs: 1, tier: "required" },
+    // `date.now`: result of the static `Date.now()`. No instance receiver, so it is synthesized by
+    // the frontend (empty `tsName` keeps it out of BY_RECEIVER_NAME); resolve it via `intrinsicByOp`.
+    { op: "date.now",           receiver: "value",  form: "method",   tsName: "",            minArgs: 0, maxArgs: 0, tier: "recommended" },
 ];
 
 const BY_OP = new Map<string, IntrinsicDef>(INTRINSICS.map((d) => [d.op, d]));
@@ -81,9 +96,9 @@ export function intrinsicByOp(op: string): IntrinsicDef | undefined {
 }
 
 /**
- * Look up a string/array/regexp member intrinsic by receiver type and TS member name,
+ * Look up a string/array/regexp/date member intrinsic by receiver type and TS member name,
  * e.g. `("string", "includes")`. Returns undefined if not a known intrinsic.
  */
-export function intrinsicByMember(receiver: "string" | "array" | "regexp", tsName: string): IntrinsicDef | undefined {
+export function intrinsicByMember(receiver: "string" | "array" | "regexp" | "date", tsName: string): IntrinsicDef | undefined {
     return BY_RECEIVER_NAME.get(`${receiver}.${tsName}`);
 }

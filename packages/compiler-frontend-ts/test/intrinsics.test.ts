@@ -83,6 +83,23 @@ describe("intrinsic recognition", () => {
         assert.ok(cond && cond.kind === "intrinsic" && cond.op === "instance-of");
         assert.deepEqual(cond.kind === "intrinsic" ? cond.args : [], [{ kind: "literal", value: "Date" }]);
     });
+
+    it("lowers a Date accessor method on a Date-typed value to a date intrinsic", () => {
+        const r = cvValidator(`value.getTime() > 0 ? null : "x"`, "Date");
+        assert.deepEqual(errorCodes(r), []);
+        const expr = returnedExpr(validatorBody(r, "v"));
+        const cond = expr.kind === "conditional" ? expr.condition : undefined;
+        const left = cond && cond.kind === "binary" ? cond.left : undefined;
+        assert.deepEqual(left, {
+            kind: "intrinsic", op: "date.getTime",
+            receiver: { kind: "identifier", name: "value" }, args: [],
+        });
+    });
+
+    it("KEYMA085 — rejects an unsupported Date method on a Date-typed value", () => {
+        const r = cvValidator(`value.setHours(0) > 0 ? null : "x"`, "Date");
+        assert.ok(errorCodes(r).includes("KEYMA085"), JSON.stringify(r.diagnostics));
+    });
 });
 
 describe("validator/formatter input type (from ValidatorFn<T>)", () => {

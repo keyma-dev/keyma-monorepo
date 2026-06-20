@@ -46,6 +46,17 @@ table keyed by `op`.
 | `array.join` | array | `a.join([sep])` | recommended |
 | `array.filter` | array | `a.filter(pred)` | recommended |
 | `regexp.test` | regexp | `re.test(s)` | recommended |
+| `date.getTime` | date | `d.getTime()` | recommended |
+| `date.getFullYear` | date | `d.getFullYear()` | recommended |
+| `date.getMonth` | date | `d.getMonth()` | recommended |
+| `date.getDate` | date | `d.getDate()` | recommended |
+| `date.getDay` | date | `d.getDay()` | recommended |
+| `date.getHours` | date | `d.getHours()` | recommended |
+| `date.getMinutes` | date | `d.getMinutes()` | recommended |
+| `date.getSeconds` | date | `d.getSeconds()` | recommended |
+| `date.getMilliseconds` | date | `d.getMilliseconds()` | recommended |
+| `date.toISOString` | date | `d.toISOString()` | recommended |
+| `date.now` | value | `Date.now()` | recommended |
 | `type-is` | value | `typeof x === "<name>"` | required |
 | `instance-of` | value | `x instanceof Ctor` | required |
 
@@ -73,6 +84,30 @@ These are synthesized by the frontend, not member calls:
   The right-hand side is restricted to the portable global constructors the frontend
   knows how to map (`Date`, `RegExp`, `Uint8Array`, …); any other constructor is a
   compile error (`KEYMA087`).
+
+### Date intrinsics (`date.*`) and `new Date(...)`
+
+The `date` receiver covers a fixed set of **read-only** accessors on a `Date` value
+(`DateTime` fields and `new Date()` results). Date **mutators** (`setHours`, …) and the
+UTC/locale variants (`getUTCHours`, `toLocaleDateString`, …) are intentionally *not* in the
+registry — calling them is a non-portable error (`KEYMA085`).
+
+Backends must account for JS↔target semantic offsets:
+
+- `getMonth` is **0-based** (`0` = January); a 1-based target subtracts 1.
+- `getDay` is **0 = Sunday**; a Monday-based target (e.g. Python `weekday()`) maps via `(n + 1) % 7`.
+- `getTime` / `Date.now()` are **milliseconds** since the epoch; a seconds-based target scales by 1000.
+- `getMilliseconds` is the millisecond component; a microsecond target divides by 1000.
+- `toISOString` is **UTC** with a trailing `Z` and exactly 3 fractional digits.
+
+`Date.now()` is the only **static** date op. The frontend synthesizes it (no instance receiver)
+to `{ kind: "intrinsic", op: "date.now", receiver: null, args: [] }`; resolve it via `intrinsicByOp`.
+
+The **`new Date(...)` constructor** is *not* an intrinsic — it stays a `new` IR node
+(`{ kind: "new", callee: { kind: "identifier", name: "Date" }, args }`) that each backend maps in
+its `new`-expression handler (the JS backend re-emits it verbatim). A target may legitimately diverge
+from JS on out-of-range component rollover and on lenient (non-ISO) string parsing; backends should
+document their chosen policy.
 
 ## Adding an intrinsic
 

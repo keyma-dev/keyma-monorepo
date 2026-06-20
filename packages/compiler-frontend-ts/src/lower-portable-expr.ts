@@ -1,6 +1,6 @@
 import ts from "typescript";
 import type { IRExpression, IRStatement, IRDiagnostic } from "@keyma/ir";
-import { intrinsicByMember } from "@keyma/ir";
+import { intrinsicByMember, intrinsicByOp } from "@keyma/ir";
 import { mkError, KEYMA082, KEYMA085, KEYMA087 } from "./diagnostics.js";
 import { getLocation } from "./util.js";
 
@@ -234,7 +234,7 @@ export function lowerExpr(node: ts.Expression, ctx: PortableExprCtx): IRExpressi
 // ─── Intrinsic recognition ────────────────────────────────────────────────────
 
 /** Classify a receiver's static type for intrinsic lookup. */
-function classifyReceiver(checker: ts.TypeChecker, t: ts.Type): "string" | "array" | "regexp" | undefined {
+function classifyReceiver(checker: ts.TypeChecker, t: ts.Type): "string" | "array" | "regexp" | "date" | undefined {
     if ((t.flags & ts.TypeFlags.StringLike) !== 0) return "string";
     if (t.isUnion() && t.types.length > 0 && t.types.every((x) => (x.flags & ts.TypeFlags.StringLike) !== 0)) {
         return "string";
@@ -243,6 +243,8 @@ function classifyReceiver(checker: ts.TypeChecker, t: ts.Type): "string" | "arra
     const name = sym?.getName();
     if (name === "Array" || name === "ReadonlyArray") return "array";
     if (name === "RegExp") return "regexp";
+    // `DateTime` is a plain alias of `Date`, so a Date instance (or `new Date()`) resolves here.
+    if (name === "Date") return "date";
     return undefined;
 }
 
@@ -269,6 +271,19 @@ function lowerPropertyAccess(node: ts.PropertyAccessExpression, ctx: PortableExp
 
 /** Lower a call — recognizing method intrinsics and classifying utility-function calls. */
 function lowerCall(node: ts.CallExpression, ctx: PortableExprCtx): IRExpression | null {
+    // Static `Date.now()` → a synthesized free-standing intrinsic. The receiver is the `Date`
+    // constructor (type `DateConstructor`), not a Date instance, so classifyReceiver below would
+    // not catch it — handle it first.
+    if (
+        ts.isPropertyAccessExpression(node.expression) &&
+        node.expression.name.text === "now" &&
+        node.arguments.length === 0 &&
+        ctx.checker.getTypeAtLocation(node.expression.expression).getSymbol()?.getName() === "DateConstructor" &&
+        intrinsicByOp("date.now") !== undefined
+    ) {
+        return { kind: "intrinsic", op: "date.now", receiver: null, args: [] };
+    }
+
     // Method-call intrinsic? e.g. value.includes("x")
     if (ts.isPropertyAccessExpression(node.expression)) {
         const recv = node.expression.expression;
@@ -312,12 +327,12 @@ function lowerCall(node: ts.CallExpression, ctx: PortableExprCtx): IRExpression 
         }
     }
 
-    // Getter mode: only string/array/regexp intrinsics are portable. A generic call
+    // Getter mode: only string/array/regexp/date intrinsics are portable. A generic call
     // (e.g. `this.helper()`, `compute()`) has no portable lowering — reject it.
     if (isFieldMode(ctx)) {
         ctx.diagnostics.push(mkError(
             unsupp(ctx),
-            "Only string/array/regexp intrinsic methods may be called in a computed getter — arbitrary function/method calls are not portable",
+            "Only string/array/regexp/date intrinsic methods may be called in a computed getter — arbitrary function/method calls are not portable",
             getLocation(node, ctx.sourceFile),
         ));
         return null;

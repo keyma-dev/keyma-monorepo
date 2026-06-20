@@ -69,6 +69,10 @@ export function exprToPython(expr: IRExpression): string {
             if (expr.callee.kind === "identifier" && expr.callee.name === "RegExp") {
                 return regexpNewToPython(expr.args);
             }
+            // `new Date(...)` → datetime (Requires from datetime import datetime)
+            if (expr.callee.kind === "identifier" && expr.callee.name === "Date") {
+                return dateNewToPython(expr.args);
+            }
             const callee = wrapIfComplex(expr.callee);
             const args = expr.args.map(exprToPython).join(", ");
             return `${callee}(${args})`;
@@ -126,6 +130,34 @@ function intrinsicToPython(expr: Extract<IRExpression, { kind: "intrinsic" }>): 
             return stringReplaceToPython(recv, expr.args[0], expr.args[1]);
         case "regexp.test":
             return `(${recv}.search(${arg0}) is not None)`;
+        // ── Date accessors. Compound forms are self-parenthesized: an `intrinsic` node is not
+        // wrapped by wrapIfComplex/wrapIfBinaryChild, so a parent operator would otherwise bind
+        // too tightly (e.g. `x * d.getMonth()` → `x * recv.month - 1`).
+        case "date.getTime":
+            return `(int(${recv}.timestamp()) * 1000 + ${recv}.microsecond // 1000)`;
+        case "date.getFullYear":
+            return `${recv}.year`;
+        case "date.getMonth":
+            return `(${recv}.month - 1)`; // JS months are 0-based
+        case "date.getDate":
+            return `${recv}.day`;
+        case "date.getDay":
+            return `((${recv}.weekday() + 1) % 7)`; // JS 0=Sunday; Python weekday() 0=Monday
+        case "date.getHours":
+            return `${recv}.hour`;
+        case "date.getMinutes":
+            return `${recv}.minute`;
+        case "date.getSeconds":
+            return `${recv}.second`;
+        case "date.getMilliseconds":
+            return `(${recv}.microsecond // 1000)`;
+        case "date.toISOString":
+            // JS toISOString() is UTC with a trailing Z and 3-digit ms. Treat the naive-local value
+            // as local, normalize to UTC. (Requires from datetime import timezone)
+            return `${recv}.astimezone(timezone.utc).isoformat(timespec="milliseconds").replace("+00:00", "Z")`;
+        case "date.now":
+            // Static Date.now() — epoch milliseconds for the current instant.
+            return `int(datetime.now().timestamp() * 1000)`;
         case "type-is":
             return typeIsToPython(recv, literalText(expr.args[0]));
         case "instance-of":
@@ -189,6 +221,57 @@ function regexpNewToPython(args: IRExpression[]): string {
         ` | (re.MULTILINE if "m" in (${f} or "") else 0)` +
         ` | (re.DOTALL if "s" in (${f} or "") else 0))`;
     return `re.compile(${pat}, ${flagsExpr})`;
+}
+
+/**
+ * `new Date(...)` → a Python `datetime`. Every form yields a naive (local) datetime so all Date paths
+ * interoperate (avoids offset-naive vs offset-aware comparison errors). Documented divergences from
+ * JS: out-of-range components raise `ValueError` rather than rolling over, and string parsing is
+ * strict ISO 8601 (no JS "Invalid Date" sentinel).
+ */
+function dateNewToPython(args: IRExpression[]): string {
+    // `new Date()` → current local time.
+    if (args.length === 0) return "datetime.now()";
+
+    // Component form `new Date(year, monthIndex, day?, hours?, minutes?, seconds?, ms?)`. Python's
+    // datetime requires year/month/day, so default day to 1; trailing parts default to 0 (as in JS).
+    if (args.length >= 2) {
+        const parts: string[] = [
+            exprToPython(args[0]!),                                  // year
+            addOneToPython(args[1]!),                               // monthIndex → 1-based month
+            args[2] !== undefined ? exprToPython(args[2]) : "1",    // day (default 1)
+        ];
+        for (let i = 3; i <= 5; i++) {                              // hours, minutes, seconds
+            const a = args[i];
+            if (a !== undefined) parts.push(exprToPython(a));
+        }
+        if (args[6] !== undefined) parts.push(msToMicrosecondsPython(args[6])); // ms → microseconds
+        return `datetime(${parts.join(", ")})`;
+    }
+
+    // Single argument: an epoch-millisecond number or a date string.
+    const arg = args[0]!;
+    if (arg.kind === "literal" && typeof arg.value === "string") {
+        return `datetime.fromisoformat(${exprToPython(arg)})`;
+    }
+    if (arg.kind === "literal" && typeof arg.value === "number") {
+        return `datetime.fromtimestamp(${exprToPython(arg)} / 1000)`; // JS ms → Python seconds
+    }
+    // Dynamic: disambiguate at runtime, binding the argument once (walrus) to avoid double evaluation.
+    const x = exprToPython(arg);
+    return `(datetime.fromisoformat(_x) if isinstance((_x := ${x}), str) else datetime.fromtimestamp(_x / 1000))`;
+}
+
+/** Emit `<expr> + 1`, constant-folding a numeric literal. */
+function addOneToPython(expr: IRExpression): string {
+    if (expr.kind === "literal" && typeof expr.value === "number") return String(expr.value + 1);
+    return `(${exprToPython(expr)}) + 1`;
+}
+
+/** Emit `int(<expr> * 1000)` (JS milliseconds → Python microseconds), constant-folding a numeric literal. */
+function msToMicrosecondsPython(expr: IRExpression): string {
+    if (expr.kind === "literal" && typeof expr.value === "number") return String(Math.trunc(expr.value * 1000));
+    return `int((${exprToPython(expr)}) * 1000)`;
 }
 
 /** A Python raw string for a regex pattern, falling back to a normal escaped string when unsafe. */

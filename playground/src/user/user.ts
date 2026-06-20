@@ -29,6 +29,10 @@ export enum Role {
     Guest = "guest",
 }
 
+export function Now(): DateTime {
+    return new Date();
+}
+
 @Schema({ name: "user" })
 export class User {
 
@@ -79,7 +83,7 @@ export class User {
 
     private _password?: string;
 
-    createdOn: DateTime = (() => new Date())();
+    createdOn: DateTime = Now();
     declare updatedOn: DateTime;
 
 }

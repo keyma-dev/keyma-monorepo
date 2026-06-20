@@ -29,7 +29,7 @@ export function emitModulePython(moduleRef: string, schemas: readonly IRSchema[]
     const lines: string[] = [
         "from __future__ import annotations",
         "from typing import Any, List, Optional, Literal, Dict",
-        "from datetime import datetime",
+        "from datetime import datetime, timezone",
         "import re",
         "",
     ];
