@@ -29,9 +29,14 @@ export type IRType =
      *  declaration; absent for an inline string-literal union. */
     | { kind: "enum"; values: string[]; name?: string }
     | { kind: "array"; of: IRType; elementNullable?: boolean }
-    /** Foreign key — stores only the referenced document's id. `idType` is the
-     *  resolved type of the target's `id` field, filled in by the frontend. */
+    /** Foreign key — stores only the referenced document's id. `schema` is the
+     *  target schema's `name` (the canonical identity used everywhere downstream
+     *  — registries, RPC, serialization, DB naming), never its `sourceName`.
+     *  `idType` is the resolved type of the target's `id` field, filled in by the
+     *  frontend. */
     | { kind: "reference"; schema: string; idType?: IRType }
+    /** Inline nested document. `schema` is the target schema's `name` (see
+     *  `reference` above), never its `sourceName`. */
     | { kind: "embedded"; schema: string };
 
 /** Generic validator reference — identified by name, optionally parameterized. */
@@ -239,11 +244,11 @@ export type IRField = {
  * backends ignore this; graph-aware backends use it to plan traversals.
  */
 export type IREdge = {
-    /** Source node schema's sourceName — the `@From()` field's node type. */
+    /** Source node schema's `name` — the `@From()` field's node type. */
     from: string;
     /** Name of the `@From()`-decorated field holding the source endpoint. */
     fromField: string;
-    /** Target node schema's sourceName — the `@To()` field's node type. */
+    /** Target node schema's `name` — the `@To()` field's node type. */
     to: string;
     /** Name of the `@To()`-decorated field holding the target endpoint. */
     toField: string;
@@ -255,7 +260,13 @@ export type IREdge = {
 
 export type IRSchema = {
     id: string;
+    /** Canonical identity. Used everywhere downstream — reference/embedded/edge
+     *  targets, runtime registries, RPC, serialization, DB naming. Unique across
+     *  the project (KEYMA001) and carries the optional `schemaPrefix`. */
     name: string;
+    /** The authored TS class name. EMIT-SYMBOL ONLY: backends use it as the
+     *  generated class/module/materializer identifier. Never a lookup key and
+     *  never sent over the wire — use `name` for any cross-reference. */
     sourceName: string;
     visibility: "public" | "private";
     /** When true, this schema is never persisted to the database. */
@@ -306,7 +317,11 @@ export type IRServiceMethod = {
  */
 export type IRService = {
     id: string;
+    /** Canonical identity — the RPC service id used over the wire. Carries the
+     *  optional `schemaPrefix`. */
     name: string;
+    /** The authored TS class name. EMIT-SYMBOL ONLY (generated client stub /
+     *  server base class name); never a lookup key or wire id — use `name`. */
     sourceName: string;
     visibility: "public" | "private";
     description?: string;

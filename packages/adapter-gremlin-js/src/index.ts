@@ -1,5 +1,6 @@
 export { GremlinAdapter } from "./adapter.js";
 export type { GremlinAdapterOptions } from "./adapter.js";
+export { sanitizeLabel } from "./sanitize-name.js";
 export type {
     GremlinConnectionFactory,
     DriverRemoteConnectionInstance,

@@ -17,8 +17,9 @@ export type SchemaDataOptions = {
     validatorDecls: ReadonlyMap<string, IRValidatorDeclaration>;
     /** Formatter declarations keyed by name — for ordering direct-ref factory-call args. */
     formatterDecls: ReadonlyMap<string, IRFormatterDeclaration>;
-    /** Embedded/reference class names this schema needs as a live `refs` Map. */
-    refs: readonly string[];
+    /** Embedded/reference targets this schema needs as a live `refs` Map:
+     *  the target's `name` (lookup key) paired with its emitted class symbol. */
+    refs: readonly { name: string; symbol: string }[];
 };
 
 const CLIENT_PHASES = new Set(["change", "blur", "submit"]);
@@ -43,7 +44,7 @@ export function buildSchemaData(schema: IRSchema, opts: SchemaDataOptions): Reco
     if (schema.visibility === "private") out["visibility"] = "private";
     if (schema.ephemeral) out["ephemeral"] = true;
     if (opts.refs.length > 0) {
-        const entries = opts.refs.map((c) => `[${JSON.stringify(c)}, ${c}]`).join(", ");
+        const entries = opts.refs.map((r) => `[${JSON.stringify(r.name)}, ${r.symbol}]`).join(", ");
         out["refs"] = raw(`new Map([${entries}])`);
     }
     if (opts.includeDefaults) {

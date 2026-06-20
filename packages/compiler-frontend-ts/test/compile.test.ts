@@ -152,10 +152,10 @@ describe("compile all-types schema", () => {
         assert.equal(byName("nullableStr").required, true); // present, but may be null
 
         // references carry the resolved id type of their target
-        assert.deepEqual(byName("addr").type, { kind: "reference", schema: "Address", idType: { kind: "id" } });
-        assert.deepEqual(byName("embedded").type, { kind: "embedded", schema: "Address" });
+        assert.deepEqual(byName("addr").type, { kind: "reference", schema: "address", idType: { kind: "id" } });
+        assert.deepEqual(byName("embedded").type, { kind: "embedded", schema: "address" });
 
-        assert.deepEqual(byName("nullableRef").type, { kind: "reference", schema: "Address", idType: { kind: "id" } });
+        assert.deepEqual(byName("nullableRef").type, { kind: "reference", schema: "address", idType: { kind: "id" } });
         assert.equal(byName("nullableRef").nullable, true);
     });
 });
@@ -623,8 +623,8 @@ describe("@Edge discovery", () => {
     it("records edge metadata on Knows (undirected, custom label) from @From()/@To()", () => {
         const knows = schemaByName(result, "Knows");
         assert.ok(knows.edge !== undefined, "Knows should carry edge metadata");
-        assert.equal(knows.edge.from, "Person");
-        assert.equal(knows.edge.to, "Person");
+        assert.equal(knows.edge.from, "person");
+        assert.equal(knows.edge.to, "person");
         assert.equal(knows.edge.fromField, "from");
         assert.equal(knows.edge.toField, "to");
         assert.equal(knows.edge.label, "knows");
@@ -642,8 +642,8 @@ describe("@Edge discovery", () => {
     it("records edge metadata on WorksAt with defaults (directed, label=name)", () => {
         const wa = schemaByName(result, "WorksAt");
         assert.ok(wa.edge !== undefined, "WorksAt should carry edge metadata");
-        assert.equal(wa.edge.from, "Person");
-        assert.equal(wa.edge.to, "Company");
+        assert.equal(wa.edge.from, "person");
+        assert.equal(wa.edge.to, "company");
         // No explicit name → defaults to the lowercased class name, which is
         // also the traversal label.
         assert.equal(wa.edge.label, "worksat");
@@ -744,8 +744,8 @@ describe("@Edge diagnostics", () => {
         assert.ok(mixed.edge !== undefined);
         assert.equal(mixed.edge.fromField, "from");
         assert.equal(mixed.edge.toField, "to");
-        assert.equal(mixed.edge.from, "Node");
-        assert.equal(mixed.edge.to, "Node");
+        assert.equal(mixed.edge.from, "node");
+        assert.equal(mixed.edge.to, "node");
     });
 });
 

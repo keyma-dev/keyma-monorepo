@@ -171,7 +171,7 @@ const REFS_IR: KeymaIR = {
             visibility: "public",
             fields: [
                 { name: "id", type: { kind: "id" }, visibility: "public", readonly: true, required: true, validators: [], formatters: [], indexes: [], source: SRC },
-                { name: "home", type: { kind: "embedded", schema: "Address" }, visibility: "public", readonly: false, required: false, validators: [], formatters: [], indexes: [], source: SRC },
+                { name: "home", type: { kind: "embedded", schema: "address" }, visibility: "public", readonly: false, required: false, validators: [], formatters: [], indexes: [], source: SRC },
             ],
             indexes: [],
             source: { file: "customer.ts", line: 1, column: 1 },
@@ -261,7 +261,7 @@ function libraryTarget(outDir = "dist/js"): JsTargetConfig {
 }
 
 const RESOLVED_CONFIG = {
-    source: [], outDir: "dist", targets: [],
+    source: [], outDir: "dist", schemaPrefix: "", targets: [],
 };
 
 function fileContent(files: { path: string; content: string | Uint8Array }[], filePath: string): string {
@@ -365,7 +365,7 @@ describe("irTypeToTs", () => {
         [{ kind: "time" }, "string"],
         [{ kind: "id" }, "string"],
         [{ kind: "json" }, "unknown"],
-        [{ kind: "reference", schema: "User" }, "User"],
+        [{ kind: "reference", schema: "user" }, "user"],
     ];
 
     for (const [type, expected] of cases) {
@@ -383,8 +383,8 @@ describe("irTypeToTs", () => {
     });
 
     it("maps embedded using the class name", () => {
-        const names = new Map([["Address", "Address"]]);
-        assert.equal(irTypeToTs({ kind: "embedded", schema: "Address" }, names), "Address");
+        const names = new Map([["address", "Address"]]);
+        assert.equal(irTypeToTs({ kind: "embedded", schema: "address" }, names), "Address");
     });
 });
 
@@ -653,9 +653,9 @@ describe("emitJs — refs", () => {
         files = result.files;
     });
 
-    it("emits refs as a Map keyed by the referenced sourceName", () => {
+    it("emits refs as a Map keyed by the referenced name", () => {
         const content = fileContent(files, "dist/js/client/models/customer.js");
-        assert.ok(content.includes(`"refs": new Map([["Address", Address]])`), `refs Map missing or malformed:\n${content}`);
+        assert.ok(content.includes(`"refs": new Map([["address", Address]])`), `refs Map missing or malformed:\n${content}`);
     });
 
     it("model imports the referenced class so the Map entry is bound", () => {
@@ -950,7 +950,7 @@ const SELF_REF_IR: KeymaIR = {
             id: "schema:node", name: "node", sourceName: "Node", visibility: "public",
             fields: [
                 { name: "id", type: { kind: "id" }, visibility: "public", readonly: true, required: true, validators: [], formatters: [], indexes: [{ unique: true }], source: SRC },
-                { name: "parent", type: { kind: "reference", schema: "Node", idType: { kind: "id" } }, visibility: "public", readonly: false, required: false, validators: [], formatters: [], indexes: [], source: SRC },
+                { name: "parent", type: { kind: "reference", schema: "node", idType: { kind: "id" } }, visibility: "public", readonly: false, required: false, validators: [], formatters: [], indexes: [], source: SRC },
             ],
             indexes: [], source: { file: "node.ts", line: 1, column: 1 },
         },
@@ -964,7 +964,7 @@ describe("emitJs — self-referential reference", () => {
         const js = fileContent(files, "dist/js/server/models/node.js");
         assert.ok(!/^import \{ Node \} from/m.test(js), "model self-imports its own class");
         // The ref is still resolvable via the embedded refs map.
-        assert.ok(js.includes(`["Node", Node]`), "self-ref should remain in the refs map");
+        assert.ok(js.includes(`["node", Node]`), "self-ref should remain in the refs map");
 
         const dts = fileContent(files, "dist/js/server/models/node.d.ts");
         assert.ok(!/^import type \{ Node \} from/m.test(dts), ".d.ts self-imports its own class");

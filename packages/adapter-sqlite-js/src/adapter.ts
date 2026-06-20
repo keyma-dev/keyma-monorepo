@@ -16,12 +16,13 @@ import { fromRecord, toRecord } from "./record.js";
 import { applyListOptions } from "./list-options.js";
 import { applyProjection, needsPopulate } from "./projection.js";
 import { runTraverse } from "./traverse.js";
+import { sanitizeTableName } from "./sanitize-name.js";
 import { SqliteAdapterInternal } from "./errors.js";
 import type { AnyDb, SchemaMap } from "./kysely.js";
 
 export interface SqliteAdapterOptions {
-    /** Override how a schema maps to its SQL table name. Defaults to
-     *  `schema.name`. */
+    /** Override how a schema maps to its SQL table name. Defaults to the schema's
+     *  `name` sanitized to a valid SQL identifier (see `sanitizeTableName`). */
     tableName?: (schema: SchemaMetadata) => string;
     /** Override the id generator used when a record is inserted without an
      *  `id`. Defaults to `crypto.randomUUID()`. */
@@ -43,7 +44,7 @@ export class SqliteAdapter implements KeymaDatabaseAdapter {
         private readonly db: AnyDb,
         opts: SqliteAdapterOptions = {},
     ) {
-        this.tableName = opts.tableName ?? ((s) => s.name);
+        this.tableName = opts.tableName ?? ((s) => sanitizeTableName(s.name));
         this.generateId = opts.generateId ?? (() => crypto.randomUUID());
     }
 

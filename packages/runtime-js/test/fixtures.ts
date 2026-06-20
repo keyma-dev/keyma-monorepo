@@ -208,11 +208,11 @@ export const KNOWS_SCHEMA: SchemaMetadata = {
     sourceName: "Knows",
     fields: [
         { name: "id", type: { kind: "id" }, readonly: true },
-        { name: "from", type: { kind: "reference", schema: "Person" } },
-        { name: "to", type: { kind: "reference", schema: "Person" } },
+        { name: "from", type: { kind: "reference", schema: "person" } },
+        { name: "to", type: { kind: "reference", schema: "person" } },
         { name: "since", type: { kind: "string" } },
     ],
-    edge: { from: "Person", fromField: "from", to: "Person", toField: "to", label: "knows", directed: false },
+    edge: { from: "person", fromField: "from", to: "person", toField: "to", label: "knows", directed: false },
 };
 
 export const WORKS_AT_SCHEMA: SchemaMetadata = {
@@ -220,11 +220,11 @@ export const WORKS_AT_SCHEMA: SchemaMetadata = {
     sourceName: "WorksAt",
     fields: [
         { name: "id", type: { kind: "id" }, readonly: true },
-        { name: "from", type: { kind: "reference", schema: "Person" } },
-        { name: "to", type: { kind: "reference", schema: "Company" } },
+        { name: "from", type: { kind: "reference", schema: "person" } },
+        { name: "to", type: { kind: "reference", schema: "company" } },
         { name: "role", type: { kind: "string" } },
     ],
-    edge: { from: "Person", fromField: "from", to: "Company", toField: "to", label: "WorksAt", directed: true },
+    edge: { from: "person", fromField: "from", to: "company", toField: "to", label: "worksat", directed: true },
 };
 
 class KnowsCtor {
@@ -272,8 +272,8 @@ export const PRIVATE_EDGE_SCHEMA: SchemaMetadata = {
     visibility: "private",
     fields: [
         { name: "id", type: { kind: "id" }, readonly: true },
-        { name: "from", type: { kind: "reference", schema: "Person" } },
-        { name: "to", type: { kind: "reference", schema: "Person" } },
+        { name: "from", type: { kind: "reference", schema: "person" } },
+        { name: "to", type: { kind: "reference", schema: "person" } },
     ],
-    edge: { from: "Person", fromField: "from", to: "Person", toField: "to", label: "privateEdge", directed: false },
+    edge: { from: "person", fromField: "from", to: "person", toField: "to", label: "privateEdge", directed: false },
 };

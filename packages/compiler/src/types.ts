@@ -17,6 +17,12 @@ export type KeymaUserConfig = {
     outDir?: string;
     /** Path to write the IR JSON file. Omit to skip. */
     irOutFile?: string;
+    /** Prefix prepended to every generated schema/service `name` (the canonical
+     *  identity used for references, registries, RPC, serialization and DB
+     *  naming). Namespaces the project so the same class names can coexist across
+     *  libraries. Concatenated verbatim — include any separator yourself (e.g.
+     *  `"blog_"`). Defaults to "" (no prefix). */
+    schemaPrefix?: string;
     /** One entry per code-generation target. */
     targets?: KeymaTargetConfig[];
 };
@@ -27,6 +33,8 @@ export type ResolvedConfig = {
     baseDir?: string;
     outDir: string;
     irOutFile?: string;
+    /** Prefix for every schema/service `name`. See {@link KeymaUserConfig.schemaPrefix}. */
+    schemaPrefix: string;
     targets: KeymaTargetConfig[];
 };
 

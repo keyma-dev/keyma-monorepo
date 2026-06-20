@@ -87,7 +87,7 @@ export const FRIENDSHIP_SCHEMA: SchemaMetadata = {
         { name: "userB", type: { kind: "reference", schema: "user" }, indexes: [{}] },
         { name: "since", type: { kind: "string" }, required: false },
     ],
-    edge: { from: "User", fromField: "userA", to: "User", toField: "userB", label: "friend", directed: false },
+    edge: { from: "user", fromField: "userA", to: "user", toField: "userB", label: "friend", directed: false },
 };
 
 export const AUTHORSHIP_SCHEMA: SchemaMetadata = {
@@ -98,7 +98,7 @@ export const AUTHORSHIP_SCHEMA: SchemaMetadata = {
         { name: "author", type: { kind: "reference", schema: "user" }, indexes: [{}] },
         { name: "post", type: { kind: "reference", schema: "post" }, indexes: [{}] },
     ],
-    edge: { from: "User", fromField: "author", to: "Post", toField: "post", label: "wrote", directed: true },
+    edge: { from: "user", fromField: "author", to: "post", toField: "post", label: "wrote", directed: true },
 };
 
 export const TAGGING_SCHEMA: SchemaMetadata = {
@@ -109,7 +109,7 @@ export const TAGGING_SCHEMA: SchemaMetadata = {
         { name: "post", type: { kind: "reference", schema: "post" }, indexes: [{}] },
         { name: "tag", type: { kind: "reference", schema: "tag" }, indexes: [{}] },
     ],
-    edge: { from: "Post", fromField: "post", to: "Tag", toField: "tag", label: "tagged", directed: true },
+    edge: { from: "post", fromField: "post", to: "tag", toField: "tag", label: "tagged", directed: true },
 };
 
 export function schemaMap(...schemas: SchemaMetadata[]): Map<string, SchemaMetadata> {

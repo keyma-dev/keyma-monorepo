@@ -5,7 +5,8 @@ import type { IRType } from "@keyma/ir";
  */
 export function irTypeToPython(
     type: IRType,
-    /** Map of sourceName → sourceName for resolving embedded schema types. */
+    /** Map of target `name` → emitted Python class, for resolving reference/embedded
+     *  schema types to their generated class. */
     embeddedNames?: ReadonlyMap<string, string>
 ): string {
     switch (type.kind) {

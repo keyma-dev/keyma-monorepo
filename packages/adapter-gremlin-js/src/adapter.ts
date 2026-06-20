@@ -23,13 +23,16 @@ import { emitProjected, parseProjectedRow } from "./read.js";
 import { ensureIndexes } from "./indexes.js";
 import { runTraverse } from "./traverse.js";
 import type { LabelFns } from "./traverse-steps.js";
+import { sanitizeLabel } from "./sanitize-name.js";
 import { GremlinAdapterInternal, GremlinAdapterInvalidQuery } from "./errors.js";
 
 export interface GremlinAdapterOptions {
-    /** Override how a schema maps to its vertex label. Defaults to `schema.name`. */
+    /** Override how a schema maps to its vertex label. Defaults to the schema's
+     *  `name` sanitized to a valid label (see `sanitizeLabel`). */
     label?: (schema: SchemaMetadata) => string;
     /** Override how an edge schema maps to its Gremlin edge label. Must agree
-     *  with what traversals use; defaults to `schema.name`. */
+     *  with what traversals use; defaults to the schema's `name` sanitized
+     *  (see `sanitizeLabel`). */
     edgeLabel?: (schema: SchemaMetadata) => string;
     /** Override the id generator used when a record is created without an `id`.
      *  Supplied as the element's `T.id`. Defaults to `crypto.randomUUID()` so
@@ -75,8 +78,8 @@ export class GremlinAdapter implements KeymaDatabaseAdapter {
         private readonly factory: GremlinConnectionFactory,
         opts: GremlinAdapterOptions = {},
     ) {
-        this.label = opts.label ?? ((s) => s.name);
-        this.edgeLabel = opts.edgeLabel ?? ((s) => s.name);
+        this.label = opts.label ?? ((s) => sanitizeLabel(s.name));
+        this.edgeLabel = opts.edgeLabel ?? ((s) => sanitizeLabel(s.name));
         this.generateId = opts.generateId ?? (() => randomUUID());
         this.maxConnectionAgeMs = opts.maxConnectionAgeMs;
     }

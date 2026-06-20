@@ -38,7 +38,7 @@ const BASIC_IR: KeymaIR = {
 };
 
 const RESOLVED_CONFIG = {
-    source: [], outDir: "dist", targets: [],
+    source: [], outDir: "dist", schemaPrefix: "", targets: [],
 };
 
 function fileContent(files: { path: string; content: string | Uint8Array }[], filePath: string): string {
@@ -236,7 +236,7 @@ describe("emitPython", () => {
                 { id: "s1", name: "u", sourceName: "U", visibility: "public", fields: [], indexes: [], source: { file: "u.ts", line: 1, column: 1 } },
                 {
                     id: "s2", name: "p", sourceName: "P", visibility: "public",
-                    fields: [{ name: "a", type: { kind: "reference", schema: "U" }, visibility: "public", readonly: false, required: true, validators: [], formatters: [], indexes: [], source: SRC }],
+                    fields: [{ name: "a", type: { kind: "reference", schema: "u" }, visibility: "public", readonly: false, required: true, validators: [], formatters: [], indexes: [], source: SRC }],
                     indexes: [], source: { file: "p.ts", line: 1, column: 1 }
                 }
             ],
@@ -247,7 +247,7 @@ describe("emitPython", () => {
         const content = fileContent(result.files, "dist/python/models/p.py");
         
         assert.ok(content.includes('"fields":'), "Missing fields in schema");
-        assert.ok(content.includes('"refs": {"U": U}'), "Missing refs in schema");
+        assert.ok(content.includes('"refs": {"u": U}'), "Missing refs in schema");
 
         // Verify comma: should have '],' then newline then whitespace then '"refs":'
         assert.ok(/\],\n\s+"refs":/.test(content), "Missing comma before refs");

@@ -172,7 +172,7 @@ function resolveStep(
         }
         nextSourceName = edgeMeta.to;
     }
-    const nextNode = nodeBySourceName(ctx, nextSourceName);
+    const nextNode = nodeByName(ctx, nextSourceName);
     if (nextNode === undefined) {
         throw new SqliteAdapterInvalidQuery(`Node schema "${nextSourceName}" not registered`);
     }
@@ -180,12 +180,12 @@ function resolveStep(
     return { edge, edgeMeta, nextNode, direction: step.direction };
 }
 
-function nodeBySourceName(
+function nodeByName(
     ctx: AdapterTraversalContext,
-    sourceName: string,
+    name: string,
 ): SchemaMetadata | undefined {
     for (const node of ctx.nodes.values()) {
-        if (node.sourceName === sourceName) return node;
+        if (node.name === name) return node;
     }
     return undefined;
 }

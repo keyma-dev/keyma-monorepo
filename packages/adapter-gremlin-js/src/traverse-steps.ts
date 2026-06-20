@@ -26,9 +26,9 @@ export type PathRow = {
 
 type Resolved = { edge: SchemaMetadata; nextNode: SchemaMetadata };
 
-function nodeBySourceName(ctx: AdapterTraversalContext, sourceName: string): SchemaMetadata | undefined {
+function nodeByName(ctx: AdapterTraversalContext, name: string): SchemaMetadata | undefined {
     for (const node of ctx.nodes.values()) {
-        if (node.sourceName === sourceName) return node;
+        if (node.name === name) return node;
     }
     return undefined;
 }
@@ -42,8 +42,8 @@ function edgeEndpointProjection(
 ): AdapterProjection | undefined {
     const meta = edge.edge;
     if (meta === undefined) return undefined;
-    const fromNode = nodeBySourceName(ctx, meta.from);
-    const toNode = nodeBySourceName(ctx, meta.to);
+    const fromNode = nodeByName(ctx, meta.from);
+    const toNode = nodeByName(ctx, meta.to);
     if (fromNode === undefined || toNode === undefined) return undefined;
     return {
         populate: {
@@ -62,7 +62,7 @@ function resolveStep(step: TraversalStep, ctx: AdapterTraversalContext): Resolve
     // "both" assumes a self-loop (from === to); the opposite endpoint is reached
     // via otherV() so an explicit next-schema name isn't needed.
     const nextSourceName = step.direction === "in" ? meta.from : meta.to;
-    const nextNode = nodeBySourceName(ctx, nextSourceName);
+    const nextNode = nodeByName(ctx, nextSourceName);
     if (nextNode === undefined) {
         throw new GremlinAdapterInvalidQuery(`Node schema "${nextSourceName}" not registered`);
     }

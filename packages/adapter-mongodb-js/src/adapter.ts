@@ -21,6 +21,7 @@ import {
 } from "./projection.js";
 import { fromRecord, toRecord, type SchemaMap } from "./record.js";
 import { runTraverse } from "./traverse.js";
+import { sanitizeCollectionName } from "./sanitize-name.js";
 import { MongoAdapterInternal } from "./errors.js";
 
 export interface MongoAdapterOptions {
@@ -29,8 +30,9 @@ export interface MongoAdapterOptions {
     url: string;
     /** Database name to operate on. */
     db: string;
-    /** Override how a schema maps to its MongoDB collection name. Defaults to
-     *  the schema's `name`. */
+    /** Override how a schema maps to its MongoDB collection name. Defaults to the
+     *  schema's `name` sanitized to a valid collection name (see
+     *  `sanitizeCollectionName`). */
     collectionName?: CollectionNameFn;
     /** Override the id generator used when a record is inserted without an
      *  `id`. Defaults to `crypto.randomUUID()`. */
@@ -60,7 +62,7 @@ export class MongoAdapter implements KeymaDatabaseAdapter {
     constructor(opts: MongoAdapterOptions) {
         this.url = opts.url;
         this.dbName = opts.db;
-        this.collectionName = opts.collectionName ?? ((s) => s.name);
+        this.collectionName = opts.collectionName ?? ((s) => sanitizeCollectionName(s.name));
         this.generateId = opts.generateId ?? (() => new ObjectId().toHexString());
         this.clientOptions = opts.client;
     }

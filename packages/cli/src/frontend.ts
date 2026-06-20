@@ -16,6 +16,7 @@ export function createTsFrontend(cwd: string): KeymaFrontend {
             return compile({
                 files,
                 ...(config.baseDir !== undefined ? { baseDir: config.baseDir } : {}),
+                schemaPrefix: config.schemaPrefix,
             });
         },
     };

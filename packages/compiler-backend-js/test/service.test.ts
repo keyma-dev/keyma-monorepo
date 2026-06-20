@@ -48,8 +48,8 @@ const IR: KeymaIR = {
             methods: [
                 {
                     name: "greet",
-                    params: [{ name: "input", type: { kind: "reference", schema: "In" } }],
-                    returnType: { kind: "reference", schema: "Out" },
+                    params: [{ name: "input", type: { kind: "reference", schema: "in" } }],
+                    returnType: { kind: "reference", schema: "out" },
                     visibility: "public",
                     source: loc,
                 },
@@ -67,7 +67,7 @@ const IR: KeymaIR = {
 };
 
 const target: JsTargetConfig = { language: "js", outDir: "dist" };
-const config = { source: [], outDir: "dist", targets: [target] };
+const config = { source: [], outDir: "dist", schemaPrefix: "", targets: [target] };
 
 function fileContent(files: { path: string; content: string | Uint8Array }[], p: string): string {
     const f = files.find((f) => f.path === p);

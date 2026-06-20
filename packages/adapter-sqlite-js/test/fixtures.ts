@@ -77,8 +77,8 @@ export const AUTHORSHIP_SCHEMA: SchemaMetadata = {
         { name: "post", type: { kind: "reference", schema: "post" }, indexes: [{}] },
     ],
     edge: {
-        from: "User", fromField: "author",
-        to: "Post", toField: "post",
+        from: "user", fromField: "author",
+        to: "post", toField: "post",
         label: "wrote", directed: true,
     },
 };
@@ -92,8 +92,8 @@ export const TAGGING_SCHEMA: SchemaMetadata = {
         { name: "tag", type: { kind: "reference", schema: "tag" }, indexes: [{}] },
     ],
     edge: {
-        from: "Post", fromField: "post",
-        to: "Tag", toField: "tag",
+        from: "post", fromField: "post",
+        to: "tag", toField: "tag",
         label: "tagged", directed: true,
     },
 };
@@ -107,8 +107,8 @@ export const FRIENDSHIP_SCHEMA: SchemaMetadata = {
         { name: "userB", type: { kind: "reference", schema: "user" }, indexes: [{}] },
     ],
     edge: {
-        from: "User", fromField: "userA",
-        to: "User", toField: "userB",
+        from: "user", fromField: "userA",
+        to: "user", toField: "userB",
         label: "friend", directed: false,
     },
 };

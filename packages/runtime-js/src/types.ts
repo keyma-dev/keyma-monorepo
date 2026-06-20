@@ -98,7 +98,7 @@ export type FieldMetadata = {
 
 /** Edge metadata recorded by the compiler from `@Edge` + the `@From()`/`@To()`
  *  endpoint fields. `fromField`/`toField` are the endpoint field names; `from`/
- *  `to` are their node-schema sourceNames; `label` is the schema `name`. On
+ *  `to` are their node-schema `name`s; `label` is the edge schema's `name`. On
  *  create the endpoint fields carry node objects (`{ id }`); the server extracts
  *  the id. On read they are returned as `{ id }` objects (populated further when
  *  the projection asks for endpoint sub-fields). */
@@ -112,7 +112,10 @@ export type EdgeMetadata = {
 };
 
 export type SchemaMetadata = {
+    /** Canonical identity — the registry / wire / reference key. */
     name: string;
+    /** Authored TS class name. Emit-symbol/informational only; never a lookup key
+     *  (references and the registry use `name`). */
     sourceName: string;
     /** Omitted ≡ "public". Private schemas are emitted only into server bundles. */
     visibility?: "public" | "private";

@@ -15,7 +15,9 @@ export type AclEffect = "allow" | "deny";
 export type AclRule = {
     id: string;
     subject: AclSubject;
-    /** "*" matches any schema. */
+    /** The target schema's `name` (the registry/wire identity). When the project
+     *  configures a `schemaPrefix`, this must be the prefixed name. "*" matches
+     *  any schema. */
     schema: string;
     /** Granted actions. Read-side ops (list/read/traverse) all match `read`. */
     actions: readonly AclAction[];

@@ -42,7 +42,7 @@ const IR: KeymaIR = {
     diagnostics: [],
 };
 const target: JsTargetConfig = { language: "js", outDir: "dist" };
-const config = { source: [], outDir: "dist", targets: [target] };
+const config = { source: [], outDir: "dist", schemaPrefix: "", targets: [target] };
 
 describe("inlined dependency-free types", () => {
     it("emitTypesDts is a verbatim copy of @keyma/runtime-js types.ts (drift guard)", () => {

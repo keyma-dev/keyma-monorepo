@@ -246,7 +246,7 @@ export class KeymaServer {
             }
             edges.set(name, s);
             for (const endpoint of [s.edge.from, s.edge.to]) {
-                const node = this.findBySourceName(endpoint);
+                const node = this.schemaMap.get(endpoint);
                 if (node !== undefined) nodes.set(node.name, node);
             }
         }
@@ -274,13 +274,6 @@ export class KeymaServer {
             return { ok: true, data: out };
         }
         return { ok: true, data: records };
-    }
-
-    private findBySourceName(sourceName: string): SchemaMetadata | undefined {
-        for (const s of this.opts.schemas) {
-            if (s.sourceName === sourceName) return s;
-        }
-        return undefined;
     }
 
     private async handleList(
@@ -541,10 +534,10 @@ export class KeymaServer {
 
             // Edge endpoints always materialize as objects: `{ id }` by default,
             // or the requested sub-projection (id is always included so the
-            // object keeps its identity). `edge.from`/`to` are node sourceNames.
+            // object keeps its identity). `edge.from`/`to` are node `name`s.
             if (edge !== undefined && (key === edge.fromField || key === edge.toField)) {
-                const targetSourceName = key === edge.fromField ? edge.from : edge.to;
-                const referenced = this.findBySourceName(targetSourceName);
+                const targetName = key === edge.fromField ? edge.from : edge.to;
+                const referenced = this.schemaMap.get(targetName);
                 if (referenced !== undefined) {
                     const nested =
                         sub === 1
@@ -556,11 +549,10 @@ export class KeymaServer {
             }
 
             if (type?.kind === "reference" && sub !== 1) {
-                // A reference's `type.schema` is the target's sourceName in generated
-                // code (matching serialize/deserialize `refs` and edge endpoints);
-                // resolve by sourceName first, falling back to the storage name.
-                const referenced =
-                    this.findBySourceName(type.schema) ?? this.schemaMap.get(type.schema);
+                // A reference's `type.schema` is the target's `name` — the canonical
+                // identity, matching serialize/deserialize `refs`, edge endpoints,
+                // and the schema registry.
+                const referenced = this.schemaMap.get(type.schema);
                 if (referenced !== undefined) {
                     const nestedProjection = this.buildAdapterProjection(
                         referenced,

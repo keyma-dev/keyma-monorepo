@@ -19,7 +19,7 @@ export const pythonBackend: KeymaBackend = {
 
 type SharedDeps = Pick<
     ModuleEmitDeps,
-    "schemaModule" | "validatorDecls" | "formatterDecls" | "functionNames"
+    "schemaModule" | "classNameByName" | "validatorDecls" | "formatterDecls" | "functionNames"
     | "validatorsModuleRef" | "formattersModuleRef" | "functionsModuleRef"
 >;
 
@@ -51,6 +51,8 @@ export async function emitPython(
 
     const shared: SharedDeps = {
         schemaModule,
+        // Reference/embedded/edge target `name` → emitted Python class (`sourceName`).
+        classNameByName: new Map(ir.schemas.map((s) => [s.name, s.sourceName])),
         validatorDecls: new Map(decls.validators.map((d) => [d.name, d])),
         formatterDecls: new Map(decls.formatters.map((d) => [d.name, d])),
         functionNames: new Set(decls.functions.map((d) => d.name)),

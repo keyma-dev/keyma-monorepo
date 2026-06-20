@@ -40,8 +40,12 @@ export type FrontendConfig = {
     dslModuleName?: string;
     /** Compiler version string embedded in the IR document. */
     compilerVersion?: string;
-    /** IR schema version string. Defaults to "2.0.0". */
+    /** IR schema version string. Defaults to "4.0.0". */
     irVersion?: string;
+    /** Prefix prepended to every schema/service `name` (and reference targets that
+     *  resolve to them). Lets the same class names coexist across libraries by
+     *  namespacing the canonical identity. Defaults to "" (no prefix). */
+    schemaPrefix?: string;
 };
 
 export type CompileResult = {
@@ -192,8 +196,16 @@ function compileProgram(program: ts.Program, config: FrontendConfig): CompileRes
     checkServiceVisibilityLeaks(schemas, services, diagnostics);
     checkServiceNameCollisions(schemas, services, diagnostics);
 
+    // Final pass: apply the configured prefix to every schema/service `name` and
+    // rewrite all cross-references (reference/embedded/edge targets, service
+    // param/return schemas) from the authored class name (`sourceName`) to the
+    // target's final `name`. After this, `name` is the single identity used by
+    // every backend, the runtime, and DB adapters. Runs last so the post-checks
+    // above (which resolve by `sourceName`) see the un-rewritten IR.
+    normalizeSchemaNames(schemas, services, config.schemaPrefix ?? "");
+
     const ir: KeymaIR = {
-        irVersion: config.irVersion ?? "3.0.0",
+        irVersion: config.irVersion ?? "4.0.0",
         compilerVersion: config.compilerVersion ?? "0.1.0",
         ...(config.baseDir !== undefined ? { sourceRoot: config.baseDir } : {}),
         schemas,
@@ -210,6 +222,52 @@ function compileProgram(program: ts.Program, config: FrontendConfig): CompileRes
     if (services.length > 0) ir.services = services;
 
     return { ir, diagnostics };
+}
+
+/**
+ * Apply the schema-name prefix and normalize every cross-reference to the target
+ * schema's final `name`. In-place mutation of the (already flattened, validated)
+ * IR arrays. Reference/embedded/edge targets are authored as class names
+ * (`sourceName`); here they become the prefixed `name` so the IR — and everything
+ * downstream — addresses schemas by a single canonical identity.
+ */
+function normalizeSchemaNames(
+    schemas: IRSchema[],
+    services: IRService[],
+    prefix: string,
+): void {
+    // Authored class name (sourceName) -> final identity (prefixed name).
+    const finalName = new Map<string, string>();
+    for (const s of schemas) finalName.set(s.sourceName, prefix + s.name);
+
+    const rewrite = (type: IRType): void => {
+        if (type.kind === "array") {
+            rewrite(type.of);
+        } else if (type.kind === "reference" || type.kind === "embedded") {
+            type.schema = finalName.get(type.schema) ?? type.schema;
+        }
+    };
+
+    for (const s of schemas) {
+        for (const f of s.fields) rewrite(f.type);
+        if (s.edge !== undefined) {
+            s.edge.from = finalName.get(s.edge.from) ?? s.edge.from;
+            s.edge.to = finalName.get(s.edge.to) ?? s.edge.to;
+        }
+        s.name = prefix + s.name;
+        s.id = `schema:${s.name}`;
+        // The traversal label is this edge schema's own (now prefixed) name.
+        if (s.edge !== undefined) s.edge.label = s.name;
+    }
+
+    for (const svc of services) {
+        for (const m of svc.methods) {
+            for (const p of m.params) rewrite(p.type);
+            if (m.returnType !== undefined) rewrite(m.returnType);
+        }
+        svc.name = prefix + svc.name;
+        svc.id = `service:${svc.name}`;
+    }
 }
 
 /** A public service method must not expose a private schema via a param/return type. */

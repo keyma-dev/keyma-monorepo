@@ -17,10 +17,10 @@ import { applyListOptions } from "./list-options.js";
 
 function endpointSchema(
     ctx: AdapterTraversalContext,
-    sourceName: string,
+    name: string,
 ): SchemaMetadata | undefined {
     for (const node of ctx.nodes.values()) {
-        if (node.sourceName === sourceName) return node;
+        if (node.name === name) return node;
     }
     return undefined;
 }

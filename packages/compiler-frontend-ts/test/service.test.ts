@@ -51,8 +51,8 @@ describe("services — remote call contracts", () => {
         assert.equal(svc.methods.length, 4);
 
         const greet = svc.methods.find((m) => m.name === "greet")!;
-        assert.deepEqual(greet.params, [{ name: "input", type: { kind: "reference", schema: "In" } }]);
-        assert.deepEqual(greet.returnType, { kind: "reference", schema: "Out" });
+        assert.deepEqual(greet.params, [{ name: "input", type: { kind: "reference", schema: "in" } }]);
+        assert.deepEqual(greet.returnType, { kind: "reference", schema: "out" });
 
         const shout = svc.methods.find((m) => m.name === "shout")!;
         assert.deepEqual(shout.params, [{ name: "text", type: { kind: "string" } }]);
@@ -62,7 +62,7 @@ describe("services — remote call contracts", () => {
         assert.equal(ping.returnType, undefined); // void → no return type
 
         const list = svc.methods.find((m) => m.name === "list")!;
-        assert.deepEqual(list.returnType, { kind: "array", of: { kind: "reference", schema: "Out" } });
+        assert.deepEqual(list.returnType, { kind: "array", of: { kind: "reference", schema: "out" } });
     });
 
     it("allows async-shaped contracts (no KEYMA082)", () => {

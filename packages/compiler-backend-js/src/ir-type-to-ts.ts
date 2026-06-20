@@ -4,12 +4,13 @@ import type { IRType } from "@keyma/ir";
  * Map an IRType to a TypeScript type string for use in `.d.ts` files.
  *
  * - `reference` types store only the referenced document's ID → `string`
- * - `embedded` types store the full nested object → reference the class by sourceName
+ * - `embedded` types store the full nested object → reference the class by symbol
  * - Temporal types: `dateTime` → `Date`, others → `string`
  */
 export function irTypeToTs(
     type: IRType,
-    /** Map of sourceName → sourceName for resolving embedded schema types. */
+    /** Map of target `name` → emitted class symbol, for resolving reference/embedded
+     *  schema types to their generated class. */
     embeddedNames?: ReadonlyMap<string, string>
 ): string {
     switch (type.kind) {

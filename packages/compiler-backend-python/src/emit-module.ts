@@ -15,6 +15,8 @@ export type ModuleEmitDeps = {
     includeDefaults: boolean;
     /** sourceName → bundle-relative module ref (e.g. "models/user/user"). */
     schemaModule: ReadonlyMap<string, string>;
+    /** Reference/embedded/edge target `name` → emitted Python class (`sourceName`). */
+    classNameByName: ReadonlyMap<string, string>;
     validatorDecls: ReadonlyMap<string, IRValidatorDeclaration>;
     formatterDecls: ReadonlyMap<string, IRFormatterDeclaration>;
     functionNames: ReadonlySet<string>;
@@ -55,7 +57,7 @@ function emitSchemaClass(schema: IRSchema, deps: ModuleEmitDeps): string[] {
     let assigned = false;
     for (const field of fields) {
         if (field.computed !== undefined) continue;
-        lines.push(`            self.${field.name}: ${fieldAnnotation(field)} = value.get("${field.name}")`);
+        lines.push(`            self.${field.name}: ${fieldAnnotation(field, deps.classNameByName)} = value.get("${field.name}")`);
         assigned = true;
     }
     if (!assigned && schema.extends === undefined) lines.push(`            pass`);
@@ -66,7 +68,7 @@ function emitSchemaClass(schema: IRSchema, deps: ModuleEmitDeps): string[] {
         computedNames.add(field.name);
         lines.push("");
         lines.push(`    @property`);
-        lines.push(`    def ${field.name}(self) -> ${fieldAnnotation(field)}:`);
+        lines.push(`    def ${field.name}(self) -> ${fieldAnnotation(field, deps.classNameByName)}:`);
         lines.push(`        return ${exprToPython(field.computed.expression)}`);
     }
 
@@ -92,7 +94,7 @@ function emitSchemaClass(schema: IRSchema, deps: ModuleEmitDeps): string[] {
         formPhasesOnly: deps.formPhasesOnly,
         validatorDecls: deps.validatorDecls,
         formatterDecls: deps.formatterDecls,
-        refs: schemaRefClassNames(fields, deps.schemaModule),
+        refs: schemaRefs(fields, deps.classNameByName),
         ...(applyDefaultsRef !== undefined ? { applyDefaultsRef } : {}),
     });
     lines.push(`${schema.sourceName}.schema = ${emitLiteral(schemaData)}`);
@@ -128,8 +130,11 @@ function buildImports(moduleRef: string, schemas: readonly IRSchema[], deps: Mod
         }
     }
     for (const target of collectRefTargets(allFields)) {
-        const ref = deps.schemaModule.get(target);
-        if (ref !== undefined) add(ref, target);
+        // Targets are identities (`name`); resolve to the emitted class + its module.
+        const className = deps.classNameByName.get(target);
+        if (className === undefined) continue;
+        const ref = deps.schemaModule.get(className);
+        if (ref !== undefined) add(ref, className);
     }
     for (const n of collectFactoryNames(allFields, "validators", deps.formPhasesOnly)) add(deps.validatorsModuleRef, factoryIdent(n));
     for (const n of collectFactoryNames(allFields, "formatters", deps.formPhasesOnly)) add(deps.formattersModuleRef, factoryIdent(n));
@@ -140,8 +145,15 @@ function buildImports(moduleRef: string, schemas: readonly IRSchema[], deps: Mod
         .map(([spec, bindings]) => `${spec} ${[...bindings].sort().join(", ")}`);
 }
 
-function schemaRefClassNames(fields: IRField[], schemaModule: ReadonlyMap<string, string>): string[] {
-    return [...collectRefTargets(fields)].filter((t) => schemaModule.has(t));
+/** Embedded/reference targets of a field list as `{ name, className }` pairs for
+ *  the live `refs` dict — keyed by the target's `name`, valued by its Python class. */
+function schemaRefs(
+    fields: IRField[],
+    classNameByName: ReadonlyMap<string, string>,
+): { name: string; className: string }[] {
+    return [...collectRefTargets(fields)]
+        .filter((t) => classNameByName.has(t))
+        .map((name) => ({ name, className: classNameByName.get(name)! }));
 }
 
 function collectRefTargets(fields: IRField[]): Set<string> {
@@ -241,8 +253,8 @@ function emitMethodPython(method: IRMethod, computedNames: ReadonlySet<string>):
     return lines;
 }
 
-function fieldAnnotation(field: IRField): string {
-    const core = irTypeToPython(field.type);
+function fieldAnnotation(field: IRField, classNameByName: ReadonlyMap<string, string>): string {
+    const core = irTypeToPython(field.type, classNameByName);
     if (field.nullable || !field.required) return core.startsWith("Optional[") ? core : `Optional[${core}]`;
     return core;
 }

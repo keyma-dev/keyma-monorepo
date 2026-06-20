@@ -11,10 +11,9 @@ export type ServiceEmitDeps = {
     includePrivate: boolean;
     /** sourceName → bundle-relative model module ref (e.g. "models/user/user"). */
     schemaModule: ReadonlyMap<string, string>;
-    /** sourceName → TypeScript type name (for `.d.ts`). */
+    /** Reference/embedded target `name` → emitted class symbol (for `.d.ts` types
+     *  and the client `refs` Map value / model-import binding). */
     embeddedTypeNames: ReadonlyMap<string, string>;
-    /** sourceName → schema runtime name (the server's schemaMap key / refs key). */
-    schemaName: ReadonlyMap<string, string>;
 };
 
 export type ServiceEmitFiles = { servicesJs: string; servicesDts: string };
@@ -29,55 +28,57 @@ function visibleMethods(svc: IRService, includePrivate: boolean): IRServiceMetho
     return includePrivate ? svc.methods : svc.methods.filter((m) => m.visibility === "public");
 }
 
-/** Core (array-unwrapped) reference/embedded target sourceName of a type. */
-function refTargetSourceName(t: IRType): string | undefined {
+/** Core (array-unwrapped) reference/embedded target `name` of a type. */
+function refTargetName(t: IRType): string | undefined {
     const inner = t.kind === "array" ? t.of : t;
     return inner.kind === "reference" || inner.kind === "embedded" ? inner.schema : undefined;
 }
 
-/** sourceNames of every schema referenced by a method list's params/returns
+/** `name`s of every schema referenced by a method list's params/returns
  *  (needed for `.d.ts` type imports). */
-function refSourcesOf(methods: readonly IRServiceMethod[]): Set<string> {
+function refTargetNamesOf(methods: readonly IRServiceMethod[]): Set<string> {
     const out = new Set<string>();
     for (const m of methods) {
         for (const p of m.params) {
-            const s = refTargetSourceName(p.type);
+            const s = refTargetName(p.type);
             if (s !== undefined) out.add(s);
         }
         if (m.returnType !== undefined) {
-            const s = refTargetSourceName(m.returnType);
+            const s = refTargetName(m.returnType);
             if (s !== undefined) out.add(s);
         }
     }
     return out;
 }
 
-/** sourceNames of schemas referenced by RETURN types only — the client needs these
+/** `name`s of schemas referenced by RETURN types only — the client needs these
  *  as live classes (`refs` Map) to hydrate results. Inputs are plain objects. */
-function returnSourcesOf(methods: readonly IRServiceMethod[]): Set<string> {
+function returnTargetNamesOf(methods: readonly IRServiceMethod[]): Set<string> {
     const out = new Set<string>();
     for (const m of methods) {
         if (m.returnType === undefined) continue;
-        const s = refTargetSourceName(m.returnType);
+        const s = refTargetName(m.returnType);
         if (s !== undefined) out.add(s);
     }
     return out;
 }
 
-/** Build the `import` lines bringing referenced model classes into the services file. */
+/** Build the `import` lines bringing referenced model classes into the services
+ *  file. Targets are identities (`name`); resolve each to its class symbol/module. */
 function buildModelImports(
-    sources: ReadonlySet<string>,
+    targetNames: ReadonlySet<string>,
     deps: ServiceEmitDeps,
     typeOnly: boolean,
 ): string[] {
     const bySpec = new Map<string, Set<string>>();
-    for (const src of sources) {
-        const moduleRef = deps.schemaModule.get(src);
+    for (const name of targetNames) {
+        const symbol = deps.embeddedTypeNames.get(name);
+        if (symbol === undefined) continue;
+        const moduleRef = deps.schemaModule.get(symbol);
         if (moduleRef === undefined) continue;
-        const binding = deps.embeddedTypeNames.get(src) ?? src;
         const spec = relModuleSpecifier(SERVICES_REF, moduleRef);
         if (!bySpec.has(spec)) bySpec.set(spec, new Set());
-        bySpec.get(spec)!.add(binding);
+        bySpec.get(spec)!.add(symbol);
     }
     const kw = typeOnly ? "import type" : "import";
     return [...bySpec.entries()]
@@ -88,21 +89,19 @@ function buildModelImports(
 // ── services.js ──────────────────────────────────────────────────────────────
 
 /** Per-method runtime metadata object (ready for `emitLiteral`). */
-function methodMetadata(m: IRServiceMethod, deps: ServiceEmitDeps): Record<string, unknown> {
+function methodMetadata(m: IRServiceMethod): Record<string, unknown> {
     const out: Record<string, unknown> = { name: m.name };
     if (m.visibility === "private") out["visibility"] = "private";
     out["params"] = m.params.map((p) => {
         // Only direct (non-array) schema params are validated server-side against a
-        // single record — record the schema's runtime name.
+        // single record — record the schema's runtime `name`.
         if (p.type.kind === "reference" || p.type.kind === "embedded") {
-            const name = deps.schemaName.get(p.type.schema);
-            if (name !== undefined) return { name: p.name, schema: name };
+            return { name: p.name, schema: p.type.schema };
         }
         return { name: p.name };
     });
     if (m.returnType !== undefined) {
-        const src = refTargetSourceName(m.returnType);
-        const name = src !== undefined ? deps.schemaName.get(src) : undefined;
+        const name = refTargetName(m.returnType);
         if (name !== undefined) {
             out["returnSchema"] = name;
             if (m.returnType.kind === "array") out["returnArray"] = true;
@@ -115,17 +114,16 @@ function emitServiceClassJs(svc: IRService, deps: ServiceEmitDeps): string {
     const methods = visibleMethods(svc, deps.includePrivate);
     const meta: Record<string, unknown> = { name: svc.name };
     if (svc.visibility === "private") meta["visibility"] = "private";
-    meta["methods"] = methods.map((m) => methodMetadata(m, deps));
+    meta["methods"] = methods.map((m) => methodMetadata(m));
 
     // Client bundles carry a live `refs` Map (schema name → model class) for return hydration.
     if (!deps.includePrivate) {
-        const sources = returnSourcesOf(methods);
-        if (sources.size > 0) {
-            const entries = [...sources]
-                .map((src) => {
-                    const key = deps.schemaName.get(src) ?? src;
-                    const cls = deps.embeddedTypeNames.get(src) ?? src;
-                    return `[${JSON.stringify(key)}, ${cls}]`;
+        const names = returnTargetNamesOf(methods);
+        if (names.size > 0) {
+            const entries = [...names]
+                .map((name) => {
+                    const cls = deps.embeddedTypeNames.get(name) ?? name;
+                    return `[${JSON.stringify(name)}, ${cls}]`;
                 })
                 .join(", ");
             meta["refs"] = raw(`new Map([${entries}])`);
@@ -144,7 +142,7 @@ export function emitServicesJs(services: readonly IRService[], deps: ServiceEmit
     // Value imports are only needed for the client `refs` Map (return schemas).
     const refSources = deps.includePrivate
         ? new Set<string>()
-        : new Set(visible.flatMap((s) => [...returnSourcesOf(visibleMethods(s, deps.includePrivate))]));
+        : new Set(visible.flatMap((s) => [...returnTargetNamesOf(visibleMethods(s, deps.includePrivate))]));
     const imports = buildModelImports(refSources, deps, false);
 
     const blocks = visible.map((s) => emitServiceClassJs(s, deps));
@@ -210,7 +208,7 @@ function emitServiceClientDts(svc: IRService, deps: ServiceEmitDeps): string {
 export function emitServicesDts(services: readonly IRService[], deps: ServiceEmitDeps): string {
     const visible = visibleServices(services, deps.includePrivate);
     const allMethods = visible.flatMap((s) => visibleMethods(s, deps.includePrivate));
-    const modelImports = buildModelImports(refSourcesOf(allMethods), deps, true);
+    const modelImports = buildModelImports(refTargetNamesOf(allMethods), deps, true);
 
     const lines: string[] = [];
     if (deps.includePrivate) {

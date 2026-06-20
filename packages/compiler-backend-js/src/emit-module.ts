@@ -23,7 +23,8 @@ export type ModuleEmitDeps = {
     includeDefaults: boolean;
     /** sourceName → bundle-relative module ref (e.g. "models/user/user"). */
     schemaModule: ReadonlyMap<string, string>;
-    /** sourceName → TypeScript type name (for embedded types in .d.ts). */
+    /** Reference/embedded/edge target `name` → emitted class symbol (`sourceName`).
+     *  Resolves a target's identity to the TS type / class binding to import. */
     embeddedTypeNames: ReadonlyMap<string, string>;
     /** Validator/formatter declarations keyed by name (for factory-call arg ordering). */
     validatorDecls: ReadonlyMap<string, IRValidatorDeclaration>;
@@ -84,7 +85,7 @@ function emitSchemaClassJs(schema: IRSchema, deps: ModuleEmitDeps): string {
     lines.push(`}`);
     lines.push("");
 
-    const refs = schemaRefClassNames(fields, deps.schemaModule);
+    const refs = schemaRefs(fields, deps.embeddedTypeNames);
     const schemaData = buildSchemaData(schema, {
         includePrivate: deps.includePrivate,
         includeIndexes: deps.includeIndexes,
@@ -171,9 +172,12 @@ function emitSchemaClassDts(schema: IRSchema, deps: ModuleEmitDeps): string {
     lines.push(`}`);
 
     if (isEdge && schema.edge !== undefined) {
+        // Edge endpoints are identities (`name`); the TS type is the class symbol.
+        const fromTs = deps.embeddedTypeNames.get(schema.edge.from) ?? schema.edge.from;
+        const toTs = deps.embeddedTypeNames.get(schema.edge.to) ?? schema.edge.to;
         lines.push("");
         lines.push(
-            `export declare const ${className}: typeof ${declName} & { readonly __edge?: { from: ${schema.edge.from}; to: ${schema.edge.to} } };`,
+            `export declare const ${className}: typeof ${declName} & { readonly __edge?: { from: ${fromTs}; to: ${toTs} } };`,
         );
         lines.push(`export type ${className} = InstanceType<typeof ${declName}>;`);
     }
@@ -204,21 +208,21 @@ function buildImports(moduleRef: string, schemas: readonly IRSchema[], deps: Mod
 
     const allFields: IRField[] = schemas.flatMap((s) => visibleFields(s, deps.includePrivate));
 
-    // Cross-module schema/embedded class refs.
-    for (const target of collectRefTargets(allFields)) {
-        const targetRef = deps.schemaModule.get(target);
-        if (targetRef === undefined || targetRef === moduleRef) continue;
-        add(relModuleSpecifier(moduleRef, targetRef), target);
-    }
+    // Cross-module schema/embedded class refs. Targets are identities (`name`);
+    // resolve to the emitted class symbol and its module.
+    const addRef = (targetName: string): void => {
+        const symbol = deps.embeddedTypeNames.get(targetName);
+        if (symbol === undefined) return;
+        const targetRef = deps.schemaModule.get(symbol);
+        if (targetRef === undefined || targetRef === moduleRef) return;
+        add(relModuleSpecifier(moduleRef, targetRef), symbol);
+    };
+    for (const target of collectRefTargets(allFields)) addRef(target);
     // Edges also need from/to node instance types in .d.ts.
     if (typeOnly) {
         for (const s of schemas) {
             if (s.edge === undefined) continue;
-            for (const node of [s.edge.from, s.edge.to]) {
-                const targetRef = deps.schemaModule.get(node);
-                if (targetRef === undefined || targetRef === moduleRef) continue;
-                add(relModuleSpecifier(moduleRef, targetRef), node);
-            }
+            for (const node of [s.edge.from, s.edge.to]) addRef(node);
         }
     }
 
@@ -241,9 +245,18 @@ function buildImports(moduleRef: string, schemas: readonly IRSchema[], deps: Mod
         .map(([spec, bindings]) => `${kw} { ${[...bindings].sort().join(", ")} } from "${spec}";`);
 }
 
-/** Embedded/reference class names referenced by a field list (for the `refs` Map). */
-function schemaRefClassNames(fields: IRField[], schemaModule: ReadonlyMap<string, string>): string[] {
-    return [...collectRefTargets(fields)].filter((t) => schemaModule.has(t));
+/**
+ * Embedded/reference targets referenced by a field list, as `{ name, symbol }`
+ * pairs for the live `refs` Map — keyed by the target's `name` (the runtime
+ * identity serialize/deserialize look up), valued by its emitted class symbol.
+ */
+function schemaRefs(
+    fields: IRField[],
+    embeddedTypeNames: ReadonlyMap<string, string>,
+): { name: string; symbol: string }[] {
+    return [...collectRefTargets(fields)]
+        .filter((t) => embeddedTypeNames.has(t))
+        .map((name) => ({ name, symbol: embeddedTypeNames.get(name)! }));
 }
 
 function collectRefTargets(fields: IRField[]): Set<string> {

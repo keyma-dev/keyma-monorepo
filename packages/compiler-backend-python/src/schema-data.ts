@@ -10,8 +10,9 @@ export type SchemaDataOptions = {
     /** Validator/formatter declarations keyed by name — for ordering factory-call args. */
     validatorDecls: ReadonlyMap<string, IRValidatorDeclaration>;
     formatterDecls: ReadonlyMap<string, IRFormatterDeclaration>;
-    /** Embedded/reference class names this schema needs as a live `refs` dict. */
-    refs: readonly string[];
+    /** Embedded/reference targets this schema needs as a live `refs` dict:
+     *  the target's `name` (lookup key) paired with its emitted Python class. */
+    refs: readonly { name: string; className: string }[];
     /** Name of the module-level applyDefaults function to reference, if any. */
     applyDefaultsRef?: string;
 };
@@ -33,7 +34,7 @@ export function buildSchemaData(schema: IRSchema, opts: SchemaDataOptions): Reco
     if (schema.visibility === "private") out["visibility"] = "private";
     if (schema.ephemeral) out["ephemeral"] = true;
     if (opts.refs.length > 0) {
-        const entries = opts.refs.map((c) => `"${c}": ${c}`).join(", ");
+        const entries = opts.refs.map((r) => `"${r.name}": ${r.className}`).join(", ");
         out["refs"] = raw(`{${entries}}`);
     }
     if (opts.applyDefaultsRef !== undefined) out["applyDefaults"] = raw(opts.applyDefaultsRef);

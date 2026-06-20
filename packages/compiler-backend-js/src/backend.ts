@@ -27,10 +27,7 @@ type SharedDeps = Pick<
     ModuleEmitDeps,
     "schemaModule" | "embeddedTypeNames" | "validatorDecls" | "formatterDecls" | "functionNames"
     | "validatorsModuleRef" | "formattersModuleRef" | "functionsModuleRef"
-> & {
-    /** sourceName → schema runtime name (used by service metadata for validation/refs keys). */
-    schemaName: ReadonlyMap<string, string>;
-};
+>;
 
 type Decls = {
     validators: readonly IRValidatorDeclaration[];
@@ -63,8 +60,9 @@ export async function emitJs(
 
     const shared: SharedDeps = {
         schemaModule,
-        embeddedTypeNames: new Map(ir.schemas.map((s) => [s.sourceName, s.sourceName])),
-        schemaName: new Map(ir.schemas.map((s) => [s.sourceName, s.name])),
+        // A reference/embedded/edge target is the schema's `name`; map it to the
+        // emitted class symbol (`sourceName`) for `.d.ts` types and `refs` values.
+        embeddedTypeNames: new Map(ir.schemas.map((s) => [s.name, s.sourceName])),
         validatorDecls: new Map(decls.validators.map((d) => [d.name, d])),
         formatterDecls: new Map(decls.formatters.map((d) => [d.name, d])),
         functionNames: new Set(decls.functions.map((d) => d.name)),
@@ -153,7 +151,6 @@ function emitBundle(
             includePrivate: opts.includePrivate,
             schemaModule: shared.schemaModule,
             embeddedTypeNames: shared.embeddedTypeNames,
-            schemaName: shared.schemaName,
         };
         files.push({ path: path.posix.join(bundleDir, "services.js"), content: emitServicesJs(services, serviceDeps) });
         files.push({ path: path.posix.join(bundleDir, "services.d.ts"), content: emitServicesDts(services, serviceDeps) });
