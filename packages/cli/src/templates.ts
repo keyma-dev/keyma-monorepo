@@ -83,6 +83,7 @@ const TSCONFIG_TEMPLATE = `{
         "strict": true,
         "experimentalDecorators": true,
         "skipLibCheck": true,
+        "noEmit": true,
         "outDir": "dist"
     },
     "include": ["src/**/*"]

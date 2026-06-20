@@ -6,6 +6,7 @@
         "strict": true,
         "experimentalDecorators": true,
         "skipLibCheck": true,
+        "noEmit": true,
         "outDir": "dist"
     },
     "include": ["src/**/*"]

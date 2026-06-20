@@ -556,7 +556,11 @@ export class KeymaServer {
             }
 
             if (type?.kind === "reference" && sub !== 1) {
-                const referenced = this.schemaMap.get(type.schema);
+                // A reference's `type.schema` is the target's sourceName in generated
+                // code (matching serialize/deserialize `refs` and edge endpoints);
+                // resolve by sourceName first, falling back to the storage name.
+                const referenced =
+                    this.findBySourceName(type.schema) ?? this.schemaMap.get(type.schema);
                 if (referenced !== undefined) {
                     const nestedProjection = this.buildAdapterProjection(
                         referenced,
