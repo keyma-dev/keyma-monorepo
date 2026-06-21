@@ -23,14 +23,13 @@ from keyma.runtime import (
     KeymaServer,
     apply_defaults,
     apply_materializers,
-    brand_schema,
     create_direct_transport,
     deserialize,
     format,
     serialize,
     validate,
 )
-from keyma.runtime.testing import InMemoryAdapter
+from keyma.runtime.testing import InMemoryAdapter, brand_schema
 
 
 # ── Generated-style validator factories (exact emit-validators.ts shape) ─────

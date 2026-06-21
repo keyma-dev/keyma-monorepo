@@ -9,8 +9,9 @@ from __future__ import annotations
 from datetime import datetime
 from typing import Any, Dict, List, Optional
 
-from keyma.runtime import brand_schema, deserialize
+from keyma.runtime import deserialize
 from keyma.runtime._iso import to_iso
+from keyma.runtime.testing import brand_schema
 
 
 # ─── Reusable mini-schemas ───────────────────────────────────────────────────

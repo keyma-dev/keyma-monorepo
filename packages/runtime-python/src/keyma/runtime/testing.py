@@ -5,6 +5,10 @@ the runtime's own test suite and by adapter/plugin packages. It supports the ful
 Mongo-style ``where`` operator set, field/embedded/populate projections, and native
 filtered counts. ``matches`` / ``matches_op`` are the standalone filter evaluators.
 
+``brand_schema`` / ``brand_service`` attach the generated metadata statics
+(``Class.schema`` / ``Class.service``) to a hand-written class — used by tests and
+codegen fallback, where generated classes instead carry the statics directly.
+
 Imported as ``from keyma.runtime.testing import InMemoryAdapter, matches, matches_op``.
 """
 
@@ -12,7 +16,7 @@ from __future__ import annotations
 
 from typing import Any, Dict, List, Optional
 
-from .types import SchemaMetadata
+from .types import SchemaMetadata, ServiceMetadata
 
 
 class InMemoryAdapter:
@@ -209,3 +213,22 @@ def matches_op(value: Any, op: str, arg: Any) -> bool:
     if op == "$lte":
         return value is not None and arg is not None and value <= arg
     return False
+
+
+# ── Metadata branding (tests / codegen fallback) ──────────────────────────────
+#
+# Attach the generated metadata statics (``Class.schema`` / ``Class.service``) to a
+# hand-written class. Generated classes carry these directly; test classes brand
+# them on after the fact.
+
+
+def brand_schema(cls: Any, schema: SchemaMetadata) -> Any:
+    """Brand a plain class with :class:`SchemaMetadata` (as ``cls.schema``)."""
+    cls.schema = schema
+    return cls
+
+
+def brand_service(cls: Any, service: ServiceMetadata) -> Any:
+    """Brand a plain class with :class:`ServiceMetadata` (as ``cls.service``)."""
+    cls.service = service
+    return cls

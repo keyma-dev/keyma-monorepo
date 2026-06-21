@@ -10,7 +10,7 @@ from __future__ import annotations
 
 from typing import Any, Dict, Optional
 
-from keyma.runtime import brand_schema
+from keyma.runtime.testing import brand_schema
 
 
 # ── Direct-ref validators / formatters ───────────────────────────────────────

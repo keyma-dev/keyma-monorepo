@@ -7,15 +7,15 @@ database adapter, and exposes the :class:`Keyma` query builder plus an in-proces
 transport.
 
 Beyond the standard library this package has zero dependencies. Testing utilities
-(``InMemoryAdapter``, ``matches``, ``matches_op``) live in :mod:`keyma.runtime.testing`.
+(``InMemoryAdapter``, ``matches``, ``matches_op``, ``brand_schema``, ``brand_service``)
+live in :mod:`keyma.runtime.testing`.
 """
 
 from __future__ import annotations
 
 __version__ = "0.1.0"
 
-# ── Schema metadata types & branding ──────────────────────────────────────────
-from .brand import brand_schema, brand_service
+# ── Schema metadata types ─────────────────────────────────────────────────────
 from .types import (
     EdgeMetadata,
     FieldMetadata,
@@ -98,9 +98,6 @@ __all__ = [
     "serialize",
     "deserialize",
     "apply_materializers",
-    # branding
-    "brand_schema",
-    "brand_service",
     # metadata types
     "SchemaMetadata",
     "FieldMetadata",

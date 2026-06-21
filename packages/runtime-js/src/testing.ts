@@ -7,6 +7,10 @@
  * supports the full Mongo-style `where` operator set, field/embedded/populate
  * projections, and native filtered counts.
  *
+ * `brandSchema`/`brandService` attach the generated metadata statics
+ * (`schema`/`service`) to a hand-written class — used by tests and codegen
+ * fallback, where generated bundles instead carry the statics directly.
+ *
  * Exposed via the package subpath `@keyma/runtime-js/testing`.
  */
 import type {
@@ -15,7 +19,12 @@ import type {
     AdapterProjection,
     AdapterFieldSpec,
 } from "./adapter.js";
-import type { SchemaMetadata } from "./types.js";
+import type {
+    SchemaMetadata,
+    SchemaClass,
+    ServiceMetadata,
+    ServiceClass,
+} from "./types.js";
 
 export class InMemoryAdapter implements KeymaDatabaseAdapter {
     public stores = new Map<string, Map<string, Record<string, unknown>>>();
@@ -237,4 +246,38 @@ export function matchesOp(value: unknown, op: string, arg: unknown): boolean {
         default:
             return false;
     }
+}
+
+// ── Metadata branding (tests / codegen fallback) ─────────────────────────────
+//
+// Helpers that attach the generated metadata statics (`schema`/`service`) to a
+// plain class. Generated bundles carry these statics directly; hand-written test
+// classes brand them on after the fact.
+
+/** Brand a plain class with SchemaMetadata at runtime (tests / codegen fallback). */
+export function brandSchema<T>(
+    cls: new (value?: Partial<T>) => T,
+    schema: SchemaMetadata,
+): SchemaClass<T> {
+    Object.defineProperty(cls, "schema", {
+        value: schema,
+        enumerable: false,
+        writable: false,
+        configurable: false,
+    });
+    return cls as SchemaClass<T>;
+}
+
+/** Brand a plain class with ServiceMetadata at runtime (tests / codegen fallback). */
+export function brandService<C extends Function>(
+    cls: C,
+    service: ServiceMetadata,
+): C & ServiceClass {
+    Object.defineProperty(cls, "service", {
+        value: service,
+        enumerable: false,
+        writable: false,
+        configurable: false,
+    });
+    return cls as C & ServiceClass;
 }

@@ -18,7 +18,6 @@ export type {
     ServiceProvider,
     RequestContext,
 } from "./types.js";
-export { brandSchema, brandService } from "./brand.js";
 
 export type {
     KeymaOperation,

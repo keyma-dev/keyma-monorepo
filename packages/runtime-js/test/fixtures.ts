@@ -1,7 +1,7 @@
 // Shared test fixtures: schema metadata + branded model classes.
 
 import type { SchemaMetadata, SchemaClass, ValidatorFn, FormatterFn } from "../src/types.js";
-import { brandSchema } from "../src/brand.js";
+import { brandSchema } from "../src/testing.js";
 
 // Direct-ref validators/formatters — the shape the compiler now emits into metadata.
 const required: ValidatorFn = (value, field) =>

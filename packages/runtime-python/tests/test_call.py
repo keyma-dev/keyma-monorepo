@@ -13,11 +13,9 @@ import pytest
 from keyma.runtime import (
     Keyma,
     KeymaServer,
-    brand_schema,
-    brand_service,
     create_direct_transport,
 )
-from keyma.runtime.testing import InMemoryAdapter
+from keyma.runtime.testing import InMemoryAdapter, brand_schema, brand_service
 
 from fixtures import ORGANIZATION_SCHEMA
 

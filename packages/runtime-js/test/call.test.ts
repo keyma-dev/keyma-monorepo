@@ -1,7 +1,7 @@
 import { describe, it } from "node:test";
 import assert from "node:assert/strict";
 import { KeymaServer } from "../src/server.js";
-import { InMemoryAdapter } from "../src/testing.js";
+import { InMemoryAdapter, brandSchema, brandService } from "../src/testing.js";
 import { createDirectTransport } from "../src/client.js";
 import { Keyma } from "../src/query.js";
 import {
@@ -10,7 +10,6 @@ import {
     type ValidatorFn,
     type ServiceClass,
 } from "../src/types.js";
-import { brandSchema, brandService } from "../src/brand.js";
 import type { KeymaLeafFailure, KeymaLeafSuccess, KeymaRequest } from "../src/protocol.js";
 import type { KeymaServerPlugin } from "../src/plugin.js";
 import { ORGANIZATION_SCHEMA } from "./fixtures.js";
