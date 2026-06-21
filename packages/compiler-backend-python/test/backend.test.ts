@@ -345,4 +345,47 @@ describe("emitPython — validators module", () => {
         );
         assert.ok(!content.includes(`return "expected string"`), "must not return a bare string");
     });
+
+    const CTX_VALIDATOR_IR: KeymaIR = {
+        irVersion: "1.0.0", compilerVersion: "0.1.0",
+        schemas: [
+            {
+                id: "schema:signup", name: "signup", sourceName: "Signup", visibility: "public",
+                fields: [
+                    { name: "password", type: { kind: "string" }, visibility: "public", readonly: false, required: true, validators: [], formatters: [], indexes: [], source: SRC },
+                    { name: "confirm", type: { kind: "string" }, visibility: "public", readonly: false, required: true, validators: [{ name: "matchesPassword", params: {} }], formatters: [], indexes: [], source: SRC },
+                ],
+                indexes: [], source: SRC,
+            },
+        ],
+        validatorDeclarations: [
+            {
+                name: "matchesPassword", factoryParams: [], inputType: { kind: "json" },
+                body: {
+                    params: [{ name: "value", role: "value" }, { name: "field", role: "field" }, { name: "ctx", role: "context" }],
+                    statements: [
+                        {
+                            kind: "return",
+                            value: {
+                                kind: "member",
+                                object: { kind: "member", object: { kind: "identifier", name: "ctx" }, member: "object" },
+                                member: "password",
+                            },
+                        },
+                    ],
+                },
+                source: SRC,
+            },
+        ],
+        diagnostics: [],
+    };
+
+    it("emits the (value, field, ctx) signature and lowers ctx.object.<field> to a dict lookup", async () => {
+        const target: PythonTargetConfig = { language: "python", outDir: "dist/python", library: true };
+        const result = await emitPython(CTX_VALIDATOR_IR, target, RESOLVED_CONFIG);
+        const content = fileContent(result.files, "dist/python/validators.py");
+        assert.ok(content.includes("def _v(value, field, ctx):"), "must emit the 3-arg (value, field, ctx) signature");
+        assert.ok(content.includes(`ctx.object.get("password")`), "ctx.object.<field> must lower to a Python dict lookup");
+        assert.ok(!content.includes("ctx.object.password"), "must not emit attribute access on the context dict");
+    });
 });

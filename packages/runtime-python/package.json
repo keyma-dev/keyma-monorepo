@@ -1,0 +1,11 @@
+{
+    "name": "@keyma/runtime-python",
+    "version": "0.1.0",
+    "private": true,
+    "description": "Python target runtime for Keyma (published to PyPI as `keyma-runtime`). This package.json is a thin wrapper that wires the Python build/test into the npm-workspace tooling; the real project is defined by pyproject.toml.",
+    "scripts": {
+        "build": "sh scripts/py-build.sh",
+        "test": "sh scripts/py-test.sh"
+    },
+    "license": "MIT"
+}

@@ -27,7 +27,16 @@ function serializeValue(
     if (type.kind === "dateTime" && value instanceof Date) {
         return value.toISOString();
     }
-    if (type.kind === "embedded" && value !== null && typeof value === "object") {
+    if (
+        type.kind === "embedded" &&
+        value !== null &&
+        typeof value === "object" &&
+        !Array.isArray(value) &&
+        !(value instanceof Date)
+    ) {
+        // Guard arrays/Dates (which are also `typeof === "object"`) so a type-violating
+        // value on an embedded field passes through verbatim rather than being iterated
+        // into `{}` — matching deserialize's embedded guard and the Python backend.
         const subClass = refs?.get(type.schema);
         if (subClass !== undefined) {
             return serialize(subClass.schema, value as Record<string, unknown>, opts);

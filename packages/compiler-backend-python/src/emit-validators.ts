@@ -21,6 +21,20 @@ function moduleHeader(hasFunctions: boolean): string[] {
     return lines;
 }
 
+/**
+ * Rewrite portable cross-field access `<ctx>.object.<field>` to a Python dict lookup
+ * `<ctx>.object.get("<field>")`. The Python runtime hands validators/formatters a
+ * context whose `.object` is the record **dict**, so generic member lowering
+ * (`ctx.object.field`) would be attribute access on a dict and fail at runtime.
+ * Mirrors how computed getters lower `self.X` to `value["X"]`. No-op when the inner
+ * function declares no context parameter.
+ */
+export function rewriteContextAccess(code: string, ctxParam: string | undefined): string {
+    if (ctxParam === undefined) return code;
+    const re = new RegExp(`\\b${ctxParam}\\.object\\.([A-Za-z_][A-Za-z0-9_]*)`, "g");
+    return code.replace(re, `${ctxParam}.object.get("$1")`);
+}
+
 /** Build the factory call that materializes a validator/formatter, e.g. `min_length(2)`. */
 export function buildFactoryCall(
     name: string,
@@ -43,6 +57,7 @@ function emitValidatorFactory(decl: IRValidatorDeclaration): string {
     const innerParamList = decl.body.params.map((p) => p.name).join(", ");
     const valueParam = decl.body.params.find((p) => p.role === "value")?.name ?? "_value";
     const fieldParam = decl.body.params.find((p) => p.role === "field")?.name ?? "None";
+    const ctxParam = decl.body.params.find((p) => p.role === "context")?.name;
 
     const lines = [`def ${factoryIdent(decl.name)}(${factoryParamList}):`, `    def _v(${innerParamList}):`];
     const guard = irTypeGuard(decl.inputType, valueParam);
@@ -51,7 +66,7 @@ function emitValidatorFactory(decl: IRValidatorDeclaration): string {
         lines.push(`        if not (${guard}):`);
         lines.push(`            return {"field": ${fieldParam}, "code": "type_error", "message": ${message}}`);
     }
-    for (const stmt of decl.body.statements) lines.push(stmtToPython(stmt, "        "));
+    for (const stmt of decl.body.statements) lines.push(rewriteContextAccess(stmtToPython(stmt, "        "), ctxParam));
     lines.push(`    return _v`, "");
     return lines.join("\n");
 }
@@ -66,6 +81,7 @@ function emitFormatterFactory(decl: IRFormatterDeclaration): string {
     const factoryParamList = decl.factoryParams.map((p) => p.name).join(", ");
     const innerParamList = decl.body.params.map((p) => p.name).join(", ");
     const valueParam = decl.body.params.find((p) => p.role === "value")?.name ?? "_value";
+    const ctxParam = decl.body.params.find((p) => p.role === "context")?.name;
 
     const lines = [`def ${factoryIdent(decl.name)}(${factoryParamList}):`, `    def _f(${innerParamList}):`];
     const guard = irTypeGuard(decl.inputType, valueParam);
@@ -74,7 +90,7 @@ function emitFormatterFactory(decl: IRFormatterDeclaration): string {
         lines.push(`        if not (${guard}):`);
         lines.push(`            raise TypeError(${JSON.stringify(msg)} + type(${valueParam}).__name__)`);
     }
-    for (const stmt of decl.body.statements) lines.push(stmtToPython(stmt, "        "));
+    for (const stmt of decl.body.statements) lines.push(rewriteContextAccess(stmtToPython(stmt, "        "), ctxParam));
     lines.push(`    return _f`, "");
     return lines.join("\n");
 }
