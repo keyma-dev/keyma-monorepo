@@ -65,6 +65,15 @@ resp = await q.request(
 
 Results are hydrated into model instances (via `deserialize`). The same document can mix CRUD leaves and graph traversals in one batch.
 
+In `where` filters and create/update `data`, a reference field accepts any of three forms — a bare id, an `{"id": ...}` dict, or a model instance — all collapsed to the stored bare id before the request is sent (matching `@keyma/runtime-js`):
+
+```python
+# equivalent — each collapses to the bare id on the wire
+Keyma.list(User, {"organization": "o1"})
+Keyma.list(User, {"organization": {"id": "o1"}})
+Keyma.create(User, {"name": "Al", "organization": Organization({"id": "o1"})})
+```
+
 ## Writing a database adapter
 
 A `KeymaDatabaseAdapter` implements seven required `async` methods — `ensure_schema`, `create`, `read`, `list`, `update`, `delete`, `count` — and may add the optional `traverse`, `connect`, `close`, and a `capabilities` descriptor. The server duck-types the optional members.

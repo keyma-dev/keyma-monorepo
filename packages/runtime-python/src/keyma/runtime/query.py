@@ -17,6 +17,7 @@ from typing import Any, Awaitable, Callable, Dict, List, Optional
 
 from .deserialize import deserialize
 from .protocol import KeymaLeafResult, KeymaOperation, KeymaRequest, Transport
+from .reference import normalize_reference_ids
 
 
 # ── Input placeholders ──────────────────────────────────────────────────────
@@ -229,12 +230,18 @@ def _build_operation(leaf: _Leaf, leaf_options: Dict[str, Any], leaf_inputs: Dic
             "args": _substitute(leaf.args or {}, leaf_inputs),
         }
 
-    schema_name = leaf.schema_class.schema["name"]
+    schema = leaf.schema_class.schema
+    schema_name = schema["name"]
+
+    # Resolve Input placeholders, then collapse any reference field value
+    # ({"id": ...} / model instance) to its bare id before it reaches the wire.
+    def build_clause(template: Dict[str, Any]) -> Dict[str, Any]:
+        return normalize_reference_ids(_substitute(template, leaf_inputs), schema)
 
     if leaf.op == "list":
         op: Dict[str, Any] = {"op": "list", "schema": schema_name}
         if leaf.where is not None:
-            op["where"] = _substitute(leaf.where, leaf_inputs)
+            op["where"] = build_clause(leaf.where)
         if leaf.project is not None:
             op["project"] = leaf.project
         options = _options_from(leaf_options)
@@ -243,13 +250,13 @@ def _build_operation(leaf: _Leaf, leaf_options: Dict[str, Any], leaf_inputs: Dic
         return op
 
     if leaf.op == "read":
-        op = {"op": "read", "schema": schema_name, "where": _substitute(leaf.where or {}, leaf_inputs)}
+        op = {"op": "read", "schema": schema_name, "where": build_clause(leaf.where or {})}
         if leaf.project is not None:
             op["project"] = leaf.project
         return op
 
     if leaf.op == "create":
-        op = {"op": "create", "schema": schema_name, "data": _substitute(leaf.data or {}, leaf_inputs)}
+        op = {"op": "create", "schema": schema_name, "data": build_clause(leaf.data or {})}
         if leaf.project is not None:
             op["project"] = leaf.project
         return op
@@ -258,15 +265,15 @@ def _build_operation(leaf: _Leaf, leaf_options: Dict[str, Any], leaf_inputs: Dic
         op = {
             "op": "update",
             "schema": schema_name,
-            "where": _substitute(leaf.where or {}, leaf_inputs),
-            "data": _substitute(leaf.data or {}, leaf_inputs),
+            "where": build_clause(leaf.where or {}),
+            "data": build_clause(leaf.data or {}),
         }
         if leaf.project is not None:
             op["project"] = leaf.project
         return op
 
     if leaf.op == "delete":
-        return {"op": "delete", "schema": schema_name, "where": _substitute(leaf.where or {}, leaf_inputs)}
+        return {"op": "delete", "schema": schema_name, "where": build_clause(leaf.where or {})}
 
     if leaf.op == "traverse":
         spec = _substitute_spec(leaf.spec, leaf_inputs)
@@ -281,7 +288,7 @@ def _build_operation(leaf: _Leaf, leaf_options: Dict[str, Any], leaf_inputs: Dic
     if leaf.op == "count":
         op = {"op": "count", "schema": schema_name}
         if leaf.where is not None:
-            op["where"] = _substitute(leaf.where, leaf_inputs)
+            op["where"] = build_clause(leaf.where)
         return op
 
     raise ValueError(f"Unknown leaf op: {leaf.op}")

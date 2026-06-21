@@ -273,3 +273,80 @@ async def test_hydrates_nested_embedded_reference_and_datetime_fields_when_refs_
         assert isinstance(u.organization, Organization)
         assert isinstance(u.address, Address)
         assert isinstance(u.createdAt, datetime)
+
+
+# ── reference id normalization (through the builder) ──────────────────────────
+
+
+def _capturing():
+    captured = []
+
+    async def transport(req):
+        captured.append(req)
+        return {"results": {}}
+
+    return captured, transport
+
+
+async def test_list_where_bare_reference_id_passes_through():
+    captured, transport = _capturing()
+    await Keyma.query({"u": Keyma.list(User, {"organization": "o1"})}).request(
+        {}, inputs={}, transport=transport
+    )
+    assert captured[0]["operations"]["u"]["where"] == {"organization": "o1"}
+
+
+async def test_list_where_id_dict_collapses_to_bare_id():
+    captured, transport = _capturing()
+    await Keyma.query({"u": Keyma.list(User, {"organization": {"id": "o1"}})}).request(
+        {}, inputs={}, transport=transport
+    )
+    assert captured[0]["operations"]["u"]["where"] == {"organization": "o1"}
+
+
+async def test_create_data_id_dict_collapses_other_fields_untouched():
+    captured, transport = _capturing()
+    await Keyma.mutation(
+        {"c": Keyma.create(User, {"email": "a@b.com", "name": "Al", "organization": {"id": "o1"}})}
+    ).request({}, inputs={}, transport=transport)
+    assert captured[0]["operations"]["c"]["data"] == {
+        "email": "a@b.com",
+        "name": "Al",
+        "organization": "o1",
+    }
+
+
+async def test_update_data_full_instance_collapses_to_bare_id():
+    captured, transport = _capturing()
+    org = Organization({"id": "o1", "name": "Acme", "tier": "pro"})
+    await Keyma.mutation(
+        {"u": Keyma.update(User, {"id": "u1"}, {"organization": org})}
+    ).request({}, inputs={}, transport=transport)
+    op = captured[0]["operations"]["u"]
+    assert op["where"] == {"id": "u1"}
+    assert op["data"]["organization"] == "o1"
+
+
+async def test_list_where_query_operators_with_bare_ids_preserved():
+    captured, transport = _capturing()
+    await Keyma.query({"u": Keyma.list(User, {"organization": {"$in": ["o1", "o2"]}})}).request(
+        {}, inputs={}, transport=transport
+    )
+    assert captured[0]["operations"]["u"]["where"] == {"organization": {"$in": ["o1", "o2"]}}
+
+
+async def test_normalization_runs_after_input_substitution():
+    captured, transport = _capturing()
+    await Keyma.query({"u": Keyma.read(User, {"organization": Keyma.input("org")})}).request(
+        {}, inputs={"u": {"org": {"id": "o1"}}}, transport=transport
+    )
+    assert captured[0]["operations"]["u"]["where"] == {"organization": "o1"}
+
+
+async def test_embedded_fields_are_not_collapsed():
+    captured, transport = _capturing()
+    address = {"line1": "1 Main", "city": "Springfield", "postalCode": "12345"}
+    await Keyma.mutation(
+        {"c": Keyma.create(User, {"email": "a@b.com", "name": "Al", "address": address})}
+    ).request({}, inputs={}, transport=transport)
+    assert captured[0]["operations"]["c"]["data"]["address"] == address

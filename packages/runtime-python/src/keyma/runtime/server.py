@@ -17,6 +17,7 @@ from typing import Any, Dict, List, Optional, Sequence
 from .defaults import apply_defaults
 from .errors import KeymaError, KeymaRuntimeError
 from .format import format as _format
+from .reference import normalize_reference_ids
 from .types import FieldType, RequestContext, SchemaMetadata
 from .validate import validate
 
@@ -60,18 +61,6 @@ def _collect_edge_names(spec: Dict[str, Any]) -> "set[str]":
 
 def _is_plain_record(v: Any) -> bool:
     return isinstance(v, dict) and not ("nodes" in v and "edges" in v)
-
-
-def _extract_edge_endpoint_ids(schema: SchemaMetadata, data: Dict[str, Any]) -> Dict[str, Any]:
-    """Replace edge endpoint node objects with their ``id`` for the adapter."""
-    edge = schema.get("edge")
-    if edge is None:
-        return data
-    for field_name in (edge["fromField"], edge["toField"]):
-        v = data.get(field_name)
-        if v is not None and isinstance(v, dict) and "id" in v:
-            data[field_name] = v["id"]
-    return data
 
 
 def _with_id_field(projection: Dict[str, Any]) -> Dict[str, Any]:
@@ -332,7 +321,7 @@ class KeymaServer:
     async def _handle_create(
         self, schema: SchemaMetadata, op: Dict[str, Any], context: RequestContext
     ) -> Dict[str, Any]:
-        data = _extract_edge_endpoint_ids(schema, dict(op["data"]))
+        data = normalize_reference_ids(op["data"], schema)
         apply_defaults(schema, data)
         await _format(schema, data, "save")
         writable_schema = {**schema, "fields": [f for f in schema["fields"] if f["name"] != "id"]}
@@ -349,7 +338,7 @@ class KeymaServer:
     async def _handle_update(
         self, schema: SchemaMetadata, op: Dict[str, Any], context: RequestContext
     ) -> Dict[str, Any]:
-        data = _extract_edge_endpoint_ids(schema, dict(op["data"]))
+        data = normalize_reference_ids(op["data"], schema)
         await _format(schema, data, "save")
         # A partial update only validates the fields actually supplied.
         update_schema = {**schema, "fields": [f for f in schema["fields"] if f["name"] in data]}
