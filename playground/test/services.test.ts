@@ -101,7 +101,7 @@ describe("services — public AccountService via Keyma.call", () => {
         if (!resp.results.s.ok) {
             assert.equal(resp.results.s.code, "VALIDATION_FAILED");
             assert.ok(
-                resp.results.s.errors.some(
+                resp.results.s.errors?.some(
                     (e: { code: string }) => e.code === "password_mismatch",
                 ),
                 "confirmPassword mismatch surfaces password_mismatch",

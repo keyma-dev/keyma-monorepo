@@ -1,4 +1,5 @@
 import type { SchemaClass, RecordOf, ServiceClass } from "./types.js";
+import { normalizeReferenceIds } from "./reference.js";
 import type {
     KeymaOperation,
     KeymaRequest,
@@ -51,6 +52,32 @@ export type QueryOp<T> = {
 
 type Primitive = string | number | boolean | bigint | symbol | null | undefined;
 
+// ── Reference-field detection (type level) ──────────────────────────────────
+//
+// `Reference<T>` is erased to the bare target instance type in `RecordOf<C>`
+// (the DSL aliases `Reference<T> = T`), so no marker survives. We recover it
+// structurally: a reference target always carries a scalar `id`, while embedded
+// value-objects do not. Tuple-wrapping (`[X] extends [Y]`) stops a union like
+// `Author | null` from distributing into `boolean`; `NonNullable` strips the
+// `| null | undefined` that optional (exactOptionalPropertyTypes) / `Nullable`
+// fields add before the structural probe.
+// NOTE: relies on the convention that embedded value-objects have no `id` — an
+// embedded type that gains one would be misread as a reference here.
+type IsReferenceLike<V> =
+    [NonNullable<V>] extends [never] ? false
+    : [NonNullable<V>] extends [Primitive] ? false
+    : [NonNullable<V>] extends [Date] ? false
+    : [NonNullable<V>] extends [readonly unknown[]] ? false
+    : [NonNullable<V>] extends [(...args: never[]) => unknown] ? false
+    : [unknown] extends [NonNullable<V>] ? false // refuse `unknown`/`any`
+    : [NonNullable<V>] extends [{ id: infer Id }]
+        ? ([Id] extends [Primitive] ? true : false)
+        : false;
+
+/** The id type of a reference target (e.g. `Author` → its `id` type), with
+ *  null/undefined stripped. Assumes `IsReferenceLike<V>` is `true`. */
+type RefId<V> = NonNullable<V> extends { id: infer Id } ? Id : never;
+
 export type Projection<T> = T extends Primitive
     ? never
     : T extends (infer U)[]
@@ -83,17 +110,34 @@ export type Projected<T, P> = P extends 1
 
 // ── Where / data templates ──────────────────────────────────────────────────
 
+// Accepted value for a single field. Reference fields additionally accept the
+// bare id and an `{ id }` object (collapsed to the id at request time); the full
+// instance is kept as a backwards-compatible escape hatch.
+type WhereValue<V> = IsReferenceLike<V> extends true
+    ? RefId<V> | { id: RefId<V> } | NonNullable<V> | QueryOp<RefId<V>> | Input<string>
+    : V | QueryOp<V> | Input<string>;
+
+type DataValue<V> = IsReferenceLike<V> extends true
+    ? RefId<V> | { id: RefId<V> } | NonNullable<V> | Input<string>
+    : V | Input<string>;
+
+// The value a placeholder for K must be filled with — superset of the where- and
+// data-accepted forms, minus `Input` (placeholders can't nest).
+type InputValue<V> = IsReferenceLike<V> extends true
+    ? RefId<V> | { id: RefId<V> } | NonNullable<V> | QueryOp<RefId<V>>
+    : V | QueryOp<V>;
+
 export type WhereArg<T> = {
-    [K in keyof T]?: T[K] | QueryOp<T[K]> | Input<string>;
+    [K in keyof T]?: WhereValue<T[K]>;
 };
 
 export type DataArg<T> = {
-    [K in keyof T]?: T[K] | Input<string>;
+    [K in keyof T]?: DataValue<T[K]>;
 };
 
 type InputsIn<T, X> = {
     [K in keyof X as X[K] extends Input<infer N> ? N : never]: K extends keyof T
-        ? T[K] | QueryOp<T[K]>
+        ? InputValue<T[K]>
         : never;
 };
 
@@ -321,7 +365,13 @@ function buildOperation(
         };
     }
 
-    const schemaName = leaf.schemaClass!.schema.name;
+    const schema = leaf.schemaClass!.schema;
+    const schemaName = schema.name;
+
+    // Resolve `Input<>` placeholders, then collapse any reference field value
+    // (`{ id }` / full instance) to its bare id before it reaches the wire.
+    const buildClause = (template: Record<string, unknown>): Record<string, unknown> =>
+        normalizeReferenceIds(substitute(template, leafInputs), schema);
 
     switch (leaf.op) {
         case "list": {
@@ -331,7 +381,7 @@ function buildOperation(
                 sort?: Record<string, 1 | -1>;
             };
             const op: KeymaOperation = { op: "list", schema: schemaName };
-            if (leaf.where !== undefined) op.where = substitute(leaf.where, leafInputs);
+            if (leaf.where !== undefined) op.where = buildClause(leaf.where);
             if (leaf.project !== undefined) op.project = leaf.project;
             const hasOpts = skip !== undefined || limit !== undefined || sort !== undefined;
             if (hasOpts) {
@@ -347,7 +397,7 @@ function buildOperation(
             const op: KeymaOperation = {
                 op: "read",
                 schema: schemaName,
-                where: substitute(leaf.where ?? {}, leafInputs),
+                where: buildClause(leaf.where ?? {}),
             };
             if (leaf.project !== undefined) op.project = leaf.project;
             return op;
@@ -356,7 +406,7 @@ function buildOperation(
             const op: KeymaOperation = {
                 op: "create",
                 schema: schemaName,
-                data: substitute(leaf.data ?? {}, leafInputs),
+                data: buildClause(leaf.data ?? {}),
             };
             if (leaf.project !== undefined) op.project = leaf.project;
             return op;
@@ -365,8 +415,8 @@ function buildOperation(
             const op: KeymaOperation = {
                 op: "update",
                 schema: schemaName,
-                where: substitute(leaf.where ?? {}, leafInputs),
-                data: substitute(leaf.data ?? {}, leafInputs),
+                where: buildClause(leaf.where ?? {}),
+                data: buildClause(leaf.data ?? {}),
             };
             if (leaf.project !== undefined) op.project = leaf.project;
             return op;
@@ -375,7 +425,7 @@ function buildOperation(
             return {
                 op: "delete",
                 schema: schemaName,
-                where: substitute(leaf.where ?? {}, leafInputs),
+                where: buildClause(leaf.where ?? {}),
             };
         }
         case "traverse": {
@@ -398,7 +448,7 @@ function buildOperation(
         }
         case "count": {
             const op: KeymaOperation = { op: "count", schema: schemaName };
-            if (leaf.where !== undefined) op.where = substitute(leaf.where, leafInputs);
+            if (leaf.where !== undefined) op.where = buildClause(leaf.where);
             return op;
         }
     }

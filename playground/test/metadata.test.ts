@@ -30,7 +30,7 @@ type Field = {
     indexes?: Record<string, unknown>[];
     computed?: boolean;
     ephemeral?: boolean;
-    deprecated?: string;
+    deprecated?: string | boolean;
     visibility?: string;
     form?: Record<string, unknown>;
 };
@@ -163,9 +163,9 @@ describe("metadata — edges", () => {
     it("Follows is a directed edge with the right endpoints", () => {
         const edge = (Follows.schema as { edge: Record<string, unknown> }).edge;
         assert.equal(edge.directed, true);
-        assert.equal(edge.from, "Author");
+        assert.equal(edge.from, "author");
         assert.equal(edge.fromField, "follower");
-        assert.equal(edge.to, "Author");
+        assert.equal(edge.to, "author");
         assert.equal(edge.toField, "following");
         assert.equal(edge.label, "FOLLOWS");
     });
@@ -173,9 +173,9 @@ describe("metadata — edges", () => {
     it("Related is an undirected edge with the right endpoints", () => {
         const edge = (Related.schema as { edge: Record<string, unknown> }).edge;
         assert.equal(edge.directed, false);
-        assert.equal(edge.from, "Post");
+        assert.equal(edge.from, "post");
         assert.equal(edge.fromField, "post");
-        assert.equal(edge.to, "Tag");
+        assert.equal(edge.to, "tag");
         assert.equal(edge.toField, "tag");
         assert.equal(edge.label, "RELATED");
     });
@@ -204,8 +204,8 @@ describe("metadata — services", () => {
 
 describe("metadata — client vs server visibility", () => {
     it("client bundle omits private schemas/services", () => {
-        assert.equal(client.Credentials, undefined, "Credentials not exported to client");
-        assert.equal(client.AdminService, undefined, "AdminService not exported to client");
+        assert.equal((client as any)["Credentials"], undefined, "Credentials not exported to client");
+        assert.equal((client as any)["AdminService"], undefined, "AdminService not exported to client");
         // sanity: public ones are present
         assert.equal(typeof client.Author, "function");
         assert.equal(typeof client.AccountService, "function");

@@ -34,6 +34,7 @@ import {
     type RequestContext,
 } from "./plugin.js";
 import { KeymaError, KeymaRuntimeError } from "./errors.js";
+import { normalizeReferenceIds } from "./reference.js";
 
 type ServerOptions = {
     schemas: SchemaMetadata[];
@@ -317,7 +318,7 @@ export class KeymaServer {
         op: Extract<KeymaOperation, { op: "create" }>,
         context: RequestContext,
     ): Promise<KeymaLeafResult> {
-        let data = extractEdgeEndpointIds(schema, { ...op.data });
+        let data = normalizeReferenceIds(op.data, schema);
         applyDefaults(schema, data);
         await format(schema, data, "save");
         const writableSchema: SchemaMetadata = {
@@ -341,7 +342,7 @@ export class KeymaServer {
         op: Extract<KeymaOperation, { op: "update" }>,
         context: RequestContext,
     ): Promise<KeymaLeafResult> {
-        let data = extractEdgeEndpointIds(schema, { ...op.data });
+        let data = normalizeReferenceIds(op.data, schema);
         await format(schema, data, "save");
         // A partial update only validates the fields actually supplied — absent fields
         // must not trip `required`-style validators (they keep their stored value).
@@ -576,24 +577,6 @@ export class KeymaServer {
         if (Object.keys(populate).length > 0) result.populate = populate;
         return result;
     }
-}
-
-/** Replace edge endpoint node objects with their `id` for the adapter. Edge
- *  create/update input carries `{ from: nodeObj, to: nodeObj }`; adapters expect
- *  bare ids. No-op for non-edge schemas or endpoints already given as ids. */
-function extractEdgeEndpointIds(
-    schema: SchemaMetadata,
-    data: Record<string, unknown>,
-): Record<string, unknown> {
-    const edge = schema.edge;
-    if (edge === undefined) return data;
-    for (const fieldName of [edge.fromField, edge.toField]) {
-        const v = data[fieldName];
-        if (v !== null && typeof v === "object" && !Array.isArray(v) && "id" in v) {
-            data[fieldName] = (v as { id: unknown }).id;
-        }
-    }
-    return data;
 }
 
 /** Ensure a populate sub-projection includes the `id` field so the resolved

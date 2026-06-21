@@ -260,3 +260,102 @@ describe("Keyma.query / Keyma.mutation — request substitution", () => {
         }
     });
 });
+
+describe("Keyma — reference id normalization (through the builder)", () => {
+    function capturing() {
+        const captured: unknown[] = [];
+        const transport = async (req: unknown) => {
+            captured.push(req);
+            return { results: {} };
+        };
+        return { captured, transport };
+    }
+    function wireOps(captured: unknown[]): Record<string, Record<string, unknown>> {
+        return (captured[0] as { operations: Record<string, Record<string, unknown>> }).operations;
+    }
+
+    it("list where: a bare reference id passes through", async () => {
+        const { captured, transport } = capturing();
+        await Keyma.query({ u: Keyma.list(User, { organization: "o1" }) }).request(
+            {},
+            { inputs: {}, transport },
+        );
+        assert.deepEqual(wireOps(captured)["u"]!["where"], { organization: "o1" });
+    });
+
+    it("list where: an { id } reference object collapses to the bare id", async () => {
+        const { captured, transport } = capturing();
+        await Keyma.query({ u: Keyma.list(User, { organization: { id: "o1" } }) }).request(
+            {},
+            { inputs: {}, transport },
+        );
+        assert.deepEqual(wireOps(captured)["u"]!["where"], { organization: "o1" });
+    });
+
+    it("create data: an { id } reference collapses; other fields untouched", async () => {
+        const { captured, transport } = capturing();
+        await Keyma.mutation({
+            c: Keyma.create(User, { email: "a@b.com", name: "Al", organization: { id: "o1" } }),
+        }).request({}, { inputs: {}, transport });
+        assert.deepEqual(wireOps(captured)["c"]!["data"], {
+            email: "a@b.com",
+            name: "Al",
+            organization: "o1",
+        });
+    });
+
+    it("update data: a full instance collapses to its bare id", async () => {
+        const { captured, transport } = capturing();
+        await Keyma.mutation({
+            u: Keyma.update(
+                User,
+                { id: "u1" },
+                { organization: new Organization({ id: "o1", name: "Acme", tier: "pro" }) },
+            ),
+        }).request({}, { inputs: {}, transport });
+        const op = wireOps(captured)["u"]!;
+        assert.deepEqual(op["where"], { id: "u1" });
+        assert.equal((op["data"] as Record<string, unknown>)["organization"], "o1");
+    });
+
+    it("list where: query operators with bare ids are preserved", async () => {
+        const { captured, transport } = capturing();
+        await Keyma.query({
+            u: Keyma.list(User, { organization: { $in: ["o1", "o2"] } }),
+        }).request({}, { inputs: {}, transport });
+        assert.deepEqual(wireOps(captured)["u"]!["where"], {
+            organization: { $in: ["o1", "o2"] },
+        });
+    });
+
+    it("normalization runs after Input substitution (placeholder → { id } collapses)", async () => {
+        const { captured, transport } = capturing();
+        await Keyma.query({
+            u: Keyma.read(User, { organization: Keyma.input("org") }),
+        }).request({}, { inputs: { u: { org: { id: "o1" } } }, transport });
+        assert.deepEqual(wireOps(captured)["u"]!["where"], { organization: "o1" });
+    });
+
+    it("embedded fields are not collapsed", async () => {
+        const { captured, transport } = capturing();
+        const address = { line1: "1 Main", city: "Springfield", postalCode: "12345" };
+        await Keyma.mutation({
+            c: Keyma.create(User, { email: "a@b.com", name: "Al", address }),
+        }).request({}, { inputs: {}, transport });
+        assert.deepEqual(
+            (wireOps(captured)["c"]!["data"] as Record<string, unknown>)["address"],
+            address,
+        );
+    });
+});
+
+// Type-level checks — never executed; `tsc` verifies them at build time.
+function _referenceArgTypeChecks(): void {
+    Keyma.list(User, { organization: "o1" });
+    Keyma.list(User, { organization: { id: "o1" } });
+    Keyma.create(User, { organization: "o1" });
+    Keyma.create(User, { organization: { id: "o1" } });
+    // @ts-expect-error — `address` is embedded (no id); a bare string is not assignable to AddressRecord
+    Keyma.create(User, { address: "oops" });
+}
+void _referenceArgTypeChecks;

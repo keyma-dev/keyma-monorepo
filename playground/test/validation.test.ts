@@ -51,7 +51,7 @@ function assertValidationError(
 async function create(Cls: unknown, data: Record<string, unknown>) {
     const { transport } = makeHarness();
     const resp = await Keyma.mutation({
-        x: Keyma.create(Cls as never, data),
+        x: Keyma.create(Cls as any, data),
     }).request({}, { inputs: {}, transport });
     return resp.results.x;
 }

@@ -154,18 +154,18 @@ describe("edges — create with node objects, read populates endpoints", () => {
 
     it("edge metadata is emitted exactly", () => {
         assert.deepEqual(Follows.schema.edge, {
-            from: "Author",
+            from: "author",
             fromField: "follower",
-            to: "Author",
+            to: "author",
             toField: "following",
             label: "FOLLOWS",
             directed: true,
         });
         assert.equal(Related.schema.edge?.directed, false);
         assert.deepEqual(Related.schema.edge, {
-            from: "Post",
+            from: "post",
             fromField: "post",
-            to: "Tag",
+            to: "tag",
             toField: "tag",
             label: "RELATED",
             directed: false,

@@ -5,6 +5,7 @@
         "moduleResolution": "NodeNext",
         "strict": true,
         "experimentalDecorators": true,
+        "allowImportingTsExtensions": true,
         "skipLibCheck": true,
         "noEmit": true,
         "outDir": "dist",
@@ -12,5 +13,5 @@
             "node"
         ]
     },
-    "include": ["src/**/*"]
+    "include": ["src/**/*", "test/**/*"],
 }
