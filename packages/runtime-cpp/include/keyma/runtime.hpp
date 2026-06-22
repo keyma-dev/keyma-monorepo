@@ -230,6 +230,18 @@ struct IndexMeta {
     bool unique = false;
 };
 
+// Edge metadata for a schema that models a graph edge. Endpoints reference node
+// schemas by their `name`. Consumed by the server's traverse handler and the
+// edge-endpoint branch of the projection builder.
+struct EdgeMeta {
+    std::string_view from;
+    std::string_view from_field;
+    std::string_view to;
+    std::string_view to_field;
+    std::string_view label;
+    bool directed = false;
+};
+
 struct FieldMeta {
     std::string_view name;
     TypeTag type;
@@ -238,7 +250,16 @@ struct FieldMeta {
     bool readonly = false;
     bool computed = false;
     bool indexed = false;
+    bool ephemeral = false;
     Visibility visibility = Visibility::Public;
+    // When `type == TypeTag::Array`, `element` is the element's TypeTag. For a
+    // Reference/Embedded field (or an array thereof), `target` is the target schema
+    // `name`. These let the server's projection builder, serialize, and reference
+    // normalization recover the type structure a nested FieldType tree would carry —
+    // the flat `type` tag alone cannot. Defaulted so existing generated FieldMeta
+    // (designated initializers) keep compiling unchanged.
+    TypeTag element = TypeTag::String;
+    std::string_view target{};
     std::span<const ValidatorFn> validators{};
     std::span<const PhasedFormatter> formatters{};
 };
@@ -252,6 +273,8 @@ struct SchemaMeta {
     std::span<const IndexMeta> indexes{};
     // refs: target schema `name` → accessor for the target's metadata.
     std::span<const std::pair<std::string_view, const SchemaMeta& (*)()>> refs{};
+    // Set only for schemas that model a graph edge; null otherwise.
+    const EdgeMeta* edge = nullptr;
     void (*apply_defaults)(Value&, const Value::allocator_type&) = nullptr;
 };
 

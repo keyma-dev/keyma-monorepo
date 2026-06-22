@@ -1,7 +1,7 @@
 {
     "name": "@keyma/runtime-cpp",
     "version": "0.1.0",
-    "description": "C++23 header-only runtime consumed by Keyma-generated C++ models. Ships a single include/keyma/runtime.hpp (the source of truth) with keyma::Value, schema metadata, intrinsics, and the from_value<T>/to_value<T> + value_traits<T> serialization templates.",
+    "description": "C++23 header-only runtime consumed by Keyma-generated C++ models. Ships include/keyma/runtime.hpp (keyma::Value, schema metadata, intrinsics, from_value<T>/to_value<T> + value_traits<T>) plus the server/client consumer layer (json, errors, protocol, adapter/plugin/service interfaces, validate/format/defaults/serialize, KeymaServer, the Keyma query builder) templated on a bring-your-own-scheduler async policy.",
     "files": [
         "include",
         "LICENSE",
