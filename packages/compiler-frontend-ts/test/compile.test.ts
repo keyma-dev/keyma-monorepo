@@ -428,6 +428,71 @@ describe("KEYMA031 — public schema leaks private schema", () => {
     });
 });
 
+describe("KEYMA037 — public schema has only private fields", () => {
+    it("emits KEYMA037 when every field of a public schema is private", () => {
+        const result = cv({
+            "schema.ts": `
+                import { Schema } from "@keyma/dsl";
+                @Schema({ name: "token" }) class Token {
+                    declare private value: string;
+                    declare private refreshedAt: string;
+                }
+            `,
+        });
+        assert.ok(hasError(result, CODES.KEYMA037), `Expected KEYMA037. Got: ${JSON.stringify(result.diagnostics)}`);
+    });
+
+    it("does not emit when at least one field is public", () => {
+        const result = cv({
+            "schema.ts": `
+                import { Schema } from "@keyma/dsl";
+                import type { ID } from "@keyma/dsl";
+                @Schema({ name: "user" }) class User {
+                    declare id: ID;
+                    declare name: string;
+                    declare private passwordHash: string;
+                }
+            `,
+        });
+        assert.deepEqual(errorCodes(result), [], `Unexpected errors: ${JSON.stringify(result.diagnostics)}`);
+    });
+
+    it("does not emit for a private schema whose fields are all private", () => {
+        const result = cv({
+            "schema.ts": `
+                import { Schema } from "@keyma/dsl";
+                @Schema({ name: "token", private: true }) class Token {
+                    declare private value: string;
+                }
+            `,
+        });
+        assert.ok(!hasError(result, CODES.KEYMA037), `Unexpected KEYMA037. Got: ${JSON.stringify(result.diagnostics)}`);
+    });
+
+    it("treats a public computed getter as public surface (no KEYMA037)", () => {
+        const result = cv({
+            "schema.ts": `
+                import { Schema, Computed } from "@keyma/dsl";
+                @Schema({ name: "token" }) class Token {
+                    declare private value: string;
+                    @Computed() get label(): string { return this.value; }
+                }
+            `,
+        });
+        assert.ok(!hasError(result, CODES.KEYMA037), `Unexpected KEYMA037. Got: ${JSON.stringify(result.diagnostics)}`);
+    });
+
+    it("exempts a fieldless public schema", () => {
+        const result = cv({
+            "schema.ts": `
+                import { Schema } from "@keyma/dsl";
+                @Schema({ name: "marker" }) class Marker {}
+            `,
+        });
+        assert.ok(!hasError(result, CODES.KEYMA037), `Unexpected KEYMA037. Got: ${JSON.stringify(result.diagnostics)}`);
+    });
+});
+
 describe("KEYMA035 — persisted schema references ephemeral schema", () => {
     it("emits KEYMA035 when a persisted schema holds a Reference to an ephemeral schema", () => {
         const result = cv({

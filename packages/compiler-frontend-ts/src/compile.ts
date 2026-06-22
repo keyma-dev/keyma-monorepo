@@ -22,6 +22,7 @@ import {
     KEYMA031,
     KEYMA035,
     KEYMA036,
+    KEYMA037,
     KEYMA060,
     KEYMA064,
     KEYMA070,
@@ -149,6 +150,9 @@ function compileProgram(program: ts.Program, config: FrontendConfig): CompileRes
 
     // Post-processing: public schema leaks private schema
     checkVisibilityLeaks(schemas, diagnostics);
+
+    // Post-processing: a public schema must expose at least one public field.
+    checkPublicSchemaSurface(schemas, diagnostics);
 
     // Post-processing: persisted schemas must not reference ephemeral schemas;
     // indexes on ephemeral schemas have no effect.
@@ -377,6 +381,29 @@ function checkVisibilityLeaks(schemas: import("@keyma/ir").IRSchema[], diagnosti
                 );
             }
         }
+    }
+}
+
+// KEYMA037: a public schema whose fields are *all* private has no public surface.
+// It would emit into the client bundle with nothing readable, while on the server
+// its default (unprojected) read produces an empty projection — which adapters
+// treat as "return the whole record", leaking the private data the author meant
+// to hide. The fix is mechanical: mark the schema private (so only the system
+// identity can reach it) or make at least one field public. A field counts as
+// public surface whatever its kind — stored, computed, reference, or embedded.
+// Fieldless schemas are exempt (there is nothing to leak and nothing to expose).
+function checkPublicSchemaSurface(schemas: import("@keyma/ir").IRSchema[], diagnostics: IRDiagnostic[]): void {
+    for (const schema of schemas) {
+        if (schema.visibility !== "public") continue;
+        if (schema.fields.length === 0) continue;
+        if (schema.fields.some((f) => f.visibility === "public")) continue;
+        diagnostics.push(
+            mkError(
+                KEYMA037,
+                `Public schema "${schema.sourceName}" has only private fields — a public schema must expose at least one public field. Mark it @Schema({ private: true }), or make a field public.`,
+                schema.source,
+            ),
+        );
     }
 }
 

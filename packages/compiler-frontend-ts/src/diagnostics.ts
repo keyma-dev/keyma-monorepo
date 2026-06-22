@@ -29,6 +29,7 @@ export const KEYMA033 = "KEYMA033"; // Child extends a non-@Schema-decorated cla
 export const KEYMA034 = "KEYMA034"; // Child field overrides parent with incompatible type
 export const KEYMA035 = "KEYMA035"; // Persisted schema references an ephemeral schema via Reference<T>
 export const KEYMA036 = "KEYMA036"; // Indexes declared on an ephemeral schema have no effect
+export const KEYMA037 = "KEYMA037"; // Public schema has only private fields (no public surface)
 
 // Index errors
 export const KEYMA016 = "KEYMA016"; // Invalid @Indexed direction value (must be 1, -1, or "text")

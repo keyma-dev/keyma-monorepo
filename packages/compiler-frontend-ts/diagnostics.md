@@ -204,6 +204,32 @@ An ephemeral schema declares field or composite indexes. Indexes only affect per
 }
 ```
 
+### KEYMA037 — Public schema has only private fields
+
+A public schema whose every field is `private` has no public surface. It would emit into the
+client bundle with nothing readable, while on the server a default (unprojected) read collapses
+to an empty projection — which adapters treat as "return the whole record", leaking the private
+data the schema meant to hide. Mark the schema `@Schema({ private: true })` (so only the in-process
+system identity can reach it) or make at least one field public. Any field kind — stored, computed,
+reference, or embedded — counts as public surface. Fieldless schemas are exempt.
+
+```typescript
+@Schema() class Token {                  // KEYMA037 — public, but no public field
+    private declare value: string;
+    private declare refreshedAt: string;
+}
+
+@Schema({ private: true }) class Token { // OK — private schema, system-only
+    private declare value: string;
+}
+
+@Schema() class User {                   // OK — `id`/`name` are public surface
+    declare id: ID;
+    declare name: string;
+    private declare passwordHash: string;
+}
+```
+
 ---
 
 ## Naming and duplication errors (0040–0049)

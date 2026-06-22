@@ -366,4 +366,97 @@ describe("KeymaServer — projection", () => {
         const a = resp.results["a"] as KeymaLeafSuccess<Record<string, unknown>>;
         assert.equal(a.data["organization"], null);
     });
+
+    it("drops projection keys that are not declared fields (does not forward them to the adapter)", async () => {
+        const { server, adapter } = makeServer();
+        // The stored record carries a field that the schema does not declare.
+        // A client projecting it must not be able to pull it back: an undeclared
+        // key is dropped by the projection builder, not forwarded to the adapter.
+        adapter.stores.set(
+            "user",
+            new Map([
+                ["u1", { id: "u1", email: "a@b.com", name: "Alice", __internal: "leak-me" }],
+            ]),
+        );
+        const resp = await server.handle({
+            operations: {
+                a: {
+                    op: "read",
+                    schema: "user",
+                    where: { id: "u1" },
+                    project: { name: 1, __internal: 1 },
+                },
+            },
+        });
+        const a = resp.results["a"] as KeymaLeafSuccess<Record<string, unknown>>;
+        assert.equal(a.ok, true);
+        assert.equal(a.data["name"], "Alice");
+        assert.equal("__internal" in a.data, false);
+    });
+
+    it("system identity reads private fields via an explicit projection", async () => {
+        const { server, adapter } = makeServer();
+        adapter.stores.set(
+            "user",
+            new Map([["u1", { id: "u1", email: "a@b.com", name: "Alice", secret: "shh" }]]),
+        );
+        const resp = await server.handle(
+            {
+                operations: {
+                    a: {
+                        op: "read",
+                        schema: "user",
+                        where: { id: "u1" },
+                        project: { name: 1, secret: 1 },
+                    },
+                },
+            },
+            { identity: { isSystem: true } },
+        );
+        const a = resp.results["a"] as KeymaLeafSuccess<Record<string, unknown>>;
+        assert.equal(a.ok, true);
+        assert.equal(a.data["name"], "Alice");
+        assert.equal(a.data["secret"], "shh");
+    });
+
+    it("system identity gets private fields in the default (unprojected) shape", async () => {
+        const { server, adapter } = makeServer();
+        adapter.stores.set(
+            "user",
+            new Map([["u1", { id: "u1", email: "a@b.com", name: "Alice", secret: "shh" }]]),
+        );
+        const resp = await server.handle(
+            {
+                operations: {
+                    a: { op: "read", schema: "user", where: { id: "u1" } },
+                },
+            },
+            { identity: { isSystem: true } },
+        );
+        const a = resp.results["a"] as KeymaLeafSuccess<Record<string, unknown>>;
+        assert.equal(a.ok, true);
+        assert.equal(a.data["secret"], "shh");
+    });
+
+    it("non-system caller cannot read a private field even by projecting it explicitly", async () => {
+        const { server, adapter } = makeServer();
+        adapter.stores.set(
+            "user",
+            new Map([["u1", { id: "u1", email: "a@b.com", name: "Alice", secret: "shh" }]]),
+        );
+        const resp = await server.handle({
+            operations: {
+                a: {
+                    op: "read",
+                    schema: "user",
+                    where: { id: "u1" },
+                    project: { name: 1, secret: 1 },
+                },
+            },
+        });
+        const a = resp.results["a"] as KeymaLeafSuccess<Record<string, unknown>>;
+        assert.equal(a.ok, true);
+        assert.equal(a.data["name"], "Alice");
+        assert.equal("secret" in a.data, false);
+    });
 });

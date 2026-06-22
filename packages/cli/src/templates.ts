@@ -69,7 +69,7 @@ function packageJsonTemplate(projectName: string): string {
             "@keyma/dsl": "*",
             "@keyma/validators": "*",
             "@keyma/formatters": "*",
-            typescript: "^5.7.0",
+            typescript: "^6.0.3",
         },
     };
     return JSON.stringify(pkg, null, 2) + "\n";

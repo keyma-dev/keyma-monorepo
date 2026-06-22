@@ -1,5 +1,6 @@
 import type {
     SchemaMetadata,
+    FieldMetadata,
     FieldType,
     ValidationError,
     ServiceClass,
@@ -80,6 +81,14 @@ export class KeymaServer {
         return { results };
     }
 
+    // The privilege predicate. The in-process system identity bypasses every
+    // visibility guard (private schemas, services, methods, and fields). It is a
+    // single source of truth so every check resolves "is this caller trusted?"
+    // the same way.
+    private isSystem(context: RequestContext): boolean {
+        return context.identity?.isSystem === true;
+    }
+
     // Resolves a client-supplied schema name. Private schemas are treated as
     // non-existent unless the caller is the in-process system identity —
     // returning a distinct error would let attackers probe for private names.
@@ -87,7 +96,7 @@ export class KeymaServer {
         const schema = this.schemaMap.get(name);
         if (
             schema === undefined ||
-            (schema.visibility === "private" && context.identity?.isSystem !== true)
+            (schema.visibility === "private" && !this.isSystem(context))
         ) {
             throw new KeymaRuntimeError("SCHEMA_NOT_FOUND", `Unknown schema: ${name}`);
         }
@@ -260,7 +269,7 @@ export class KeymaServer {
             edges,
             nodes,
         };
-        let projection = this.buildAdapterProjection(terminalSchema, op.project);
+        let projection = this.buildAdapterProjection(terminalSchema, op.project, this.isSystem(context));
         projection = await this.runProjectionHooks(context, terminalSchema, projection, "traverse");
         const records = await this.opts.adapter.traverse(ctx, op.spec, projection);
         // Traversal results may be records or paths; only run record hooks for
@@ -283,7 +292,7 @@ export class KeymaServer {
         context: RequestContext,
     ): Promise<KeymaLeafResult> {
         const where = await this.runFilterHooks(context, schema, op.where ?? {}, "list");
-        let projection = this.buildAdapterProjection(schema, op.project);
+        let projection = this.buildAdapterProjection(schema, op.project, this.isSystem(context));
         projection = await this.runProjectionHooks(context, schema, projection, "list");
         const query: ListQuery = {
             where,
@@ -303,7 +312,7 @@ export class KeymaServer {
         context: RequestContext,
     ): Promise<KeymaLeafResult> {
         const where = await this.runFilterHooks(context, schema, op.where, "read");
-        let projection = this.buildAdapterProjection(schema, op.project);
+        let projection = this.buildAdapterProjection(schema, op.project, this.isSystem(context));
         projection = await this.runProjectionHooks(context, schema, projection, "read");
         const record = await this.opts.adapter.read(schema, where, projection);
         if (record === null) {
@@ -330,7 +339,7 @@ export class KeymaServer {
             throw new ValidationFailedError(errors);
         }
         data = await this.runWriteHooks(context, schema, data, "create");
-        let projection = this.buildAdapterProjection(schema, op.project);
+        let projection = this.buildAdapterProjection(schema, op.project, this.isSystem(context));
         projection = await this.runProjectionHooks(context, schema, projection, "create");
         const created = await this.opts.adapter.create(schema, data, projection);
         const out = await this.runResultHooks(context, schema, [created], "create");
@@ -356,7 +365,7 @@ export class KeymaServer {
         }
         data = await this.runWriteHooks(context, schema, data, "update");
         const where = await this.runFilterHooks(context, schema, op.where, "update");
-        let projection = this.buildAdapterProjection(schema, op.project);
+        let projection = this.buildAdapterProjection(schema, op.project, this.isSystem(context));
         projection = await this.runProjectionHooks(context, schema, projection, "update");
         const updated = await this.opts.adapter.update(schema, where, data, projection);
         const out = await this.runResultHooks(context, schema, [updated], "update");
@@ -387,7 +396,7 @@ export class KeymaServer {
         op: Extract<KeymaOperation, { op: "call" }>,
         context: RequestContext,
     ): Promise<KeymaLeafResult> {
-        const isSystem = context.identity?.isSystem === true;
+        const isSystem = this.isSystem(context);
 
         // Resolve the service. Private services are treated as non-existent for
         // non-system callers (probing-resistant, like resolveSchema).
@@ -509,22 +518,36 @@ export class KeymaServer {
     //
     // Translates a client ProjectionSpec into an AdapterProjection the adapter
     // can execute directly. Private fields are stripped here (security boundary);
-    // the adapter receives only what the client is allowed to see.
+    // the adapter receives only what the client is allowed to see. The sole
+    // exception is the in-process system identity (`includePrivate`), which may
+    // read private fields — e.g. to inspect `identity.isSystem`-gated data. The
+    // flag is threaded through nested reference/edge sub-projections so the
+    // exception applies at every depth, not just the top level.
 
     private buildAdapterProjection(
         schema: SchemaMetadata,
         spec: ProjectionSpec | undefined,
+        includePrivate: boolean,
     ): AdapterProjection {
         const fields: { [key: string]: AdapterFieldSpec } = {};
         const populate: PopulateSpec = {};
+        const isVisible = (f: FieldMetadata): boolean =>
+            includePrivate || f.visibility !== "private";
 
         const entries: Array<[string, 1 | ProjectionSpec]> =
             spec !== undefined
-                ? (Object.entries(spec) as Array<[string, 1 | ProjectionSpec]>).filter(
-                      ([key]) => schema.fields.find((f) => f.name === key)?.visibility !== "private",
-                  )
+                ? (Object.entries(spec) as Array<[string, 1 | ProjectionSpec]>).filter(([key]) => {
+                      // Keep only keys that resolve to a declared, visible field.
+                      // Undeclared keys are dropped here rather than forwarded to the
+                      // adapter: the prior `?.visibility !== "private"` kept unknown keys
+                      // because `undefined !== "private"`, letting a client project a name
+                      // not in the schema. Edge endpoint fields are themselves declared
+                      // fields, so they survive and are handled by the edge branch below.
+                      const field = schema.fields.find((f) => f.name === key);
+                      return field !== undefined && isVisible(field);
+                  })
                 : schema.fields
-                      .filter((f) => f.visibility !== "private")
+                      .filter(isVisible)
                       .map((f): [string, 1] => [f.name, 1]);
 
         const edge = schema.edge;
@@ -543,7 +566,9 @@ export class KeymaServer {
                     const nested =
                         sub === 1
                             ? { fields: { id: 1 as const } }
-                            : withIdField(this.buildAdapterProjection(referenced, sub as ProjectionSpec));
+                            : withIdField(
+                                  this.buildAdapterProjection(referenced, sub as ProjectionSpec, includePrivate),
+                              );
                     populate[key] = { schema: referenced, projection: nested };
                     continue;
                 }
@@ -558,6 +583,7 @@ export class KeymaServer {
                     const nestedProjection = this.buildAdapterProjection(
                         referenced,
                         sub as ProjectionSpec,
+                        includePrivate,
                     );
                     populate[key] = { schema: referenced, projection: nestedProjection };
                     continue;
