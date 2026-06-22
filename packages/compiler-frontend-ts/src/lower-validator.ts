@@ -60,7 +60,7 @@ function mkCtx(sourceFile: ts.SourceFile, diagnostics: IRDiagnostic[], deps: Low
 // ─── Factory lowering ─────────────────────────────────────────────────────────
 
 type LoweredFactory = {
-    factoryParams: { name: string }[];
+    factoryParams: { name: string; optional?: boolean }[];
     inputType: IRType;
     body: IRFunctionBody;
 };
@@ -70,8 +70,11 @@ function lowerFactory(
     returnTypeArg: ts.TypeNode | undefined,
     ctx: LowerCtx,
 ): LoweredFactory {
-    const factoryParams: { name: string }[] = func.parameters.map((p) => ({
+    // A param is optional (a call site may omit it) when it has a `?` or a default
+    // initializer. Typed backends emit a default for these; JS ignores it.
+    const factoryParams: { name: string; optional?: boolean }[] = func.parameters.map((p) => ({
         name: ts.isIdentifier(p.name) ? p.name.text : "_",
+        ...(p.questionToken !== undefined || p.initializer !== undefined ? { optional: true } : {}),
     }));
 
     // The value type the field carries (and the backend's runtime guard) comes from

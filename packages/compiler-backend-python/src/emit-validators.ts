@@ -35,6 +35,15 @@ export function rewriteContextAccess(code: string, ctxParam: string | undefined)
     return code.replace(re, `${ctxParam}.object.get("$1")`);
 }
 
+/**
+ * Render a factory parameter for the def signature. An optional param (a `?` or default
+ * in the source factory) gets `=None` so a call site may omit it; the lowered body
+ * already guards such params (e.g. `flags or ""`), mirroring the JS source.
+ */
+function pyFactoryParam(p: { name: string; optional?: boolean }): string {
+    return p.optional === true ? `${p.name}=None` : p.name;
+}
+
 /** Build the factory call that materializes a validator/formatter, e.g. `min_length(2)`. */
 export function buildFactoryCall(
     name: string,
@@ -53,7 +62,7 @@ export function emitValidatorsPy(decls: readonly IRValidatorDeclaration[], hasFu
 }
 
 function emitValidatorFactory(decl: IRValidatorDeclaration): string {
-    const factoryParamList = decl.factoryParams.map((p) => p.name).join(", ");
+    const factoryParamList = decl.factoryParams.map(pyFactoryParam).join(", ");
     const innerParamList = decl.body.params.map((p) => p.name).join(", ");
     const valueParam = decl.body.params.find((p) => p.role === "value")?.name ?? "_value";
     const fieldParam = decl.body.params.find((p) => p.role === "field")?.name ?? "None";
@@ -78,7 +87,7 @@ export function emitFormattersPy(decls: readonly IRFormatterDeclaration[], hasFu
 }
 
 function emitFormatterFactory(decl: IRFormatterDeclaration): string {
-    const factoryParamList = decl.factoryParams.map((p) => p.name).join(", ");
+    const factoryParamList = decl.factoryParams.map(pyFactoryParam).join(", ");
     const innerParamList = decl.body.params.map((p) => p.name).join(", ");
     const valueParam = decl.body.params.find((p) => p.role === "value")?.name ?? "_value";
     const ctxParam = decl.body.params.find((p) => p.role === "context")?.name;

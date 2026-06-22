@@ -25,6 +25,7 @@ import {
     KEYMA060,
     KEYMA064,
     KEYMA070,
+    KEYMA072,
     KEYMA096,
     KEYMA097,
 } from "./diagnostics.js";
@@ -158,6 +159,9 @@ function compileProgram(program: ts.Program, config: FrontendConfig): CompileRes
 
     // Post-processing: every Reference<T> target schema must declare an ID field
     checkReferenceTargetsHaveId(schemas, diagnostics);
+
+    // Post-processing: reject cycles in the Embedded<T> graph (infinite inline data).
+    analyzeEmbeddedCycles(schemas, diagnostics);
 
     // Post-processing: populate computed-field dependencies and reject cycles.
     analyzeComputedFields(schemas, diagnostics);
@@ -507,6 +511,71 @@ function collectUsedEnums(
         if (info?.members != null) result.push({ name: info.name, members: info.members, source: info.source });
     }
     return result;
+}
+
+/**
+ * Reject cycles in the Embedded<T> graph (KEYMA072, incl. a self-embed). `Embedded<T>`
+ * is an inline copy, so a cycle of embeds describes infinitely-nested data and can
+ * never be materialized. Only embedded edges are followed — `Reference<T>` stores
+ * just an id, so reference cycles are legal (a foreign-key loop). Runs pre-normalization,
+ * so embedded targets are still authored `sourceName`s. Uses the same 3-colour DFS as
+ * {@link analyzeComputedFields}, but across schemas rather than within one.
+ */
+function analyzeEmbeddedCycles(schemas: IRSchema[], diagnostics: IRDiagnostic[]): void {
+    const known = new Set(schemas.map((s) => s.sourceName));
+    const sourceOf = new Map(schemas.map((s) => [s.sourceName, s.source]));
+
+    // schema sourceName → the schemas it inlines via Embedded<T> (incl. Embedded<T>[]).
+    const embedsOf = new Map<string, string[]>();
+    for (const schema of schemas) {
+        const targets: string[] = [];
+        for (const field of schema.fields) {
+            const inner = unwrap(field.type);
+            if (inner.kind === "embedded" && known.has(inner.schema)) targets.push(inner.schema);
+        }
+        embedsOf.set(schema.sourceName, targets);
+    }
+
+    const WHITE = 0, GRAY = 1, BLACK = 2;
+    const color = new Map<string, number>();
+    const stack: string[] = [];
+
+    const visit = (name: string): string[] | null => {
+        color.set(name, GRAY);
+        stack.push(name);
+        for (const dep of embedsOf.get(name) ?? []) {
+            const c = color.get(dep) ?? WHITE;
+            if (c === GRAY) {
+                // Back-edge → cycle. Slice the path from `dep` to the current node.
+                const start = stack.indexOf(dep);
+                return [...stack.slice(start), dep];
+            }
+            if (c === WHITE) {
+                const cycle = visit(dep);
+                if (cycle !== null) return cycle;
+            }
+        }
+        stack.pop();
+        color.set(name, BLACK);
+        return null;
+    };
+
+    for (const schema of schemas) {
+        if ((color.get(schema.sourceName) ?? WHITE) !== WHITE) continue;
+        const cycle = visit(schema.sourceName);
+        if (cycle !== null) {
+            const path = cycle.join(" → ");
+            const at = sourceOf.get(cycle[0]!) ?? schema.source;
+            diagnostics.push(
+                mkError(
+                    KEYMA072,
+                    `Embedded<T> types form a cycle: ${path} — embedded data is inlined, so a cycle would be infinitely nested. Use Reference<T> to store a foreign key instead.`,
+                    at,
+                ),
+            );
+            return; // one diagnostic is enough; the build halts and the user fixes the cycle
+        }
+    }
 }
 
 /**

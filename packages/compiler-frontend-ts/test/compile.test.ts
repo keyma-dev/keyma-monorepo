@@ -869,6 +869,95 @@ describe("Reference target validation", () => {
     });
 });
 
+describe("Embedded cycle validation", () => {
+    it("emits KEYMA072 for a self-embed", () => {
+        const r = cv({
+            "s.ts": `
+                import { Schema } from "@keyma/dsl";
+                import type { Embedded } from "@keyma/dsl";
+                @Schema() class Node {
+                    declare child: Embedded<Node>;
+                }
+            `,
+        });
+        assert.ok(
+            hasError(r, CODES.KEYMA072),
+            `Expected KEYMA072; got ${JSON.stringify(errorCodes(r))}`,
+        );
+    });
+
+    it("emits KEYMA072 for a two-schema embed cycle", () => {
+        const r = cv({
+            "s.ts": `
+                import { Schema } from "@keyma/dsl";
+                import type { Embedded } from "@keyma/dsl";
+                @Schema() class A { declare b: Embedded<B>; }
+                @Schema() class B { declare a: Embedded<A>; }
+            `,
+        });
+        assert.ok(
+            hasError(r, CODES.KEYMA072),
+            `Expected KEYMA072; got ${JSON.stringify(errorCodes(r))}`,
+        );
+    });
+
+    it("emits KEYMA072 for a cycle through Embedded<T>[]", () => {
+        const r = cv({
+            "s.ts": `
+                import { Schema } from "@keyma/dsl";
+                import type { Embedded } from "@keyma/dsl";
+                @Schema() class Tree {
+                    declare children: Embedded<Tree>[];
+                }
+            `,
+        });
+        assert.ok(
+            hasError(r, CODES.KEYMA072),
+            `Expected KEYMA072; got ${JSON.stringify(errorCodes(r))}`,
+        );
+    });
+
+    it("does not emit KEYMA072 for a Reference<T> cycle (foreign keys are fine)", () => {
+        const r = cv({
+            "s.ts": `
+                import { Schema, Indexed } from "@keyma/dsl";
+                import type { ID, Reference } from "@keyma/dsl";
+                @Schema() class A {
+                    @Indexed({ unique: true }) declare readonly id: ID;
+                    declare b: Reference<B>;
+                }
+                @Schema() class B {
+                    @Indexed({ unique: true }) declare readonly id: ID;
+                    declare a: Reference<A>;
+                }
+            `,
+        });
+        assert.ok(
+            !hasError(r, CODES.KEYMA072),
+            `Unexpected KEYMA072; diagnostics: ${JSON.stringify(r.diagnostics)}`,
+        );
+    });
+
+    it("does not emit KEYMA072 for an acyclic embed graph (DAG)", () => {
+        const r = cv({
+            "s.ts": `
+                import { Schema } from "@keyma/dsl";
+                import type { Embedded } from "@keyma/dsl";
+                @Schema() class C { declare label: string; }
+                @Schema() class B { declare c: Embedded<C>; }
+                @Schema() class A {
+                    declare b: Embedded<B>;
+                    declare c: Embedded<C>;
+                }
+            `,
+        });
+        assert.ok(
+            !hasError(r, CODES.KEYMA072),
+            `Unexpected KEYMA072; diagnostics: ${JSON.stringify(r.diagnostics)}`,
+        );
+    });
+});
+
 describe("compileVirtual sourceRoot", () => {
     it("uses provided baseDir as sourceRoot", () => {
         const result = compileVirtual({

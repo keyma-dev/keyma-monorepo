@@ -52,6 +52,7 @@ export const KEYMA066 = "KEYMA066"; // Edge schema declares more than one @From(
 // Reference errors
 export const KEYMA070 = "KEYMA070"; // Reference<T> target schema has no `id: ID` field
 export const KEYMA071 = "KEYMA071"; // Bare @Schema class field — must be explicit Reference<T> or Embedded<T>
+export const KEYMA072 = "KEYMA072"; // Embedded<T> types form a cycle (inline data would be infinitely nested)
 
 // Validator/formatter declaration compilation errors
 export const KEYMA080 = "KEYMA080"; // @Validator/@Formatter applied to non-exported or non-function declaration

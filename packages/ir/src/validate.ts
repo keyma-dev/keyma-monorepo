@@ -605,6 +605,7 @@ function checkDeclaration(decl: unknown, path: string): IRValidationError[] {
         decl["factoryParams"].forEach((p, i) => {
             if (!isObj(p)) { errors.push(e(`${path}.factoryParams[${i}]`, "must be an object")); return; }
             if (!isStr(p["name"]) || p["name"] === "") errors.push(e(`${path}.factoryParams[${i}].name`, "must be a non-empty string"));
+            if (p["optional"] !== undefined && typeof p["optional"] !== "boolean") errors.push(e(`${path}.factoryParams[${i}].optional`, "must be a boolean"));
         });
     }
     errors.push(...checkType(decl["inputType"], `${path}.inputType`));

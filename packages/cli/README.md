@@ -116,6 +116,8 @@ Target configs are language-specific. The bundled JS and Python targets accept:
 | `server` | `boolean` | Emit the server bundle. Defaults to `true`. |
 | `library` | `boolean` | Emit a single unified bundle instead of client/server. Defaults to `false`. |
 
+The C++ target (`{ language: "cpp" }`) additionally accepts `namespace` (string, default `"app"`): the root namespace for the generated user code (models, validators, formatters, functions, services, enums). The `keyma::` namespace is reserved for the dependency-free support/runtime header. Services emit as abstract classes with pure virtual functions; named enums emit as `enum class` (in their declaring file's module header) with `keyma::to_string`/`keyma::from_string` specializations; `Reference<T>` fields lower to `std::shared_ptr<T>`.
+
 ## Programmatic API
 
 Every command is also exposed as a function, so you can drive the compiler from your own scripts or tooling:
@@ -130,12 +132,12 @@ if (result.hasErrors) {
 }
 ```
 
-`runBuild` accepts an optional `backends` array to override the default `[jsBackend, pythonBackend]`. Also exported: `loadProjectConfig`, `loadResolvedConfig`, `findConfig`, `createTsFrontend`, `formatDiagnostic`, `printDiagnostics`, `projectFiles`, `schemaTemplate`.
+`runBuild` accepts an optional `backends` array to override the default `[jsBackend, pythonBackend, cppBackend]`. Also exported: `loadProjectConfig`, `loadResolvedConfig`, `findConfig`, `createTsFrontend`, `formatDiagnostic`, `printDiagnostics`, `projectFiles`, `schemaTemplate`.
 
 ## How it fits together
 
 ```
-keyma.config        @keyma/compiler-frontend-ts          @keyma/compiler-backend-js / -python
+keyma.config        @keyma/compiler-frontend-ts          @keyma/compiler-backend-js / -python / -cpp
      │                       │                                     │
      ▼                       ▼                                     ▼
  loadProjectConfig ──► createTsFrontend ──► drive() ──► backend.emit() ──► files on disk

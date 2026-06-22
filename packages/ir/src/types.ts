@@ -116,8 +116,13 @@ export type IRFunctionBody = { params: IRParam[]; statements: IRStatement[] };
 
 export type IRValidatorDeclaration = {
     name: string;
-    /** Names of the outer factory function's parameters; become spec keys at code-gen time. */
-    factoryParams: { name: string }[];
+    /**
+     * Outer factory function's parameters; names become spec keys at code-gen time.
+     * `optional` (the param has a `?` or a default) lets typed backends emit a default so
+     * a call site may omit it — e.g. `pattern(value, flags?)` → C++ `auto flags = ...`,
+     * Python `flags=None`. JS ignores it (missing args are natively `undefined`).
+     */
+    factoryParams: { name: string; optional?: boolean }[];
     /** Declared type of the inner function's `value` parameter; backends emit a runtime guard from it. */
     inputType: IRType;
     body: IRFunctionBody;
@@ -126,8 +131,13 @@ export type IRValidatorDeclaration = {
 
 export type IRFormatterDeclaration = {
     name: string;
-    /** Names of the outer factory function's parameters; become spec keys at code-gen time. */
-    factoryParams: { name: string }[];
+    /**
+     * Outer factory function's parameters; names become spec keys at code-gen time.
+     * `optional` (the param has a `?` or a default) lets typed backends emit a default so
+     * a call site may omit it — e.g. `pattern(value, flags?)` → C++ `auto flags = ...`,
+     * Python `flags=None`. JS ignores it (missing args are natively `undefined`).
+     */
+    factoryParams: { name: string; optional?: boolean }[];
     /** Declared type of the inner function's `value` parameter; backends emit a runtime guard from it. */
     inputType: IRType;
     body: IRFunctionBody;

@@ -4,11 +4,12 @@ import { drive, resolveConfig } from "@keyma/compiler";
 import type { EmitFile, KeymaBackend, ResolvedConfig } from "@keyma/compiler";
 import { jsBackend } from "@keyma/compiler-backend-js";
 import { pythonBackend } from "@keyma/compiler-backend-python";
+import { cppBackend } from "@keyma/compiler-backend-cpp";
 import type { KeymaIR, IRDiagnostic } from "@keyma/ir";
 import { findConfig, loadProjectConfig } from "../config.js";
 import { createTsFrontend } from "../frontend.js";
 
-const DEFAULT_BACKENDS: KeymaBackend[] = [jsBackend, pythonBackend];
+const DEFAULT_BACKENDS: KeymaBackend[] = [jsBackend, pythonBackend, cppBackend];
 
 export type BuildOptions = {
     /** Project root. Defaults to cwd. */

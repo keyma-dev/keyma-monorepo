@@ -5,6 +5,7 @@ const config: KeymaUserConfig = {
     targets: [
         { language: "js", outDir: "dist/js" },
         { language: "python", outDir: "dist/python" },
+        { language: "cpp", outDir: "dist/cpp", namespace: "playground" }
     ],
 };
 

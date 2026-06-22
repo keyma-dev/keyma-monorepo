@@ -334,6 +334,22 @@ A field is typed as a bare `@Schema` class. Relationship intent must be explicit
 }
 ```
 
+### KEYMA072 — Embedded type cycle
+
+`Embedded<T>` inlines a copy of the target. A cycle of embeds — including the degenerate
+self-embed — describes infinitely-nested data and can never be materialized, so it is rejected.
+Only embedded edges count (also through `Embedded<T>[]`); `Reference<T>` stores just an id, so a
+reference cycle is legal. Break the cycle by replacing an `Embedded<T>` with `Reference<T>`.
+
+```typescript
+@Schema() class Node {
+    declare child: Embedded<Node>;     // KEYMA072 — self-embed
+}
+@Schema() class A { declare b: Embedded<B>; }   // KEYMA072 — A → B → A
+@Schema() class B { declare a: Embedded<A>; }
+@Schema() class C { declare a: Reference<A>; }   // OK — foreign key, no inlining
+```
+
 ---
 
 ## Validator / formatter / utility-function compilation errors (0080–0089)
