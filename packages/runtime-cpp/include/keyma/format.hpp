@@ -1,7 +1,7 @@
 #pragma once
 
 // Field formatting for @keyma/runtime-cpp (mirror of runtime-js `format.ts`).
-// Synchronous (FormatterFn is a synchronous std::move_only_function). For each present
+// Synchronous (FormatterFn is a synchronous move_only_function). For each present
 // field, runs the formatters whose phase matches `phase`, in order, replacing the field
 // value in place. Cross-field formatters read the (partially formatted) record via Context.
 

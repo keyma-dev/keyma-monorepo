@@ -6,7 +6,11 @@
 // keyma::Value, the validation/formatting result types, the schema-metadata structs,
 // the intrinsic helpers the expression lowering calls, and the value_traits<T> /
 // from_value<T> / to_value<T> serialization layer the generated structs specialize.
-// Requires a C++23 standard library that provides std::move_only_function (libstdc++ 14+).
+//
+// Targets C++23 (std::expected, std::format, the chrono calendar, std::pmr). It ships its
+// own keyma::move_only_function (below) instead of std::move_only_function, so it also
+// builds on standard libraries that don't provide that type yet — notably Apple clang's
+// libc++ (through clang 17).
 
 #include <algorithm>
 #include <cctype>
@@ -20,6 +24,7 @@
 #include <functional>
 #include <memory>
 #include <memory_resource>
+#include <new>
 #include <optional>
 #include <regex>
 #include <span>
@@ -50,34 +55,39 @@ public:
     using Object = std::pmr::vector<Member>;
     using Storage = std::variant<std::monostate, bool, std::int64_t, double, String, Array, Object, Bytes>;
 
-    Value() noexcept : data_(std::monostate{}), alloc_() {}
-    explicit Value(const allocator_type& a) noexcept : data_(std::monostate{}), alloc_(a) {}
+    // These touch std::variant<…, Object, …>, whose construct/destroy/assign instantiate
+    // std::vector<Member>'s operations — which require Member to be a complete type. Member
+    // is only completed below the class (it holds a Value by value), so every member that
+    // manipulates the variant is DECLARED here and DEFINED out-of-line after Member, where
+    // it is complete. (libc++ enforces this; libstdc++ happens to tolerate the inline form.)
+    Value() noexcept;
+    explicit Value(const allocator_type& a) noexcept;
 
     // Converting constructors are explicit so a bare literal never implicitly becomes
     // a Value (which would make equality with literals ambiguous). Generated code
     // always builds Values explicitly (keyma::Value(...) / keyma::to_value(...)).
-    explicit Value(std::nullptr_t, const allocator_type& a = {}) : data_(std::monostate{}), alloc_(a) {}
-    explicit Value(bool b, const allocator_type& a = {}) : data_(b), alloc_(a) {}
-    explicit Value(std::int64_t i, const allocator_type& a = {}) : data_(i), alloc_(a) {}
-    explicit Value(int i, const allocator_type& a = {}) : data_(static_cast<std::int64_t>(i)), alloc_(a) {}
-    explicit Value(double d, const allocator_type& a = {}) : data_(d), alloc_(a) {}
-    explicit Value(std::string_view s, const allocator_type& a = {}) : data_(String(s, a)), alloc_(a) {}
-    explicit Value(const char* s, const allocator_type& a = {}) : data_(String(s, a)), alloc_(a) {}
+    explicit Value(std::nullptr_t, const allocator_type& a = {});
+    explicit Value(bool b, const allocator_type& a = {});
+    explicit Value(std::int64_t i, const allocator_type& a = {});
+    explicit Value(int i, const allocator_type& a = {});
+    explicit Value(double d, const allocator_type& a = {});
+    explicit Value(std::string_view s, const allocator_type& a = {});
+    explicit Value(const char* s, const allocator_type& a = {});
 
     // Allocator-extended copy/move — propagate `a` to every nested pmr member.
-    Value(const Value& o, const allocator_type& a) : data_(clone(o.data_, a)), alloc_(a) {}
-    Value(Value&& o, const allocator_type& a) : data_(clone(std::move(o.data_), a)), alloc_(a) {}
+    Value(const Value& o, const allocator_type& a);
+    Value(Value&& o, const allocator_type& a);
 
-    Value(const Value& o) : data_(clone(o.data_, allocator_type{})), alloc_() {}
-    Value(Value&& o) noexcept : data_(std::move(o.data_)), alloc_(o.alloc_) {}
-    Value& operator=(const Value& o) { data_ = clone(o.data_, alloc_); return *this; }
-    Value& operator=(Value&& o) { data_ = clone(std::move(o.data_), alloc_); return *this; }
-    ~Value() = default;
+    Value(const Value& o);
+    Value(Value&& o) noexcept;
+    Value& operator=(const Value& o);
+    Value& operator=(Value&& o);
+    ~Value();
 
     allocator_type get_allocator() const noexcept { return alloc_; }
 
-    static Value array(const allocator_type& a) { Value v(a); v.data_ = Array(a); return v; }
-    static Value object(const allocator_type& a) { Value v(a); v.data_ = Object(a); return v; }
+    static Value array(const allocator_type& a);
+    static Value object(const allocator_type& a);
 
     bool is_null() const noexcept { return std::holds_alternative<std::monostate>(data_); }
     bool is_bool() const noexcept { return std::holds_alternative<bool>(data_); }
@@ -126,6 +136,26 @@ struct Value::Member {
     Value value;
     friend bool operator==(const Member&, const Member&) = default;
 };
+
+// ── Value members defined out-of-line (Member is now complete) ──
+inline Value::Value() noexcept : data_(std::monostate{}), alloc_() {}
+inline Value::Value(const allocator_type& a) noexcept : data_(std::monostate{}), alloc_(a) {}
+inline Value::Value(std::nullptr_t, const allocator_type& a) : data_(std::monostate{}), alloc_(a) {}
+inline Value::Value(bool b, const allocator_type& a) : data_(b), alloc_(a) {}
+inline Value::Value(std::int64_t i, const allocator_type& a) : data_(i), alloc_(a) {}
+inline Value::Value(int i, const allocator_type& a) : data_(static_cast<std::int64_t>(i)), alloc_(a) {}
+inline Value::Value(double d, const allocator_type& a) : data_(d), alloc_(a) {}
+inline Value::Value(std::string_view s, const allocator_type& a) : data_(String(s, a)), alloc_(a) {}
+inline Value::Value(const char* s, const allocator_type& a) : data_(String(s, a)), alloc_(a) {}
+inline Value::Value(const Value& o, const allocator_type& a) : data_(clone(o.data_, a)), alloc_(a) {}
+inline Value::Value(Value&& o, const allocator_type& a) : data_(clone(std::move(o.data_), a)), alloc_(a) {}
+inline Value::Value(const Value& o) : data_(clone(o.data_, allocator_type{})), alloc_() {}
+inline Value::Value(Value&& o) noexcept : data_(std::move(o.data_)), alloc_(o.alloc_) {}
+inline Value& Value::operator=(const Value& o) { data_ = clone(o.data_, alloc_); return *this; }
+inline Value& Value::operator=(Value&& o) { data_ = clone(std::move(o.data_), alloc_); return *this; }
+inline Value::~Value() = default;
+inline Value Value::array(const allocator_type& a) { Value v(a); v.data_ = Array(a); return v; }
+inline Value Value::object(const allocator_type& a) { Value v(a); v.data_ = Object(a); return v; }
 
 inline const Value* Value::find(std::string_view key) const noexcept {
     if (auto* o = std::get_if<Object>(&data_))
@@ -178,6 +208,269 @@ inline Value::Storage Value::clone(Storage&& s, const allocator_type& a) {
 
 static_assert(std::uses_allocator_v<Value, Value::allocator_type>);
 
+// ─── move_only_function ───────────────────────────────────────────────────────
+//
+// A move-only, type-erasing call wrapper for the `R(Args...)` and `R(Args...) const`
+// signatures the runtime uses (validators, formatters, transports, lowered query
+// clauses). It stands in for std::move_only_function so the runtime builds on standard
+// libraries that don't ship that type yet (Apple clang's libc++ through clang 17).
+//
+// Beyond being a drop-in it is allocator-aware: a small target lives in an inline buffer
+// (no allocation); a larger one is allocated from a std::pmr memory resource — the
+// caller's, via `move_only_function(std::allocator_arg, alloc, fn)`, or the program
+// default resource otherwise — so captured state honours the runtime's pmr discipline.
+// Moves are always noexcept (an inline target must be nothrow-movable to qualify; an
+// out-of-line target moves by stealing its pointer), so it relocates cleanly inside the
+// std::pmr vectors that hold it.
+
+namespace mof_detail {
+
+inline constexpr std::size_t sbo_size = 4 * sizeof(void*);
+inline constexpr std::size_t sbo_align = alignof(std::max_align_t);
+
+// A target is stored inline only if it fits the buffer AND moves without throwing, so the
+// wrapper's own move stays noexcept; otherwise it is allocated out-of-line.
+template <class T>
+inline constexpr bool fits_inline =
+    sizeof(T) <= sbo_size && alignof(T) <= sbo_align && std::is_nothrow_move_constructible_v<T>;
+
+// Per-target move/destroy, shared by both wrapper specializations (invocation differs by
+// const-ness, so it lives in the specialization). The void* is the owning holder.
+struct ops {
+    void (*move)(void* dst, void* src) noexcept;  // move src's target into the empty dst
+    void (*destroy)(void* self) noexcept;
+};
+
+// Storage + lifetime, written once and inherited (privately) by the specializations.
+class holder {
+protected:
+    union storage {
+        alignas(sbo_align) std::byte buf[sbo_size];
+        void* ptr;
+        storage() noexcept {}
+    } s_;
+    const ops* ops_ = nullptr;                 // null ⇒ empty
+    std::pmr::memory_resource* mr_ = nullptr;  // resource backing an out-of-line target
+    bool inline_ = false;
+
+    holder() noexcept = default;
+    holder(holder&&) = delete;  // the specialization drives moves (it also owns invoke_)
+    holder& operator=(holder&&) = delete;
+    holder(const holder&) = delete;
+    holder& operator=(const holder&) = delete;
+    ~holder() { reset(); }
+
+    void* target() noexcept { return inline_ ? static_cast<void*>(s_.buf) : s_.ptr; }
+    const void* target() const noexcept { return inline_ ? static_cast<const void*>(s_.buf) : s_.ptr; }
+
+    template <class T, class G>
+    void emplace(std::pmr::memory_resource* mr, G&& g) {
+        if constexpr (fits_inline<T>) {
+            ::new (static_cast<void*>(s_.buf)) T(std::forward<G>(g));
+            inline_ = true;
+            mr_ = nullptr;
+        } else {
+            void* p = mr->allocate(sizeof(T), alignof(T));
+            try {
+                ::new (p) T(std::forward<G>(g));
+            } catch (...) {
+                mr->deallocate(p, sizeof(T), alignof(T));
+                throw;
+            }
+            s_.ptr = p;
+            inline_ = false;
+            mr_ = mr;
+        }
+        ops_ = ops_for<T>();  // set last: until here a throw leaves the holder empty
+    }
+
+    void reset() noexcept {
+        if (ops_) ops_->destroy(this);
+        ops_ = nullptr;
+        mr_ = nullptr;
+        inline_ = false;
+    }
+
+    // Move o's target into *this — which MUST be empty — leaving o empty.
+    void take(holder& o) noexcept {
+        if (o.ops_) o.ops_->move(this, &o);
+    }
+
+private:
+    template <class T>
+    static const ops* ops_for() noexcept {
+        static const ops table{
+            [](void* dst_, void* src_) noexcept {
+                holder& dst = *static_cast<holder*>(dst_);
+                holder& src = *static_cast<holder*>(src_);
+                if (src.inline_) {
+                    T* sf = static_cast<T*>(static_cast<void*>(src.s_.buf));
+                    ::new (static_cast<void*>(dst.s_.buf)) T(std::move(*sf));
+                    sf->~T();
+                    dst.inline_ = true;
+                    dst.mr_ = nullptr;
+                } else {
+                    dst.s_.ptr = src.s_.ptr;  // steal the heap block and its resource
+                    dst.inline_ = false;
+                    dst.mr_ = src.mr_;
+                }
+                dst.ops_ = src.ops_;
+                src.ops_ = nullptr;
+                src.mr_ = nullptr;
+                src.inline_ = false;
+            },
+            [](void* self) noexcept {
+                holder& h = *static_cast<holder*>(self);
+                T* f = static_cast<T*>(h.target());
+                f->~T();
+                if (!h.inline_) h.mr_->deallocate(f, sizeof(T), alignof(T));
+            }};
+        return &table;
+    }
+};
+
+// SFINAE guard shared by both specializations' target constructors/assignment.
+template <class Self, class DT>
+inline constexpr bool is_target =
+    !std::is_same_v<DT, Self> && !std::is_same_v<DT, std::nullptr_t>;
+
+}  // namespace mof_detail
+
+template <class Sig>
+class move_only_function;  // only the two specializations below are defined
+
+// Non-const call signature: the target is invoked as a non-const lvalue.
+template <class R, class... Args>
+class move_only_function<R(Args...)> : private mof_detail::holder {
+public:
+    move_only_function() noexcept = default;
+    move_only_function(std::nullptr_t) noexcept {}
+
+    template <class F, class DF = std::decay_t<F>,
+              std::enable_if_t<mof_detail::is_target<move_only_function, DF> &&
+                                   std::is_invocable_r_v<R, DF&, Args...>,
+                               int> = 0>
+    move_only_function(F&& f) {
+        this->template emplace<DF>(std::pmr::get_default_resource(), std::forward<F>(f));
+        invoke_ = &invoke_impl<DF>;
+    }
+
+    template <class F, class DF = std::decay_t<F>,
+              std::enable_if_t<mof_detail::is_target<move_only_function, DF> &&
+                                   std::is_invocable_r_v<R, DF&, Args...>,
+                               int> = 0>
+    move_only_function(std::allocator_arg_t, const std::pmr::polymorphic_allocator<std::byte>& a, F&& f) {
+        this->template emplace<DF>(a.resource(), std::forward<F>(f));
+        invoke_ = &invoke_impl<DF>;
+    }
+
+    move_only_function(move_only_function&& o) noexcept : invoke_(o.invoke_) {
+        this->take(o);
+        o.invoke_ = nullptr;
+    }
+    move_only_function& operator=(move_only_function&& o) noexcept {
+        if (this != &o) {
+            this->reset();
+            this->take(o);
+            invoke_ = o.invoke_;
+            o.invoke_ = nullptr;
+        }
+        return *this;
+    }
+    move_only_function& operator=(std::nullptr_t) noexcept {
+        this->reset();
+        invoke_ = nullptr;
+        return *this;
+    }
+    template <class F, class DF = std::decay_t<F>,
+              std::enable_if_t<mof_detail::is_target<move_only_function, DF> &&
+                                   std::is_invocable_r_v<R, DF&, Args...>,
+                               int> = 0>
+    move_only_function& operator=(F&& f) {
+        return *this = move_only_function(std::forward<F>(f));
+    }
+
+    explicit operator bool() const noexcept { return invoke_ != nullptr; }
+
+    R operator()(Args... args) {
+        return invoke_(this->target(), std::forward<Args>(args)...);
+    }
+
+private:
+    R (*invoke_)(void*, Args&&...) = nullptr;
+
+    template <class T>
+    static R invoke_impl(void* t, Args&&... args) {
+        return std::invoke(*static_cast<T*>(t), std::forward<Args>(args)...);
+    }
+};
+
+// Const call signature: the target is invoked as a const lvalue.
+template <class R, class... Args>
+class move_only_function<R(Args...) const> : private mof_detail::holder {
+public:
+    move_only_function() noexcept = default;
+    move_only_function(std::nullptr_t) noexcept {}
+
+    template <class F, class DF = std::decay_t<F>,
+              std::enable_if_t<mof_detail::is_target<move_only_function, DF> &&
+                                   std::is_invocable_r_v<R, const DF&, Args...>,
+                               int> = 0>
+    move_only_function(F&& f) {
+        this->template emplace<DF>(std::pmr::get_default_resource(), std::forward<F>(f));
+        invoke_ = &invoke_impl<DF>;
+    }
+
+    template <class F, class DF = std::decay_t<F>,
+              std::enable_if_t<mof_detail::is_target<move_only_function, DF> &&
+                                   std::is_invocable_r_v<R, const DF&, Args...>,
+                               int> = 0>
+    move_only_function(std::allocator_arg_t, const std::pmr::polymorphic_allocator<std::byte>& a, F&& f) {
+        this->template emplace<DF>(a.resource(), std::forward<F>(f));
+        invoke_ = &invoke_impl<DF>;
+    }
+
+    move_only_function(move_only_function&& o) noexcept : invoke_(o.invoke_) {
+        this->take(o);
+        o.invoke_ = nullptr;
+    }
+    move_only_function& operator=(move_only_function&& o) noexcept {
+        if (this != &o) {
+            this->reset();
+            this->take(o);
+            invoke_ = o.invoke_;
+            o.invoke_ = nullptr;
+        }
+        return *this;
+    }
+    move_only_function& operator=(std::nullptr_t) noexcept {
+        this->reset();
+        invoke_ = nullptr;
+        return *this;
+    }
+    template <class F, class DF = std::decay_t<F>,
+              std::enable_if_t<mof_detail::is_target<move_only_function, DF> &&
+                                   std::is_invocable_r_v<R, const DF&, Args...>,
+                               int> = 0>
+    move_only_function& operator=(F&& f) {
+        return *this = move_only_function(std::forward<F>(f));
+    }
+
+    explicit operator bool() const noexcept { return invoke_ != nullptr; }
+
+    R operator()(Args... args) const {
+        return invoke_(this->target(), std::forward<Args>(args)...);
+    }
+
+private:
+    R (*invoke_)(const void*, Args&&...) = nullptr;
+
+    template <class T>
+    static R invoke_impl(const void* t, Args&&... args) {
+        return std::invoke(*static_cast<const T*>(t), std::forward<Args>(args)...);
+    }
+};
+
 // ─── Validation / formatting result types ────────────────────────────────────
 
 struct ValidationError {
@@ -191,9 +484,9 @@ struct Context {
     const Value& object;
 };
 
-using ValidatorFn = std::move_only_function<
+using ValidatorFn = move_only_function<
     std::expected<void, ValidationError>(const Value&, std::string_view, const Context&) const>;
-using FormatterFn = std::move_only_function<Value(const Value&, const Context&) const>;
+using FormatterFn = move_only_function<Value(const Value&, const Context&) const>;
 
 // ─── Optional fields with two axes (presence × nullability) ───────────────────
 //
@@ -217,6 +510,19 @@ enum class TypeTag {
 
 enum class Visibility { Public, Private };
 enum class Phase { Change, Blur, Submit, Save };
+
+// Logical classification of a field for the typed query DSL (keyma/query.hpp). Carried
+// by the per-schema field descriptors the C++ backend emits (`struct f`) so the typed
+// where/projection builders can constrain operands and pick the right lowering:
+//   Scalar    — equality/membership only (bool, bytes).
+//   Ordered   — also supports relational operators ($gt/$gte/$lt/$lte): string, number,
+//               integer, decimal, date(Time), id.
+//   Enum      — a named enum; the descriptor's Value is the enum class, lowered via
+//               keyma::to_string to its wire string.
+//   Reference — a relation; the descriptor's Value is the TARGET's id type, and operands
+//               may be a bare id, an {id} wrapper, or a target instance.
+//   Json      — an opaque keyma::Value (equality only).
+enum class FieldKind { Scalar, Ordered, Enum, Reference, Json };
 
 // A formatter attached to a field for a lifecycle phase.
 struct PhasedFormatter {

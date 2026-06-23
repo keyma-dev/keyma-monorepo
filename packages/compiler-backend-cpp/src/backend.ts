@@ -8,6 +8,7 @@ import { emitModuleCpp, type ModuleEmitDeps } from "./emit-module.js";
 import { emitIndexCpp } from "./emit-index.js";
 import { emitValidatorsCpp, emitFormattersCpp, emitFunctionsCpp } from "./emit-validators.js";
 import { emitServicesCpp, SERVICES_REF } from "./emit-service.js";
+import { emitServiceClientCpp, SERVICE_CLIENT_REF } from "./emit-service-client.js";
 import { emitSupportHpp } from "./emit-support.js";
 import { moduleOf, namespaceOf, cppSanitizer } from "./module-path.js";
 import { resolveCppTarget, VENDOR_RUNTIME_HEADER, type CppTargetConfig } from "./types.js";
@@ -183,6 +184,20 @@ function emitBundle(
                 includePrivate: opts.includePrivate,
                 nsRoot: shared.nsRoot,
                 runtimeInclude: shared.runtimeInclude,
+                schemaModule: shared.schemaModule,
+                classNameByName: shared.classNameByName,
+                cppTypeByName: shared.cppTypeByName,
+                enumTypeByName: shared.enumTypeByName,
+                enumModuleByName: shared.enumModuleByName,
+            }),
+        });
+        // Typed call stubs (<nsRoot>::client::<Service>::<method> → keyma::CallLeaf<Ret>).
+        // Opt-in (not pulled in by index.hpp) since it depends on <keyma/client.hpp>.
+        files.push({
+            path: path.posix.join(bundleDir, `${SERVICE_CLIENT_REF}.hpp`),
+            content: emitServiceClientCpp(decls.services, {
+                includePrivate: opts.includePrivate,
+                nsRoot: shared.nsRoot,
                 schemaModule: shared.schemaModule,
                 classNameByName: shared.classNameByName,
                 cppTypeByName: shared.cppTypeByName,

@@ -22,11 +22,35 @@ trap 'rm -rf "$WORK"' EXIT
 "$CXX" -std=c++23 -Iinclude -fsyntax-only test/tu.cpp
 
 # 2) Compile and run the behavioral tests: the server/client/json consumer layer under the
-#    default Sync policy, and a std::future policy instantiation (proves the Async<> template
-#    is not coupled to Sync — bring your own scheduler).
-for t in server futures; do
+#    default Sync policy, a (blocking) std::future policy, and a genuinely-suspending C++23
+#    coroutine-task policy — proving the Async<> template is not coupled to Sync (bring your
+#    own scheduler) on both the eager and the deferred path.
+for t in server futures coroutine typed; do
     "$CXX" -std=c++23 -Iinclude "test/$t.test.cpp" -o "$WORK/$t.test"
     "$WORK/$t.test"
 done
+
+# 3) Negative-compile: a mistyped filter must be REJECTED by the typed query DSL. A
+#    non-zero exit from the compiler here is the PASS (the snippet is meant to fail).
+NEG="$WORK/neg.cpp"
+cat > "$NEG" <<'CPP'
+#include <keyma/query.hpp>
+#include <cstdint>
+#include <string_view>
+struct Rec {
+    struct f {
+        struct n_ { using Owner = Rec; using Value = std::int64_t; using RefTarget = void;
+                    static constexpr std::string_view key() { return "n"; }
+                    static constexpr keyma::FieldKind kind = keyma::FieldKind::Ordered; };
+        static constexpr n_ n{};
+    };
+};
+int main() { (void)keyma::eq(Rec::f::n, "not-an-int"); }  // string into an int field
+CPP
+if "$CXX" -std=c++23 -Iinclude -fsyntax-only "$NEG" 2>/dev/null; then
+    echo "runtime-cpp: NEGATIVE-COMPILE TEST FAILED — a mistyped filter compiled"
+    exit 1
+fi
+echo "runtime-cpp: negative-compile check passed (mistyped filter rejected)"
 
 echo "runtime-cpp: tests passed ($CXX)"

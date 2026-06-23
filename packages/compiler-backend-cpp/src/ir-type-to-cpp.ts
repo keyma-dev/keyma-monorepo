@@ -96,6 +96,59 @@ export function traitsArg(
     return { tmpl: memberType(field, cppTypeByName, enumTypeByName), field: false };
 }
 
+/**
+ * The logical (unwrapped) C++ value type a typed where/projection operand compares
+ * against, for the emitted field descriptors (`struct f`, consumed by keyma/query.hpp).
+ * Strips the array wrapper (an array field compares against its element); a reference
+ * compares against the TARGET's id type; a json/embedded against keyma::Value. The
+ * presence/nullability wrappers are intentionally dropped — a filter compares the value.
+ */
+export function whereValueType(
+    field: IRField,
+    cppTypeByName?: ReadonlyMap<string, string>,
+    enumTypeByName?: ReadonlyMap<string, string>,
+): string {
+    const core = field.type.kind === "array" ? field.type.of : field.type;
+    switch (core.kind) {
+        case "reference":
+            return core.idType !== undefined
+                ? irTypeToCpp(core.idType, cppTypeByName, enumTypeByName)
+                : "std::pmr::string";
+        case "embedded":
+        case "json":
+            return "keyma::Value";
+        default:
+            return irTypeToCpp(core, cppTypeByName, enumTypeByName);
+    }
+}
+
+/** The keyma::FieldKind enumerator for a field's descriptor (an array → its element's kind). */
+export function fieldKind(field: IRField): string {
+    const core = field.type.kind === "array" ? field.type.of : field.type;
+    let k: string;
+    switch (core.kind) {
+        case "string": case "id": case "date": case "time": case "decimal":
+        case "regexp": case "number": case "integer": case "bigint": case "dateTime":
+            k = "Ordered"; break;
+        case "enum":
+            k = core.name !== undefined ? "Enum" : "Ordered"; break;  // named enum vs inline string-union
+        case "boolean": case "bytes":
+            k = "Scalar"; break;
+        case "reference":
+            k = "Reference"; break;
+        case "json": case "embedded": case "array":
+            k = "Json"; break;
+    }
+    return `keyma::FieldKind::${k}`;
+}
+
+/** The descriptor's RefTarget type (the target struct for a reference field, else void). */
+export function refTargetType(field: IRField, cppTypeByName?: ReadonlyMap<string, string>): string {
+    const core = field.type.kind === "array" ? field.type.of : field.type;
+    if (core.kind === "reference") return cppTypeByName?.get(core.schema) ?? core.schema;
+    return "void";
+}
+
 /** The keyma::TypeTag enumerator for a type, for schema metadata. */
 export function typeTag(type: IRType): string {
     const map: Record<IRType["kind"], string> = {

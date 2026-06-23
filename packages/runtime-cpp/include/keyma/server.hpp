@@ -24,6 +24,7 @@
 #include <keyma/service.hpp>
 #include <keyma/validate.hpp>
 
+#include <exception>
 #include <format>
 #include <optional>
 #include <span>
@@ -87,9 +88,12 @@ public:
     }
 
     A<Value> handle(Value request, RequestContext ctx = {}) {
+        // request/ctx live in this lambda's closure, which the async chain keeps alive for the
+        // whole returned Async. handle_after_init and every continuation reference them by
+        // const ref (never owning a copy that would die before a deferred chain runs).
         return AT::then(ensure_initialized(),
-            [this, request = std::move(request), ctx = std::move(ctx)]() mutable {
-                return handle_after_init(std::move(request), std::move(ctx));
+            [this, request = std::move(request), ctx = std::move(ctx)]() {
+                return handle_after_init(request, ctx);
             });
     }
 
@@ -146,7 +150,7 @@ private:
         });
     }
 
-    A<Value> handle_after_init(Value request, RequestContext ctx) {
+    A<Value> handle_after_init(const Value& request, const RequestContext& ctx) {
         Value results = Value::object(a_);
         const Value* ops = request.find("operations");
         if (ops == nullptr || !ops->is_object())
@@ -178,20 +182,27 @@ private:
             });
 
         return AT::then(std::move(transformed), [this, &ctx](Value op) {
+            // The thunk dispatches against its OWN copy of `op`: a deferred policy may run it
+            // after the `op = std::move(op)` capture below has moved the original into the
+            // afterOperation step.
             A<Value> guarded = AT::attempt(
-                [this, &ctx, &op]() -> A<Value> { return dispatch_after_transform(op, ctx); },
+                [this, &ctx, op]() -> A<Value> { return dispatch_after_transform(op, ctx); },
                 [this](std::exception_ptr e) { return error_to_result(e, a_); });
-            // afterOperation fold runs regardless of outcome and swallows its own errors.
+            // afterOperation hooks observe the result, errors swallowed. The result threads
+            // through the fold by value as the accumulator (never moved-from under a deferred
+            // hook); each hook reads its own snapshot. `op` lives in this continuation closure
+            // for the fold's whole duration.
             return AT::then(std::move(guarded), [this, &ctx, op = std::move(op)](Value result) mutable {
-                return AT::then(
-                    seq_fold<Async>(plugins_.data(), plugins_.data() + plugins_.size(), std::monostate{},
-                        [this, &ctx, &op, &result](std::monostate s, KeymaServerPlugin<Async>* p) -> A<std::monostate> {
-                            if (!p->has_after_operation()) return AT::ready(s);
-                            return AT::then(
-                                AT::swallow([&]() -> A<void> { return p->after_operation(ctx, op, result); }),
-                                [s]() { return s; });
-                        }),
-                    [result = std::move(result)](std::monostate) mutable { return std::move(result); });
+                return seq_fold<Async>(plugins_.data(), plugins_.data() + plugins_.size(), std::move(result),
+                    [this, &ctx, &op](Value acc, KeymaServerPlugin<Async>* p) -> A<Value> {
+                        if (!p->has_after_operation()) return AT::ready(std::move(acc));
+                        Value snapshot(acc, a_);
+                        return AT::then(
+                            AT::swallow([p, this, &ctx, &op, snapshot = std::move(snapshot)]() mutable -> A<void> {
+                                return p->after_operation(ctx, op, snapshot);
+                            }),
+                            [acc = std::move(acc)]() mutable { return std::move(acc); });
+                    });
             });
         });
     }

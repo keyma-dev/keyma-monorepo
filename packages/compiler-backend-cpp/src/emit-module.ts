@@ -4,7 +4,7 @@ import type {
 } from "@keyma/ir";
 import { exprToCpp, type ExprOpts } from "./emit-expression.js";
 import { stmtToCpp, factoryIdent, type ReturnLowerer } from "./emit-validators.js";
-import { irTypeToCpp, memberType, traitsArg } from "./ir-type-to-cpp.js";
+import { irTypeToCpp, memberType, traitsArg, whereValueType, fieldKind, refTargetType } from "./ir-type-to-cpp.js";
 import { buildSchemaMeta, buildMaterializer } from "./schema-data.js";
 import { buildApplyDefaults } from "./emit-defaults.js";
 import { emitEnumClass, emitEnumConversions } from "./emit-enum.js";
@@ -191,8 +191,35 @@ function emitStruct(schema: IRSchema, deps: ModuleEmitDeps): string[] {
     // Methods / setters.
     for (const m of visibleMethods(schema, deps.includePrivate)) lines.push(...emitMethod(m, opts, deps));
 
+    // Typed field descriptors (consumed by keyma/query.hpp's where/projection DSL).
+    lines.push(...emitFieldDescriptors(C, stored, deps));
+
     lines.push(`    static const keyma::SchemaMeta& schema();`);
     lines.push(`};`);
+    return lines;
+}
+
+// ─── Field descriptors (`struct f`) ───────────────────────────────────────────
+//
+// A nested tag per stored field, carrying its JSON key, logical value type, reference
+// target, and FieldKind, so keyma::query.hpp can build COMPILE-TIME-checked typed
+// where-clauses / projections (User::f::age) that lower to the same keyma::Value the raw
+// API produces. Additive and compile-time only — the runtime metadata (schema()) is
+// unaffected.
+function emitFieldDescriptors(C: string, stored: readonly IRField[], deps: ModuleEmitDeps): string[] {
+    if (stored.length === 0) return [];
+    const lines: string[] = [`    struct f {`];
+    for (const fld of stored) {
+        const vt = whereValueType(fld, deps.cppTypeByName, deps.enumTypeByName);
+        const rt = refTargetType(fld, deps.cppTypeByName);
+        lines.push(
+            `        struct ${fld.name}_ { using Owner = ${C}; using Value = ${vt}; using RefTarget = ${rt};` +
+            ` static constexpr std::string_view key() { return ${JSON.stringify(fld.name)}; }` +
+            ` static constexpr keyma::FieldKind kind = ${fieldKind(fld)}; };`,
+        );
+    }
+    for (const fld of stored) lines.push(`        static constexpr ${fld.name}_ ${fld.name}{};`);
+    lines.push(`    };`);
     return lines;
 }
 

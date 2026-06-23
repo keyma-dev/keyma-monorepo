@@ -51,6 +51,24 @@ describe("emitCpp — library bundle", async () => {
         assert.ok(u.includes("static_assert(std::uses_allocator_v<User"));
     });
 
+    it("emits typed field descriptors (struct f) for the where/projection DSL", () => {
+        const u = fileBySuffix(files, "models/user.hpp");
+        assert.ok(u.includes("    struct f {"), "nested struct f of descriptors");
+        // a scalar string field → Ordered, Value is the member type, no ref target
+        assert.ok(u.includes(
+            'struct firstName_ { using Owner = User; using Value = std::pmr::string; using RefTarget = void;'
+            + ' static constexpr std::string_view key() { return "firstName"; }'
+            + ' static constexpr keyma::FieldKind kind = keyma::FieldKind::Ordered; };'));
+        // named enum → Enum, Value is the enum class
+        assert.ok(u.includes("using Value = app::models::user::Status; using RefTarget = void;"));
+        assert.ok(u.includes('return "status"; } static constexpr keyma::FieldKind kind = keyma::FieldKind::Enum;'));
+        // reference → Reference, Value is the target's id type, RefTarget is the target struct
+        assert.ok(u.includes("using Value = std::pmr::string; using RefTarget = app::models::tag::Tag;"));
+        assert.ok(u.includes('return "primaryTag"; } static constexpr keyma::FieldKind kind = keyma::FieldKind::Reference;'));
+        // a constexpr instance per field so callers write User::f::firstName
+        assert.ok(u.includes("static constexpr firstName_ firstName{};"));
+    });
+
     it("named enum lowers to an enum class with keyma:: to_string/from_string specializations", () => {
         const u = fileBySuffix(files, "models/user.hpp");
         assert.ok(u.includes("enum class Status { Active, Archived };"));
@@ -134,6 +152,22 @@ describe("emitCpp — library bundle", async () => {
         assert.ok(s.includes('#include "models/tag.hpp"'));
     });
 
+    it("emits typed service-call client stubs (CallLeaf builders) as an opt-in header", () => {
+        const c = fileBySuffix(files, "service-client.hpp");
+        assert.ok(c.includes("#include <keyma/client.hpp>"));                       // depends on the client runtime
+        assert.ok(c.includes("namespace app::client {"));
+        assert.ok(c.includes("struct AccountService {"));
+        // schema return (IR reference) → hydrate the full object to the value type
+        assert.ok(c.includes("static keyma::CallLeaf<app::models::user::User> signup(const app::models::user::User& user, keyma::alloc_t __alloc = {})"));
+        assert.ok(c.includes('__args.set("user", keyma::to_value(user, __alloc));'));  // embedded arg → full object
+        assert.ok(c.includes("static keyma::CallLeaf<bool> resend(const std::pmr::string& email, keyma::alloc_t __alloc = {})"));
+        assert.ok(c.includes("static keyma::CallLeaf<std::pmr::vector<app::models::tag::Tag>> listTags(keyma::alloc_t __alloc = {})"));  // array return
+        assert.ok(c.includes("keyma::Keyma::call("));
+        // the opt-in stub header is NOT pulled into index.hpp (keeps it vendor-safe)
+        const idx = fileBySuffix(files, "index.hpp");
+        assert.ok(!idx.includes("service-client.hpp"), "service-client.hpp must stay opt-in");
+    });
+
     it("computes cross-header includes from refs and validator/formatter use", () => {
         const u = fileBySuffix(files, "models/user.hpp");
         for (const inc of ['#include <keyma/runtime.hpp>', '#include "validators.hpp"', '#include "formatters.hpp"', '#include "models/address.hpp"', '#include "models/tag.hpp"']) {
@@ -209,7 +243,8 @@ describe("emitCpp — vendorRuntime (zero-dependency drop)", async () => {
         assert.ok(paths.includes("out/keyma_runtime.hpp"), `missing vendored runtime: ${paths.join(", ")}`);
         const rt = fileBySuffix(files, "keyma_runtime.hpp");
         assert.ok(rt.includes("class Value"));
-        assert.ok(rt.includes("std::move_only_function"));
+        assert.ok(rt.includes("class move_only_function"), "vendored runtime should carry the move_only_function polyfill");
+        assert.ok(!/\bstd::move_only_function\s*</.test(rt), "vendored runtime should not depend on std::move_only_function");
         assert.ok(rt.includes("struct SchemaMeta"));
         assert.ok(rt.includes("struct value_traits"));
         assert.ok(rt.includes("from_value"));

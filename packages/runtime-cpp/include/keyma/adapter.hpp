@@ -28,10 +28,16 @@ struct AdapterProjection {
     Value fields;                                 // object spec, or null = all
     std::pmr::vector<PopulateNode> populate;
 
-    AdapterProjection() : fields(), populate() {}
-    explicit AdapterProjection(alloc_t a) : fields(a), populate(a) {}
-    AdapterProjection(const AdapterProjection& o, alloc_t a) : fields(o.fields, a), populate(o.populate, a) {}
-    AdapterProjection(AdapterProjection&& o, alloc_t a) : fields(std::move(o.fields), a), populate(std::move(o.populate), a) {}
+    // Defined out-of-line (after PopulateNode is complete): every constructor here
+    // instantiates std::vector<PopulateNode>'s operations (even the default/allocator ctors
+    // pull in ~vector for cleanup), which libc++ allows only for a complete element type.
+    // PopulateNode holds an AdapterProjection by value, so it can only be completed below.
+    // (The defaulted copy/move/assign members are fine inline — libc++ instantiates those
+    // at their first use, where PopulateNode is already complete.)
+    AdapterProjection();
+    explicit AdapterProjection(alloc_t a);
+    AdapterProjection(const AdapterProjection& o, alloc_t a);
+    AdapterProjection(AdapterProjection&& o, alloc_t a);
     AdapterProjection(const AdapterProjection&) = default;
     AdapterProjection(AdapterProjection&&) = default;
     AdapterProjection& operator=(const AdapterProjection&) = default;
@@ -55,6 +61,14 @@ struct PopulateNode {
     PopulateNode& operator=(PopulateNode&&) = default;
     alloc_t get_allocator() const noexcept { return field.get_allocator(); }
 };
+
+// AdapterProjection's constructors, now that PopulateNode is complete.
+inline AdapterProjection::AdapterProjection() : fields(), populate() {}
+inline AdapterProjection::AdapterProjection(alloc_t a) : fields(a), populate(a) {}
+inline AdapterProjection::AdapterProjection(const AdapterProjection& o, alloc_t a)
+    : fields(o.fields, a), populate(o.populate, a) {}
+inline AdapterProjection::AdapterProjection(AdapterProjection&& o, alloc_t a)
+    : fields(std::move(o.fields), a), populate(std::move(o.populate), a) {}
 
 struct ListQuery {
     using allocator_type = alloc_t;

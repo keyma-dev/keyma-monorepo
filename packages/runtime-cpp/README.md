@@ -63,8 +63,10 @@ C++23 has no standard event loop, so the I/O-bearing interfaces are templated on
 default everything is synchronous and zero-overhead. To run on `std::future`, a coroutine
 task, or any executor, specialize the single `async_traits<YourAsync>` customization point
 (`ready` / `then` / `attempt` / `swallow`) and `is_async`/`payload` for your type — the
-runtime never spawns threads or assumes an executor. See `test/futures.test.cpp` for a
-worked `std::future` policy.
+runtime never spawns threads or assumes an executor. `async.hpp` documents the exact
+contract; `test/coroutine.test.cpp` is a worked, genuinely-suspending C++23 coroutine-task
+policy with a single-threaded run loop, and `test/futures.test.cpp` a (blocking)
+`std::future` policy.
 
 ```cpp
 keyma::KeymaServer<> server({ .schemas = schemas, .adapter = &adapter, .alloc = a });
@@ -82,6 +84,35 @@ npm install @keyma/runtime-cpp
 c++ -std=c++23 -I node_modules/@keyma/runtime-cpp/include -I <generated-bundle-dir> main.cpp
 ```
 
+### CMake
+
+A `CMakeLists.txt` ships with the package, exposing a header-only INTERFACE target
+`keyma::runtime` (adds `include/` to the path and requests C++23). Integrate it any of the
+usual ways:
+
+```cmake
+# vendored / monorepo
+add_subdirectory(path/to/runtime-cpp)
+
+# FetchContent
+include(FetchContent)
+FetchContent_Declare(keyma-runtime-cpp GIT_REPOSITORY <repo> GIT_TAG <tag>
+                     SOURCE_SUBDIR packages/runtime-cpp)
+FetchContent_MakeAvailable(keyma-runtime-cpp)
+
+# installed (cmake --install . --prefix <p>) or npm-installed package
+find_package(keyma-runtime-cpp CONFIG REQUIRED)
+
+target_link_libraries(my_app PRIVATE keyma::runtime)
+```
+
+Building the package standalone (`cmake -S . -B build && ctest --test-dir build`) compiles
+and runs the test suite; tests and install rules default off when consumed via
+`add_subdirectory` / `FetchContent` (toggle with `KEYMA_RUNTIME_CPP_BUILD_TESTS` /
+`KEYMA_RUNTIME_CPP_INSTALL`). On macOS configure with `-DCMAKE_CXX_COMPILER=g++-14`.
+
+### Vendored runtime
+
 If you prefer a self-contained drop with no external include path, set
 `vendorRuntime: true` on the C++ target in `keyma.config.ts`. The backend then emits a
 verbatim copy of this header as `keyma_runtime.hpp` into each bundle, and generated
@@ -91,7 +122,14 @@ truth — the backend's vendored copy is auto-generated from it
 
 ## C++23 requirement
 
-The header uses `std::move_only_function`, `std::expected`, `std::pmr`, `std::format`,
-and the chrono calendar. A C++23 standard library that provides `std::move_only_function`
-is required — libstdc++ 14+ works; Apple clang's libc++ does not yet. On macOS, install a
-recent GCC and set `KEYMA_CXX=g++-14` (or `g++-15`).
+The runtime uses `std::expected`, `std::pmr`, `std::format`, and the chrono calendar, and
+ships its own `keyma::move_only_function` rather than depending on `std::move_only_function`.
+Any C++23 standard library that provides those features works — both libstdc++ 14+ and Apple
+clang 17's libc++ (whose `std::move_only_function` is missing, which is why the runtime
+carries its own). The test runner honours a `KEYMA_CXX` override and otherwise picks the
+first `g++`/`clang++` on `PATH`.
+
+
+## Future work
+
+- Use of C++26 compile-time reflection to simplify generated code.

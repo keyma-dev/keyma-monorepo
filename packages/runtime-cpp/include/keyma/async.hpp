@@ -1,21 +1,60 @@
 #pragma once
 
-// Async policy core (@keyma/runtime-cpp). The runtime's I/O-bearing interfaces
-// (adapter, plugin, transport, service, server) are templated on a policy
-// `template<class> class Async`, defaulting to `keyma::Sync` (an identity wrapper).
-// With Async=Sync everything is synchronous and zero-overhead; the whole server/client
-// is written once against the `async_traits<Async>` customization point below.
+// Async policy core (@keyma/runtime-cpp).
 //
-// Bring your own scheduler: to run on std::future or a coroutine task, specialize
-// `async_traits<YourAsync>` (and `is_async`/`payload` for it). For ANY non-Sync policy:
-//   * `then` and `attempt`/`swallow` must capture exceptions INTO the resulting Async<T>
-//     (the way std::future stores them), since a throw cannot unwind out of a deferred
-//     continuation, and
-//   * the policy is responsible for where continuations run — that is the scheduler the
-//     runtime deliberately does not provide.
-// This header is standalone (no <future>, no runtime.hpp); the std::future / task
-// specializations live in user code.
+// WHAT `Async<>` IS. The runtime's I/O-bearing interfaces (adapter, plugin, transport,
+// service, server) are templated on an async *policy* `template<class> class Async` —
+// a one-argument class template where `Async<T>` is "a T that will be available, maybe
+// later". The default is `keyma::Sync` (an identity wrapper: `Sync<T>` simply holds a T,
+// already available), so out of the box everything is synchronous and zero-overhead. Plug
+// `Async = std::future`, a coroutine task, an executor's future, etc. to run asynchronously.
+// The whole server/client is written exactly once, in continuation-passing style, against
+// the `async_traits<Async>` customization point — it never names a concrete async type.
+//
+// HOW TO PLUG IN A POLICY (bring your own scheduler). For your `template<class> class A`,
+// provide three pieces:
+//
+//   1. `template<class U> struct keyma::is_async<A<U>> : std::true_type {};`
+//      `template<class U> struct keyma::payload<A<U>> { using type = U; };`
+//      — so the runtime can recognise your type and read the T out of `A<T>`.
+//
+//   2. `template<> struct keyma::async_traits<A> { ...static members... };`
+//      — the monad. Exactly these static members are required (T, U arbitrary; F a callable):
+//
+//        A<decay_t<T>> ready(T&& v)         // wrap an already-available value
+//        A<void>       ready()              // the void-carrier, already-available
+//        A<U>          then(A<T>&& m, F&& f) // SEQUENCING: when m yields its T, call f(T).
+//        A<U>          then(A<void>&& m, F&& f) //   f returns U  -> A<U>
+//                                              //   f returns void -> A<void>
+//                                              //   f returns A<U> -> A<U>  (FLATTENED, not A<A<U>>)
+//        A<T>          attempt(Thunk th, OnError oe) // run th() (a ()->A<T> producer) guarded;
+//                                                    //   map any exception to oe(exception_ptr)->T
+//        A<void>       swallow(Thunk th)             // run th() (a ()->A<void>), discard exceptions
+//
+//      `then`'s flatten rule (f returning A<U> collapses to A<U>) is what lets a handler
+//      hand back another async step mid-chain — it mirrors JS `await` over a value-or-promise.
+//
+// CONTRACT FOR DEFERRED POLICIES (anything other than Sync, i.e. work that actually runs
+// later rather than inline):
+//   * `then`/`attempt`/`swallow` must capture an exception INTO the resulting `A<...>` (the
+//     way std::future stores it) and re-raise it at the next `then`/extraction — a throw
+//     can't unwind out of a continuation that runs after its caller returned.
+//   * YOU own where continuations run: `then` may resume on whatever executor/loop you like.
+//     The runtime provides the algebra, never a scheduler.
+//   * The runtime keeps the `request` and `RequestContext` passed to `KeymaServer::handle`
+//     alive for the whole returned `A<...>` (so your continuations may reference them), and
+//     it sequences its own state correctly across suspension. But a *plugin/adapter* you
+//     write must itself capture by VALUE anything it reads after the first suspension point
+//     (e.g. don't stash a `const Value&` argument and read it after a `co_await`).
+//
+// `keyma::Sync` is the worked reference implementation below; `test/coroutine.test.cpp`
+// is a worked lazy-coroutine-task policy with a single-threaded run loop and genuinely
+// suspending adapter, and `test/futures.test.cpp` is a (blocking) std::future policy.
+//
+// This header is standalone (no <future>, no <coroutine>, no runtime.hpp); the
+// std::future / coroutine specializations live in the consuming code, not here.
 
+#include <exception>
 #include <iterator>
 #include <type_traits>
 #include <utility>

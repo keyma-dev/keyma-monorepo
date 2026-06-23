@@ -1,7 +1,7 @@
 #pragma once
 
 // Field validation for @keyma/runtime-cpp (mirror of runtime-js `validate.ts`).
-// Synchronous: the C++ ValidatorFn is a synchronous std::move_only_function. Skips
+// Synchronous: the C++ ValidatorFn is a synchronous move_only_function. Skips
 // computed fields; an absent required field yields a "required" error; otherwise each
 // field validator runs against the present value. Returns the collected errors.
 

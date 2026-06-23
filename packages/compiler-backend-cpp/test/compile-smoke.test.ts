@@ -14,23 +14,22 @@ import { sampleIR } from "./fixtures.js";
 const RUNTIME_INC = join(dirname(fileURLToPath(import.meta.url)), "../../../runtime-cpp/include");
 
 /**
- * Probe for a C++23 compiler whose standard library actually provides the features
- * the generated code uses (notably std::move_only_function — absent from Apple
- * clang 17's libc++). Returns the compiler command, or null to skip the suite.
+ * Probe for a C++23 compiler whose standard library provides the features the generated
+ * code uses (std::expected, std::pmr, std::format, the chrono calendar). The runtime
+ * ships its own move_only_function, so std::move_only_function is NOT required — which is
+ * why this also detects Apple clang. Returns the compiler command, or null to skip.
  */
 function detectCxx23(): string | null {
     const probe = `#include <memory_resource>
 #include <expected>
-#include <functional>
 #include <format>
 #include <chrono>
 int main() {
-    std::move_only_function<int() const> f = [] { return 1; };
     std::expected<void, int> e{};
     std::pmr::string s{"x"};
     auto t = std::format("{}", 1);
     std::chrono::sys_days d{std::chrono::year{2020}/1/1};
-    return f() + (e ? 0 : 1) + (int)s.size() + (int)t.size() + (int)d.time_since_epoch().count() * 0;
+    return (e ? 0 : 1) + (int)s.size() + (int)t.size() + (int)d.time_since_epoch().count() * 0;
 }`;
     const candidates = [process.env["KEYMA_CXX"], "g++-15", "g++-14", "g++-13", "clang++-18", "clang++-17", "g++", "clang++", "c++"].filter(Boolean) as string[];
     for (const cc of candidates) {
@@ -131,7 +130,7 @@ describe("compile-smoke — generated C++ compiles under -std=c++23", () => {
 
     it("emits a library bundle, writes it to disk, and compiles a consumer", async (t) => {
         if (cxx === null) {
-            t.skip("no C++23 compiler with std::move_only_function found (set KEYMA_CXX to enable)");
+            t.skip("no C++23 compiler found (set KEYMA_CXX to enable)");
             return;
         }
         const dir = mkdtempSync(join(tmpdir(), "keyma-cpp-"));
@@ -158,7 +157,7 @@ describe("compile-smoke — generated C++ compiles under -std=c++23", () => {
 
     it("vendorRuntime emits a self-contained bundle that compiles WITHOUT the runtime -I", async (t) => {
         if (cxx === null) {
-            t.skip("no C++23 compiler with std::move_only_function found (set KEYMA_CXX to enable)");
+            t.skip("no C++23 compiler found (set KEYMA_CXX to enable)");
             return;
         }
         const dir = mkdtempSync(join(tmpdir(), "keyma-cpp-vendor-"));
