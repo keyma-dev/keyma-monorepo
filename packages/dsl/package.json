@@ -1,6 +1,6 @@
 {
   "name": "@keyma/dsl",
-  "version": "0.0.0",
+  "version": "0.0.1",
   "description": "Type-only declarations for the Keyma authoring DSL — decorators, validators, formatters, and semantic types",
   "type": "module",
   "main": "./dist/src/index.js",

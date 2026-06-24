@@ -1,6 +1,6 @@
 {
   "name": "@keyma/compiler-frontend-ts",
-  "version": "0.0.0",
+  "version": "0.0.1",
   "description": "TypeScript compiler frontend for Keyma — ingests .ts schema files and produces IR",
   "type": "module",
   "main": "./dist/src/index.js",
@@ -27,7 +27,7 @@
     "test": "tsc && node --test dist/test/*.test.js"
   },
   "dependencies": {
-    "@keyma/ir": "*",
+    "@keyma/ir": "^0.0.1",
     "typescript": "*"
   },
   "devDependencies": {

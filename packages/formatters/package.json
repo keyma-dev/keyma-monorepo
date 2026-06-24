@@ -1,6 +1,6 @@
 {
   "name": "@keyma/formatters",
-  "version": "0.0.0",
+  "version": "0.0.1",
   "description": "Built-in formatters for Keyma schemas (pure-TS source, compiled into schemas by Keyma)",
   "type": "module",
   "main": "./src/index.ts",
@@ -27,7 +27,7 @@
     "test": "tsc --noEmit"
   },
   "dependencies": {
-    "@keyma/dsl": "*"
+    "@keyma/dsl": "^0.0.1"
   },
   "devDependencies": {
     "typescript": "*"

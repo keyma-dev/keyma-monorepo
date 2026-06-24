@@ -1,6 +1,6 @@
 {
     "name": "@keyma/compiler",
-    "version": "0.0.0",
+    "version": "0.0.1",
     "description": "Compiler driver and plugin interfaces for Keyma — runs a frontend, validates IR, and drives backend emit",
     "type": "module",
     "main": "./dist/src/index.js",
@@ -23,7 +23,7 @@
         "test": "tsc && node --test dist/test/*.test.js"
     },
     "dependencies": {
-        "@keyma/ir": "*"
+        "@keyma/ir": "^0.0.1"
     },
     "devDependencies": {
         "@types/node": "*",

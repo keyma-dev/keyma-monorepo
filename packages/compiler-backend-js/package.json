@@ -1,6 +1,6 @@
 {
     "name": "@keyma/compiler-backend-js",
-    "version": "0.0.0",
+    "version": "0.0.1",
     "description": "JavaScript backend for Keyma — emits dependency-free client/server JS bundles from IR",
     "type": "module",
     "main": "./dist/src/index.js",
@@ -26,8 +26,8 @@
         "test": "tsc && cp -r test/snapshots dist/test/ && node --test dist/test/*.test.js"
     },
     "dependencies": {
-        "@keyma/ir": "*",
-        "@keyma/compiler": "*"
+        "@keyma/ir": "^0.0.1",
+        "@keyma/compiler": "^0.0.1"
     },
     "devDependencies": {
         "@types/node": "*",

@@ -1,6 +1,6 @@
 {
     "name": "@keyma/runtime-js",
-    "version": "0.0.0",
+    "version": "0.0.1",
     "description": "Tiny runtime to consume Keyma-generated JavaScript — validate/format/defaults, query builder, server, and adapter interfaces",
     "type": "module",
     "exports": {
@@ -23,7 +23,7 @@
         "test": "tsc && node --test dist/test/*.test.js"
     },
     "dependencies": {
-        "@keyma/dsl": "*"
+        "@keyma/dsl": "^0.0.1"
     },
     "devDependencies": {
         "@types/node": "*",
