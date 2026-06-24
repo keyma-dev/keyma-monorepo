@@ -45,12 +45,12 @@ const BASIC_IR: KeymaIR = {
                 { name: "firstName", type: { kind: "string" }, visibility: "public", readonly: false, required: true, validators: [{ name: "minLength", params: { value: 2 } }], formatters: [{ phase: "change", spec: { name: "trim" } }], indexes: [], source: SRC },
                 { name: "lastName", type: { kind: "string" }, visibility: "public", readonly: false, required: true, validators: [], formatters: [], indexes: [], source: SRC },
                 { name: "secretNote", type: { kind: "string" }, visibility: "private", readonly: false, required: false, validators: [], formatters: [], indexes: [], source: SRC },
+            ],
+            // `fullName` is a getter behavior (a re-emitted accessor), not a schema field.
+            methods: [
                 {
-                    name: "fullName", type: { kind: "string" }, visibility: "public", readonly: true, required: true,
-                    validators: [], formatters: [], indexes: [],
-                    computed: {
-                        expression: { kind: "template", parts: [{ kind: "field", name: "firstName" }, { kind: "literal", value: " " }, { kind: "field", name: "lastName" }] },
-                    },
+                    name: "fullName", kind: "getter", params: [], returnType: { kind: "string" }, visibility: "public",
+                    statements: [{ kind: "return", value: { kind: "template", parts: [{ kind: "field", name: "firstName" }, { kind: "literal", value: " " }, { kind: "field", name: "lastName" }] } }],
                     source: SRC,
                 },
             ],
@@ -415,9 +415,9 @@ describe("emitJs — client model", () => {
         assert.ok(!content.includes("secretNote"), "private field should be excluded");
     });
 
-    it("client model includes computed getter", () => {
+    it("client model includes the getter accessor (behavior)", () => {
         const content = fileContent(files, "dist/js/client/models/user.js");
-        assert.ok(content.includes("get fullName()"), "missing computed getter");
+        assert.ok(content.includes("get fullName()"), "missing getter accessor");
         assert.ok(content.includes("`${this.firstName} ${this.lastName}`"), "wrong getter expression");
     });
 
@@ -503,17 +503,23 @@ describe("emitJs — server model", () => {
         assert.ok(content.includes('"direction": 1'), "schema index missing from server");
     });
 
-    it("server model emits materializer for computed fields", () => {
+    it("server model emits the getter accessor and NO materializer", () => {
         const content = fileContent(files, "dist/js/server/models/user.js");
-        assert.ok(content.includes("function materializeUser"), "materializer missing");
-        assert.ok(content.includes("value.fullName ="), "materializer should assign computed field");
-        assert.ok(content.includes("`${value.firstName} ${value.lastName}`"), "materializer expression wrong");
+        assert.ok(content.includes("get fullName()"), "getter accessor missing from server model");
+        assert.ok(!content.includes("function materialize"), "materializers are removed — none should be emitted");
     });
 
-    it("server index.js exports materializer", () => {
+    it("server schema metadata does not include the getter as a field", () => {
+        const content = fileContent(files, "dist/js/server/models/user.js");
+        const literal = content.slice(content.indexOf("User.schema = Object.freeze("));
+        assert.ok(!literal.includes(`"name": "fullName"`), "getter must not appear as a schema field");
+        assert.ok(!literal.includes('"computed"'), "no computed flag in schema metadata");
+    });
+
+    it("server index.js does not export a materializer", () => {
         const content = fileContent(files, "dist/js/server/index.js");
-        assert.ok(content.includes("materializeUser"), "materializer not in server index");
-        assert.ok(content.includes(`from "./models/user.js"`), "materializer should be re-exported from the model file");
+        assert.ok(!content.includes("materialize"), "materializers are removed — server index must not export one");
+        assert.ok(content.includes(`from "./models/user.js"`), "model should still be re-exported");
     });
 });
 
@@ -836,14 +842,15 @@ describe("emitJs — library mode", () => {
         assert.ok(content.includes("secretNote"), "library mode should include private fields");
     });
 
-    it("emits materializers for computed fields", () => {
+    it("emits the getter accessor and no materializer", () => {
         const content = fileContent(files, "dist/js/models/user.js");
-        assert.ok(content.includes("function materializeUser"), "library mode should emit materializers");
+        assert.ok(content.includes("get fullName()"), "library mode should emit the getter accessor");
+        assert.ok(!content.includes("function materialize"), "materializers are removed");
     });
 
-    it("index.js exports materializer", () => {
+    it("index.js does not export a materializer", () => {
         const content = fileContent(files, "dist/js/index.js");
-        assert.ok(content.includes("materializeUser"), "library index should export materializer");
+        assert.ok(!content.includes("materialize"), "library index must not export a materializer");
     });
 });
 

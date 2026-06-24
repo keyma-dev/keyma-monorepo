@@ -288,37 +288,37 @@ describe("compile ephemeral", () => {
     });
 });
 
-// ─── Golden IR — computed getters ────────────────────────────────────────────
+// ─── Golden IR — getters (behaviors, not fields) ─────────────────────────────
 
-describe("compile computed getters", () => {
+describe("compile getters as behaviors", () => {
     const result = compile({ files: [fixture("computed.ts")] });
 
-    it("produces no errors", () => {
+    function getterExpr(schemaName: string, name: string) {
+        const schema = schemaByName(result, schemaName);
+        const m = (schema.methods ?? []).find((mm) => mm.kind === "getter" && mm.name === name);
+        const stmt = m?.statements[0];
+        return stmt !== undefined && stmt.kind === "return" ? (stmt.value ?? undefined) : undefined;
+    }
+
+    it("produces no errors (KEYMA098 deferral warnings are not errors)", () => {
         assert.deepEqual(errorCodes(result), [], `Errors: ${JSON.stringify(result.diagnostics)}`);
     });
 
-    it("displayTitle is a computed field with template expression", () => {
+    it("getters are behaviors, not schema fields", () => {
         const schema = schemaByName(result, "Product");
-        const f = schema.fields.find((f) => f.name === "displayTitle");
-        assert.ok(f, "displayTitle field not found");
-        assert.ok(f.computed !== undefined, "computed should be set");
-        assert.equal(f.readonly, true);
+        for (const name of ["displayTitle", "priceWithTax", "isExpensive"]) {
+            assert.equal(schema.fields.find((f) => f.name === name), undefined, `${name} must not be a field`);
+            const m = (schema.methods ?? []).find((mm) => mm.kind === "getter" && mm.name === name);
+            assert.ok(m !== undefined, `${name} should be a getter behavior`);
+        }
     });
 
-    it("priceWithTax is a computed field with binary expression", () => {
-        const schema = schemaByName(result, "Product");
-        const f = schema.fields.find((f) => f.name === "priceWithTax");
-        assert.ok(f, "priceWithTax not found");
-        assert.ok(f.computed !== undefined);
-        assert.equal(f.computed.expression.kind, "binary");
+    it("priceWithTax getter has a binary expression", () => {
+        assert.equal(getterExpr("Product", "priceWithTax")?.kind, "binary");
     });
 
-    it("isExpensive is a computed field with comparison", () => {
-        const schema = schemaByName(result, "Product");
-        const f = schema.fields.find((f) => f.name === "isExpensive");
-        assert.ok(f, "isExpensive not found");
-        assert.ok(f.computed !== undefined);
-        assert.equal(f.computed.expression.kind, "binary");
+    it("isExpensive getter has a comparison (binary) expression", () => {
+        assert.equal(getterExpr("Product", "isExpensive")?.kind, "binary");
     });
 });
 
@@ -372,8 +372,8 @@ describe("KEYMA011 — non-literal decorator argument", () => {
     });
 });
 
-describe("getter/setter pair — no longer a KEYMA015 error", () => {
-    it("accepts a matching getter/setter pair (computed field + setter behavior)", () => {
+describe("getter/setter pair — both are behaviors", () => {
+    it("accepts a matching getter/setter pair (getter behavior + setter behavior)", () => {
         const result = cv({
             "schema.ts": `
                 import { Schema, Computed } from "@keyma/dsl";
@@ -386,7 +386,8 @@ describe("getter/setter pair — no longer a KEYMA015 error", () => {
         });
         assert.deepEqual(errorCodes(result), [], `Errors: ${JSON.stringify(result.diagnostics)}`);
         const foo = result.ir.schemas.find((s) => s.sourceName === "Foo")!;
-        assert.ok(foo.fields.some((f) => f.name === "name" && f.computed !== undefined));
+        assert.equal(foo.fields.find((f) => f.name === "name"), undefined, "getter must not be a field");
+        assert.ok((foo.methods ?? []).some((m) => m.name === "name" && m.kind === "getter"));
         assert.ok((foo.methods ?? []).some((m) => m.name === "name" && m.kind === "setter"));
     });
 });
@@ -469,7 +470,9 @@ describe("KEYMA037 — public schema has only private fields", () => {
         assert.ok(!hasError(result, CODES.KEYMA037), `Unexpected KEYMA037. Got: ${JSON.stringify(result.diagnostics)}`);
     });
 
-    it("treats a public computed getter as public surface (no KEYMA037)", () => {
+    it("does not treat a public getter as public field surface (KEYMA037 still fires)", () => {
+        // Getters are behaviors, not stored/projected data — a schema whose only
+        // public member is a getter still has no readable public field.
         const result = cv({
             "schema.ts": `
                 import { Schema, Computed } from "@keyma/dsl";
@@ -479,7 +482,7 @@ describe("KEYMA037 — public schema has only private fields", () => {
                 }
             `,
         });
-        assert.ok(!hasError(result, CODES.KEYMA037), `Unexpected KEYMA037. Got: ${JSON.stringify(result.diagnostics)}`);
+        assert.ok(hasError(result, CODES.KEYMA037), `Expected KEYMA037. Got: ${JSON.stringify(result.diagnostics)}`);
     });
 
     it("exempts a fieldless public schema", () => {

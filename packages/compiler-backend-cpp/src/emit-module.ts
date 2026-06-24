@@ -5,7 +5,7 @@ import type {
 import { exprToCpp, type ExprOpts } from "./emit-expression.js";
 import { stmtToCpp, factoryIdent, type ReturnLowerer } from "./emit-validators.js";
 import { irTypeToCpp, memberType, traitsArg, whereValueType, fieldKind, refTargetType } from "./ir-type-to-cpp.js";
-import { buildSchemaMeta, buildMaterializer } from "./schema-data.js";
+import { buildSchemaMeta } from "./schema-data.js";
 import { buildApplyDefaults } from "./emit-defaults.js";
 import { emitEnumClass, emitEnumConversions } from "./emit-enum.js";
 import { includePath, namespaceOf, cppSanitizer } from "./module-path.js";
@@ -13,7 +13,6 @@ import { includePath, namespaceOf, cppSanitizer } from "./module-path.js";
 export type ModuleEmitDeps = {
     includePrivate: boolean;
     includeIndexes: boolean;
-    emitMaterializers: boolean;
     formPhasesOnly: boolean;
     includeDefaults: boolean;
     nsRoot: string;
@@ -71,7 +70,7 @@ export function emitModuleCpp(
     if (traitDecls.length > 0) { lines.push(""); lines.push(...traitDecls); }
 
     // ── Enums first: definitions + keyma:: conversions + std::formatter, all BEFORE
-    // the structs. A computed getter may interpolate an enum via std::format (analyzed
+    // the structs. A getter may interpolate an enum via std::format (analyzed
     // in complete-class context), so the formatter specialization must already be seen. ──
     if (enums.length > 0) {
         lines.push("", `namespace ${ns} {`);
@@ -106,7 +105,7 @@ export function emitModuleCpp(
     // consumer's odr-use, where every specialization is fully defined. ──
     for (const schema of ordered) { lines.push(...emitValueTraits(schema, deps)); lines.push(""); }
 
-    // ── Block 2b: out-of-line apply_defaults / materializers / schema() + the thin
+    // ── Block 2b: out-of-line apply_defaults / schema() + the thin
     // from_value/to_value forwarder definitions (after the value_traits they delegate to). ──
     lines.push(`namespace ${ns} {`);
     if (funcsUsed.size > 0) lines.push(`using namespace ${deps.nsRoot}::functions;`);
@@ -116,12 +115,6 @@ export function emitModuleCpp(
         for (const schema of ordered) {
             const ad = buildApplyDefaults(schema, deps.includePrivate);
             if (ad !== null) lines.push(ad.def, "");
-        }
-    }
-    if (deps.emitMaterializers) {
-        for (const schema of ordered) {
-            const mat = buildMaterializer(schema, deps.includePrivate);
-            if (mat !== null) lines.push(mat, "");
         }
     }
     for (const schema of ordered) {
@@ -137,11 +130,12 @@ export function emitModuleCpp(
 
 function emitStruct(schema: IRSchema, deps: ModuleEmitDeps): string[] {
     const fields = visibleFields(schema, deps.includePrivate);
-    const stored = fields.filter((f) => f.computed === undefined);
-    const computedNames = new Set(fields.filter((f) => f.computed !== undefined).map((f) => f.name));
+    const stored = fields;
+    // Getter behaviors are member functions, so a reference to one is a call `this->n()`.
+    const getterNames = new Set(visibleMethods(schema, deps.includePrivate).filter((m) => m.kind === "getter").map((m) => m.name));
     const refFieldNames = new Set(fields.filter((f) => f.type.kind === "reference").map((f) => f.name));
     const opts: ExprOpts = {
-        fieldExpr: (n) => (computedNames.has(n) ? `this->${n}()` : `this->${n}`),
+        fieldExpr: (n) => (getterNames.has(n) ? `this->${n}()` : `this->${n}`),
         isRefField: (n) => refFieldNames.has(n),
     };
     const C = schema.sourceName;
@@ -182,13 +176,7 @@ function emitStruct(schema: IRSchema, deps: ModuleEmitDeps): string[] {
     lines.push(`    static ${C} from_value(const keyma::Value& v, const allocator_type& a);`);
     lines.push(`    keyma::Value to_value(const allocator_type& a) const;`);
 
-    // Computed getters.
-    for (const f of fields) {
-        if (f.computed === undefined) continue;
-        lines.push(`    auto ${f.name}() const { return ${exprToCpp(f.computed.expression, opts)}; }`);
-    }
-
-    // Methods / setters.
+    // Getters, setters, and methods — all behaviors re-emitted as member functions.
     for (const m of visibleMethods(schema, deps.includePrivate)) lines.push(...emitMethod(m, opts, deps));
 
     // Typed field descriptors (consumed by keyma/query.hpp's where/projection DSL).
@@ -227,6 +215,10 @@ function emitMethod(method: IRMethod, opts: ExprOpts, deps: ModuleEmitDeps): str
     const ret: ReturnLowerer = (v, indent) =>
         v === null ? `${indent}return;` : `${indent}return ${exprToCpp(v, opts)};`;
     const body = method.statements.map((s) => stmtToCpp(s, "        ", ret, opts));
+    if (method.kind === "getter") {
+        // A getter is a const accessor with a deduced (`auto`) return type.
+        return [`    auto ${method.name}() const {`, ...body, `    }`];
+    }
     const params = method.params.map((p) => `${irTypeToCpp(p.type, deps.cppTypeByName, deps.enumTypeByName)} ${p.name}`).join(", ");
     if (method.kind === "setter") {
         return [`    void set_${method.name}(${params}) {`, ...body, `    }`];
@@ -239,10 +231,10 @@ function emitMethod(method: IRMethod, opts: ExprOpts, deps: ModuleEmitDeps): str
 
 function emitSchemaAccessor(schema: IRSchema, deps: ModuleEmitDeps): string[] {
     const C = schema.sourceName;
-    const stored = visibleFields(schema, deps.includePrivate).filter((f) => f.computed === undefined);
+    const stored = visibleFields(schema, deps.includePrivate);
 
     // Thin forwarders to the value_traits<C> specialization (defined just above, in
-    // namespace keyma). Keeping the members means materializers and consumer code keep
+    // namespace keyma). Keeping the members means consumer code keeps
     // calling `C::from_value(...)` / `obj.to_value(a)` unchanged.
     const forwarders: string[] = [
         `inline ${C} ${C}::from_value(const keyma::Value& v, const allocator_type& a) { return keyma::from_value<${C}>(v, a); }`,
@@ -309,7 +301,7 @@ function valueTraitsForwardDecls(ns: string, schemas: readonly IRSchema[], deps:
  */
 function emitValueTraits(schema: IRSchema, deps: ModuleEmitDeps): string[] {
     const C = deps.cppTypeByName.get(schema.name) ?? schema.sourceName;
-    const stored = visibleFields(schema, deps.includePrivate).filter((f) => f.computed === undefined);
+    const stored = visibleFields(schema, deps.includePrivate);
 
     const fromBody: string[] = [];
     for (const f of stored) {
@@ -517,7 +509,6 @@ function collectFunctionRefs(schemas: readonly IRSchema[], deps: ModuleEmitDeps)
     const ids = new Set<string>();
     for (const schema of schemas) {
         for (const field of visibleFields(schema, deps.includePrivate)) {
-            if (field.computed !== undefined) collectIdentifiers(field.computed.expression, ids);
             if (deps.includeDefaults && field.default !== undefined && field.default.kind === "expression") {
                 collectIdentifiers(field.default.expression, ids);
             }

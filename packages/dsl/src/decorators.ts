@@ -104,10 +104,12 @@ export function Deprecated(_reason?: string): PropertyDecorator {
 }
 
 /**
- * Marks a getter as a computed field. Only getters carrying `@Computed()` are
- * extracted as fields; the getter body is lowered to a portable expression and
- * re-emitted by backends (as a getter and a materializer). An undecorated getter
- * is ignored; applying `@Computed()` to a non-getter is an error.
+ * Marks a getter's intent to become a stored/indexed **computed field**. That
+ * capability (persistence, indexing, materialization) is **deferred to a future
+ * release**: today every getter — decorated or not — is emitted as a plain class
+ * accessor (a behavior), never as a schema field, and `@Computed()`/`@Indexed()`
+ * on a getter are reported with a warning (`KEYMA098`) and otherwise ignored.
+ * Applying `@Computed()` to a non-getter is an error (`KEYMA019`).
  *
  * No-op at runtime — the decorator implementation does nothing.
  */

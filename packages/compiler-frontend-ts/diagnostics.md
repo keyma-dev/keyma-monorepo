@@ -54,45 +54,40 @@ A parameterized marker call is missing its required argument.
 declare name: string;
 ```
 
-### KEYMA014 — Unsupported computed getter expression
+### KEYMA014 — Unsupported getter accessor body
 
-A `@Computed()` getter body contains an expression that cannot be lowered to `IRExpression`.
-Computed getters share the same portable expression engine as validator/formatter bodies, so
-intrinsics, `typeof`, conditionals, templates and `new` are allowed; arbitrary function/method
-calls and array literals are not.
+A getter body contains an expression that cannot be lowered to `IRExpression`. A getter is a
+behavior (a re-emitted class accessor) and must be a single `return <expr>`; its body shares the
+same portable expression engine as validator/formatter bodies, so intrinsics, `typeof`,
+conditionals, templates and `new` are allowed; arbitrary function/method calls and array literals
+are not.
 
 ```typescript
-@Computed() get name() { return someExternalFunction(); } // KEYMA014
+get name(): string { return someExternalFunction(); } // KEYMA014
 ```
 
 ### KEYMA015 — (obsolete) Computed getter must have no setter
 
-**No longer emitted.** A `@Computed()` getter may now be paired with a `set` accessor:
-the getter becomes a computed field and the setter becomes a portable setter behavior
-(see "Methods and setters" in the DSL README). The code is retained but unused.
+**No longer emitted.** A getter may be paired with a `set` accessor of the same name (an accessor
+get/set pair); both are emitted as behaviors. The code is retained but unused.
 
 ```typescript
-@Computed() get name(): string { return this.firstName; }
-set name(value: string) { this.firstName = value; } // OK — getter is a computed field, setter is a behavior
+get name(): string { return this.firstName; }
+set name(value: string) { this.firstName = value; } // OK — getter + setter accessor pair
 ```
 
-### KEYMA018 — Computed getter dependency cycle
+### KEYMA018 — (obsolete) Computed getter dependency cycle
 
-Computed fields reference one another in a cycle (a self-reference is the degenerate case),
-so no materialization order exists.
+**No longer emitted.** Getters are now plain accessors (computed *fields* — storage, indexing,
+materialization — are deferred to a future release; see KEYMA098), so there is no materialization
+order to cycle-check. The code is retained but unused.
 
-```typescript
-@Computed() get a() { return this.b; }
-@Computed() get b() { return this.a; } // KEYMA018
-```
+### KEYMA019 — @Computed applied to a non-getter
 
-### KEYMA019 — @Computed requirement
-
-A getter is only treated as a computed field when decorated with `@Computed()`. An undecorated
-getter is ignored (warning); applying `@Computed()` to a plain property is an error.
+`@Computed()` only belongs on a getter (where it is currently a deferred-feature marker — see
+KEYMA098). Applying it to a plain property is an error.
 
 ```typescript
-get shout() { return this.first; }          // KEYMA019 (warning) — ignored
 @Computed() declare first: string;          // KEYMA019 (error) — not a getter
 ```
 
@@ -471,6 +466,24 @@ signatures must be explicit and concrete. Use `: void` for a method that returns
 ```
 
 > Async and generator methods are not portable; they are rejected with **KEYMA082**.
+
+---
+
+## Deferred-feature warnings
+
+### KEYMA098 — computed-field decorator on a getter is ignored (warning)
+
+A getter carries `@Computed()` and/or `@Indexed()` (or another field-only decorator such as
+`@FormField`/`@Deprecated`). Getters are emitted as plain class accessors (behaviors), but
+treating one as a **stored / indexed / materialized field** is deferred to a future release, so
+those decorators are ignored — the getter is still emitted as an accessor. Remove the decorators
+to silence the warning.
+
+```typescript
+@Indexed() @Computed() get fullName(): string { // KEYMA098 (warning) — emitted as a plain accessor
+    return `${this.first} ${this.last}`;
+}
+```
 
 ---
 

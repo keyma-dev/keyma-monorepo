@@ -4,7 +4,6 @@ import {
     Format,
     FormField,
     Indexed,
-    Computed,
     Ephemeral,
     Phase,
 } from "@keyma/dsl";
@@ -123,7 +122,8 @@ export class Post extends Entity {
     @Ephemeral()
     declare previewToken?: string;
 
-    @Computed() get summary(): string {
+    // A getter behavior (re-emitted as a class accessor, not a schema field).
+    get summary(): string {
         return `${this.title} (${this.status})`;
     }
 }

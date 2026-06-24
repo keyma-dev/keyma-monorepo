@@ -5,7 +5,7 @@ import { fileURLToPath, pathToFileURL } from "node:url";
 import { readFileSync } from "node:fs";
 import { compile, compileVirtual } from "../src/compile.js";
 import * as CODES from "../src/diagnostics.js";
-import type { IRExpression } from "@keyma/ir";
+import type { IRExpression, IRSchema } from "@keyma/ir";
 
 const __filename = fileURLToPath(import.meta.url);
 const __dirname = path.dirname(__filename);
@@ -30,6 +30,17 @@ function hasError(result: ReturnType<typeof compile>, code: string): boolean {
     return result.diagnostics.some((d) => d.code === code && d.severity === "error");
 }
 
+/**
+ * A getter is lowered to a behavior — an `IRMethod` with `kind: "getter"` whose body
+ * is a single `return <expr>` — and lives in `schema.methods`, not `schema.fields`.
+ * Return the lowered expression of a getter behavior by name.
+ */
+function getterExpr(schema: IRSchema | undefined, name: string): IRExpression | undefined {
+    const m = (schema?.methods ?? []).find((mm) => mm.kind === "getter" && mm.name === name);
+    const stmt = m?.statements[0];
+    return stmt !== undefined && stmt.kind === "return" ? (stmt.value ?? undefined) : undefined;
+}
+
 // ─── Snapshot tests for every supported expression kind ──────────────────────
 
 describe("expression lowering — snapshot", () => {
@@ -44,24 +55,30 @@ describe("expression lowering — snapshot", () => {
 
     const schema = result.ir.schemas.find((s) => s.sourceName === "Product");
 
-    for (const [fieldName, expectedExpr] of Object.entries(snapshots)) {
-        it(`lowers "${fieldName}" to the correct IRExpression`, () => {
+    for (const [getterName, expectedExpr] of Object.entries(snapshots)) {
+        it(`lowers "${getterName}" to the correct IRExpression`, () => {
             assert.ok(schema !== undefined, "Product schema not found");
-            const field = schema.fields.find((f) => f.name === fieldName);
-            assert.ok(field !== undefined, `field "${fieldName}" not found in schema`);
-            assert.ok(field.computed !== undefined, `field "${fieldName}" should be computed`);
-            assert.deepEqual(
-                field.computed.expression,
-                expectedExpr,
-                `IRExpression mismatch for "${fieldName}"`
-            );
+            const expr = getterExpr(schema, getterName);
+            assert.ok(expr !== undefined, `getter "${getterName}" not found as a behavior`);
+            assert.deepEqual(expr, expectedExpr, `IRExpression mismatch for "${getterName}"`);
         });
     }
+
+    it("does not turn getters into schema fields", () => {
+        assert.ok(schema !== undefined);
+        for (const getterName of Object.keys(snapshots)) {
+            assert.equal(
+                schema.fields.find((f) => f.name === getterName),
+                undefined,
+                `getter "${getterName}" must not be a schema field`,
+            );
+        }
+    });
 });
 
-// ─── KEYMA014 — unsupported expressions ──────────────────────────────────────
+// ─── KEYMA014 — unsupported getter body expressions ──────────────────────────
 
-describe("KEYMA014 — unsupported computed getter expressions", () => {
+describe("KEYMA014 — unsupported getter body expressions", () => {
     it("emits KEYMA014 for a call expression in a getter body", () => {
         const result = cv({
             "schema.ts": `
@@ -136,12 +153,12 @@ describe("KEYMA014 — unsupported computed getter expressions", () => {
 
 // ─── Newly-supported getter expressions (unified portable engine) ─────────────
 
-describe("computed getters — newly-supported portable expressions", () => {
-    function lowered(src: string, field: string): IRExpression | undefined {
+describe("getters — newly-supported portable expressions", () => {
+    function lowered(src: string, getter: string): IRExpression | undefined {
         const result = cv({ "schema.ts": src });
         assert.deepEqual(errorCodes(result), [], `Unexpected errors: ${JSON.stringify(result.diagnostics)}`);
         const schema = result.ir.schemas.find((s) => s.sourceName === "Foo");
-        return schema?.fields.find((f) => f.name === field)?.computed?.expression;
+        return getterExpr(schema, getter);
     }
 
     it("lowers a `new` expression", () => {
@@ -237,10 +254,10 @@ describe("computed getters — newly-supported portable expressions", () => {
     });
 });
 
-// ─── KEYMA019 — explicit @Computed requirement ───────────────────────────────
+// ─── Getters are behaviors, not fields ────────────────────────────────────────
 
-describe("KEYMA019 — getters require @Computed()", () => {
-    it("ignores an undecorated getter (warning, not a field)", () => {
+describe("getters lower to behaviors, not schema fields", () => {
+    it("lowers an undecorated getter as a getter behavior (no warning)", () => {
         const result = cv({
             "schema.ts": `
                 import { Schema } from "@keyma/dsl";
@@ -250,12 +267,16 @@ describe("KEYMA019 — getters require @Computed()", () => {
                 }
             `,
         });
+        assert.equal(errorCodes(result).length, 0, JSON.stringify(result.diagnostics));
         const foo = result.ir.schemas.find((s) => s.sourceName === "Foo");
-        assert.equal(foo?.fields.find((f) => f.name === "shout"), undefined, "undecorated getter must not become a field");
-        assert.ok(result.diagnostics.some((d) => d.code === CODES.KEYMA019 && d.severity === "warning"));
+        assert.equal(foo?.fields.find((f) => f.name === "shout"), undefined, "getter must not become a field");
+        const m = (foo?.methods ?? []).find((mm) => mm.name === "shout");
+        assert.ok(m !== undefined && m.kind === "getter", "getter should become a getter behavior");
+        // An undecorated getter carries no deferred-feature decorator → no KEYMA098.
+        assert.ok(!result.diagnostics.some((d) => d.code === CODES.KEYMA098));
     });
 
-    it("extracts a @Computed() getter as a field", () => {
+    it("warns (KEYMA098) on a @Computed getter but still emits it as a behavior", () => {
         const result = cv({
             "schema.ts": `
                 import { Schema, Computed } from "@keyma/dsl";
@@ -265,12 +286,32 @@ describe("KEYMA019 — getters require @Computed()", () => {
                 }
             `,
         });
+        assert.equal(errorCodes(result).length, 0, JSON.stringify(result.diagnostics));
         const foo = result.ir.schemas.find((s) => s.sourceName === "Foo");
-        const shout = foo?.fields.find((f) => f.name === "shout");
-        assert.ok(shout?.computed !== undefined, "decorated getter should be a computed field");
+        assert.equal(foo?.fields.find((f) => f.name === "shout"), undefined, "@Computed getter must not be a field");
+        const m = (foo?.methods ?? []).find((mm) => mm.name === "shout");
+        assert.ok(m !== undefined && m.kind === "getter");
+        assert.ok(
+            result.diagnostics.some((d) => d.code === CODES.KEYMA098 && d.severity === "warning"),
+            "expected a KEYMA098 deferral warning",
+        );
     });
 
-    it("errors when @Computed() is applied to a plain property", () => {
+    it("warns (KEYMA098) on an @Indexed getter", () => {
+        const result = cv({
+            "schema.ts": `
+                import { Schema, Computed, Indexed } from "@keyma/dsl";
+                @Schema() class Foo {
+                    declare first: string;
+                    @Indexed() @Computed() get shout(): string { return this.first; }
+                }
+            `,
+        });
+        assert.equal(errorCodes(result).length, 0, JSON.stringify(result.diagnostics));
+        assert.ok(result.diagnostics.some((d) => d.code === CODES.KEYMA098 && d.severity === "warning"));
+    });
+
+    it("errors (KEYMA019) when @Computed() is applied to a plain property", () => {
         const result = cv({
             "schema.ts": `
                 import { Schema, Computed } from "@keyma/dsl";
@@ -283,68 +324,10 @@ describe("KEYMA019 — getters require @Computed()", () => {
     });
 });
 
-// ─── KEYMA018 — computed dependency cycles ───────────────────────────────────
+// ─── Getter/setter pairs ──────────────────────────────────────────────────────
 
-describe("KEYMA018 — computed getter dependency cycles", () => {
-    it("emits KEYMA018 for a self-referential computed field", () => {
-        const result = cv({
-            "schema.ts": `
-                import { Schema, Computed } from "@keyma/dsl";
-                @Schema() class Foo {
-                    @Computed() get a(): string { return this.a; }
-                }
-            `,
-        });
-        assert.ok(hasError(result, CODES.KEYMA018), `Expected KEYMA018. Got: ${JSON.stringify(result.diagnostics)}`);
-    });
-
-    it("emits KEYMA018 for a two-field computed cycle", () => {
-        const result = cv({
-            "schema.ts": `
-                import { Schema, Computed } from "@keyma/dsl";
-                @Schema() class Foo {
-                    @Computed() get a(): string { return this.b; }
-                    @Computed() get b(): string { return this.a; }
-                }
-            `,
-        });
-        assert.ok(hasError(result, CODES.KEYMA018), `Expected KEYMA018. Got: ${JSON.stringify(result.diagnostics)}`);
-    });
-
-    it("does not flag a computed field depending on a plain field", () => {
-        const result = cv({
-            "schema.ts": `
-                import { Schema, Computed } from "@keyma/dsl";
-                @Schema() class Foo {
-                    declare first: string;
-                    @Computed() get shout(): string { return this.first; }
-                }
-            `,
-        });
-        assert.ok(!hasError(result, CODES.KEYMA018), `Unexpected KEYMA018. Got: ${JSON.stringify(result.diagnostics)}`);
-    });
-
-    it("populates dependsOn with referenced fields", () => {
-        const result = cv({
-            "schema.ts": `
-                import { Schema, Computed } from "@keyma/dsl";
-                @Schema() class Foo {
-                    declare first: string;
-                    declare last: string;
-                    @Computed() get full(): string { return \`\${this.first} \${this.last}\`; }
-                }
-            `,
-        });
-        const schema = result.ir.schemas.find((s) => s.sourceName === "Foo");
-        const full = schema?.fields.find((f) => f.name === "full");
-        assert.deepEqual(full?.computed?.dependsOn, ["first", "last"]);
-    });
-});
-
-// ─── Getter/setter pairs (formerly KEYMA015) ──────────────────────────────────
-
-describe("getter/setter pair — computed field + setter behavior", () => {
-    it("allows a getter/setter pair: getter is a computed field, setter is a behavior", () => {
+describe("getter/setter pair — both are behaviors", () => {
+    it("allows a getter/setter pair of the same name (accessor pair)", () => {
         const result = cv({
             "schema.ts": `
                 import { Schema, Computed } from "@keyma/dsl";
@@ -355,20 +338,47 @@ describe("getter/setter pair — computed field + setter behavior", () => {
                 }
             `,
         });
-        // No longer a hard error — the pair is the intended idiom now.
-        assert.ok(!hasError(result, CODES.KEYMA015), `Unexpected KEYMA015. Got: ${JSON.stringify(result.diagnostics)}`);
         assert.equal(errorCodes(result).length, 0, JSON.stringify(result.diagnostics));
 
         const foo = result.ir.schemas.find((s) => s.sourceName === "Foo")!;
-        const name = foo.fields.find((f) => f.name === "name")!;
-        assert.ok(name.computed !== undefined, "getter should become a computed field");
+        assert.equal(foo.fields.find((f) => f.name === "name"), undefined, "getter must not be a field");
 
-        const setter = (foo.methods ?? []).find((m) => m.name === "name");
-        assert.ok(setter !== undefined && setter.kind === "setter", "setter should become a behavior");
+        const getter = (foo.methods ?? []).find((m) => m.name === "name" && m.kind === "getter");
+        assert.ok(getter !== undefined, "getter should become a behavior");
+
+        const setter = (foo.methods ?? []).find((m) => m.name === "name" && m.kind === "setter");
+        assert.ok(setter !== undefined, "setter should become a behavior");
         assert.equal(setter!.statements[0]!.kind, "assign");
     });
 
-    it("compiles a computed getter without a setter", () => {
+    it("rejects two getters of the same name (KEYMA040)", () => {
+        const result = cv({
+            "schema.ts": `
+                import { Schema } from "@keyma/dsl";
+                @Schema() class Foo {
+                    declare a: string;
+                    get dup(): string { return this.a; }
+                    get dup(): string { return this.a; }
+                }
+            `,
+        });
+        assert.ok(hasError(result, CODES.KEYMA040), `Expected KEYMA040. Got: ${JSON.stringify(result.diagnostics)}`);
+    });
+
+    it("rejects a getter that collides with a stored field (KEYMA040)", () => {
+        const result = cv({
+            "schema.ts": `
+                import { Schema } from "@keyma/dsl";
+                @Schema() class Foo {
+                    declare name: string;
+                    get name(): string { return "x"; }
+                }
+            `,
+        });
+        assert.ok(hasError(result, CODES.KEYMA040), `Expected KEYMA040. Got: ${JSON.stringify(result.diagnostics)}`);
+    });
+
+    it("compiles a getter without a setter", () => {
         const result = cv({
             "schema.ts": `
                 import { Schema, Computed } from "@keyma/dsl";
@@ -398,9 +408,6 @@ describe("expression lowering — null literal", () => {
         });
         const schema = result.ir.schemas.find((s) => s.sourceName === "Foo");
         assert.ok(schema !== undefined);
-        const field = schema.fields.find((f) => f.name === "nothing");
-        assert.ok(field !== undefined);
-        assert.ok(field.computed !== undefined);
-        assert.deepEqual(field.computed.expression, { kind: "literal", value: null });
+        assert.deepEqual(getterExpr(schema, "nothing"), { kind: "literal", value: null });
     });
 });

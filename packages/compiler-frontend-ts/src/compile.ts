@@ -2,7 +2,6 @@ import path from "node:path";
 import { fileURLToPath } from "node:url";
 import ts from "typescript";
 import type { KeymaIR, IRDiagnostic, IRSchema } from "@keyma/ir";
-import { collectFieldRefs } from "@keyma/ir";
 import { createProgram, DEFAULT_COMPILER_OPTIONS, type VirtualFiles } from "./program.js";
 import { discoverSchemas } from "./discover.js";
 import { discoverEnums } from "./discover-enums.js";
@@ -18,7 +17,6 @@ import {
     mkError,
     mkWarning,
     KEYMA001,
-    KEYMA018,
     KEYMA031,
     KEYMA035,
     KEYMA036,
@@ -167,9 +165,6 @@ function compileProgram(program: ts.Program, config: FrontendConfig): CompileRes
     // Post-processing: reject cycles in the Embedded<T> graph (infinite inline data).
     analyzeEmbeddedCycles(schemas, diagnostics);
 
-    // Post-processing: populate computed-field dependencies and reject cycles.
-    analyzeComputedFields(schemas, diagnostics);
-
     const lowerDeps: LowerDeps = {
         checker,
         dslModuleName,
@@ -213,7 +208,7 @@ function compileProgram(program: ts.Program, config: FrontendConfig): CompileRes
     normalizeSchemaNames(schemas, services, config.schemaPrefix ?? "");
 
     const ir: KeymaIR = {
-        irVersion: config.irVersion ?? "4.0.0",
+        irVersion: config.irVersion ?? "5.0.0",
         compilerVersion: config.compilerVersion ?? "0.1.0",
         ...(config.baseDir !== undefined ? { sourceRoot: config.baseDir } : {}),
         schemas,
@@ -390,8 +385,9 @@ function checkVisibilityLeaks(schemas: import("@keyma/ir").IRSchema[], diagnosti
 // treat as "return the whole record", leaking the private data the author meant
 // to hide. The fix is mechanical: mark the schema private (so only the system
 // identity can reach it) or make at least one field public. A field counts as
-// public surface whatever its kind — stored, computed, reference, or embedded.
-// Fieldless schemas are exempt (there is nothing to leak and nothing to expose).
+// public surface whatever its kind — stored, reference, or embedded. Getters are
+// behaviors (re-emitted accessors), not stored/projected data, so they do not
+// count. Fieldless schemas are exempt (nothing to leak and nothing to expose).
 function checkPublicSchemaSurface(schemas: import("@keyma/ir").IRSchema[], diagnostics: IRDiagnostic[]): void {
     for (const schema of schemas) {
         if (schema.visibility !== "public") continue;
@@ -545,8 +541,8 @@ function collectUsedEnums(
  * is an inline copy, so a cycle of embeds describes infinitely-nested data and can
  * never be materialized. Only embedded edges are followed — `Reference<T>` stores
  * just an id, so reference cycles are legal (a foreign-key loop). Runs pre-normalization,
- * so embedded targets are still authored `sourceName`s. Uses the same 3-colour DFS as
- * {@link analyzeComputedFields}, but across schemas rather than within one.
+ * so embedded targets are still authored `sourceName`s. Uses a 3-colour DFS across
+ * schemas.
  */
 function analyzeEmbeddedCycles(schemas: IRSchema[], diagnostics: IRDiagnostic[]): void {
     const known = new Set(schemas.map((s) => s.sourceName));
@@ -601,85 +597,6 @@ function analyzeEmbeddedCycles(schemas: IRSchema[], diagnostics: IRDiagnostic[])
                 ),
             );
             return; // one diagnostic is enough; the build halts and the user fixes the cycle
-        }
-    }
-}
-
-/**
- * Populate each computed field's `dependsOn` (the in-schema fields it reads) and
- * reject computed→computed dependency cycles (KEYMA018, incl. self-reference).
- */
-function analyzeComputedFields(schemas: IRSchema[], diagnostics: IRDiagnostic[]): void {
-    for (const schema of schemas) {
-        const fieldNames = new Set(schema.fields.map((f) => f.name));
-        const computedNames = new Set(
-            schema.fields.filter((f) => f.computed !== undefined).map((f) => f.name),
-        );
-
-        // dependsOn = in-schema fields referenced by the computed expression.
-        for (const field of schema.fields) {
-            if (field.computed === undefined) continue;
-            const deps = collectFieldRefs(field.computed.expression).filter((n) => fieldNames.has(n));
-            if (deps.length > 0) field.computed.dependsOn = deps;
-        }
-
-        detectComputedCycle(schema, computedNames, diagnostics);
-    }
-}
-
-/**
- * Detect a cycle in the computed→computed dependency subgraph via a 3-colour DFS.
- * Emits a single KEYMA018 per schema naming a cycle path (self-reference included).
- */
-function detectComputedCycle(
-    schema: IRSchema,
-    computedNames: ReadonlySet<string>,
-    diagnostics: IRDiagnostic[],
-): void {
-    const depsOf = new Map<string, string[]>();
-    for (const field of schema.fields) {
-        if (field.computed === undefined) continue;
-        const deps = (field.computed.dependsOn ?? []).filter((n) => computedNames.has(n));
-        depsOf.set(field.name, deps);
-    }
-
-    const WHITE = 0, GRAY = 1, BLACK = 2;
-    const color = new Map<string, number>();
-    const stack: string[] = [];
-
-    const visit = (name: string): string[] | null => {
-        color.set(name, GRAY);
-        stack.push(name);
-        for (const dep of depsOf.get(name) ?? []) {
-            const c = color.get(dep) ?? WHITE;
-            if (c === GRAY) {
-                // Back-edge → cycle. Slice the path from `dep` to the current node.
-                const start = stack.indexOf(dep);
-                return [...stack.slice(start), dep];
-            }
-            if (c === WHITE) {
-                const cycle = visit(dep);
-                if (cycle !== null) return cycle;
-            }
-        }
-        stack.pop();
-        color.set(name, BLACK);
-        return null;
-    };
-
-    for (const name of depsOf.keys()) {
-        if ((color.get(name) ?? WHITE) !== WHITE) continue;
-        const cycle = visit(name);
-        if (cycle !== null) {
-            const path = cycle.join(" → ");
-            diagnostics.push(
-                mkError(
-                    KEYMA018,
-                    `Computed fields in "${schema.sourceName}" form a dependency cycle: ${path}`,
-                    schema.source,
-                ),
-            );
-            return; // one diagnostic per schema is enough
         }
     }
 }

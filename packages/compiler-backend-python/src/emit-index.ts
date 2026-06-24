@@ -3,14 +3,12 @@ import { pythonRelImport } from "./module-path.js";
 
 type IndexEmitOptions = {
     includePrivate: boolean;
-    emitMaterializers: boolean;
 };
 
 /**
  * Emit `index.py` / `__init__.py`: one relative import per model module re-exporting
- * every schema class (and, for server bundles, its materializer) authored in that
- * source file. No registry imports — validators/formatters/defaults ride directly in
- * the schema metadata.
+ * every schema class authored in that source file. No registry imports —
+ * validators/formatters/defaults ride directly in the schema metadata.
  */
 export function emitIndexPython(
     schemas: readonly IRSchema[],
@@ -25,9 +23,6 @@ export function emitIndexPython(
         if (ref === undefined) continue;
         const exports = byModule.get(ref) ?? [];
         exports.push(schema.sourceName);
-        if (opts.emitMaterializers && schema.fields.some((f) => f.computed !== undefined)) {
-            exports.push(`materialize${schema.sourceName}`);
-        }
         byModule.set(ref, exports);
     }
 

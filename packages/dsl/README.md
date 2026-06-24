@@ -55,8 +55,9 @@ class User {
 
     createdOn: DateTime = (() => new Date())();
 
-    // Computed fields are explicit and use the portable expression subset.
-    @Computed() get displayName(): string {
+    // Getters are re-emitted as class accessors (behaviors); bodies use the
+    // portable expression subset.
+    get displayName(): string {
         return `${this.firstName} ${this.lastName}`;
     }
 
@@ -86,9 +87,9 @@ class Follows {
 | `@Schema(opts?)` | Marks a class as a schema. `opts.name` is the canonical name; `opts.private` makes it server-only. |
 | `@Validate(...validators)` | Attaches validators (from `@keyma/validators` or your own `ValidatorFn` factories). |
 | `@Format(phase, ...markers)` | Attaches formatters for a lifecycle `Phase` (or the equivalent string). |
-| `@Indexed(opts?)` | Declares a field (or computed field) indexed; `{ unique, sparse, … }`. |
+| `@Indexed(opts?)` | Declares a field indexed; `{ unique, sparse, … }`. (On a getter: deferred — see `@Computed`.) |
 | `@FormField(opts)` | Attaches form metadata (`title`, `hint`, …). |
-| `@Computed()` | Marks a getter as a stored, materialized computed field. |
+| `@Computed()` | **Reserved.** Marks a getter's intent to be a stored/indexed computed field — a future-release feature. Currently warns (`KEYMA098`) and is ignored; the getter is emitted as a plain accessor regardless. |
 | `@Ephemeral()` | Field/schema that is not persisted but may travel over the wire. |
 | `@Deprecated(message?)` | Marks a field as deprecated (carried into the IR/metadata). |
 | `@Edge(opts?)` | Marks a class as an edge schema; its `@From()`/`@To()` fields name the connected nodes. |
@@ -102,7 +103,7 @@ authored with `declare` (no initializer) has no default.
 Key authoring rules:
 
 - **Relationships are explicit.** A bare `@Schema` class field is rejected (`KEYMA071`) — use `Reference<T>` (stores the target's id) or `Embedded<T>` (inlines a copy).
-- **Computed fields are explicit.** Only getters decorated with `@Computed()` become fields.
+- **Getters are behaviors, not fields.** A getter is re-emitted as a class accessor in every target; it is never a schema field. Stored/indexed computed fields are deferred (see `@Computed`).
 - **Methods and setters are portable behaviors.** Plain instance methods and `set` accessors are re-emitted onto the generated model class in every target. They are not stored fields. See "Methods and setters" below.
 - **Optional vs. nullable are orthogonal.** `field?: T` means the key may be *absent*; `Nullable<T>` (or `T | null`) means the value may be *null*. They compose freely. There is no `required` marker — required-ness is inferred from optionality.
 - **`@Format(Phase.…, …)`** — `Phase` constants (`Change`/`Blur`/`Submit`/`Save`) are aliases for the bare string literals (`@Format(Phase.Save, …)` ≡ `@Format("save", …)`).
@@ -163,7 +164,7 @@ Contract types are exported for typing your own implementations: `ValidatorFn`, 
 
 ### Portable expression subset
 
-The bodies of **validators, formatters, `@Computed()` getters, methods, and setters** are read by the compiler and re-emitted in every target language, so they are restricted to a portable subset:
+The bodies of **validators, formatters, getters, methods, and setters** are read by the compiler and re-emitted in every target language, so they are restricted to a portable subset:
 
 - **Statements:** `return`, `if`/`else`, single-binding `const`, expression statements, and (methods/setters only) `this.field = …` assignment. No loops, `switch`, `try`/`catch`, `throw`, `await`, or spread.
 - **Expressions:** literals, field/parameter references, member access, template strings, the standard binary/unary/ternary operators, object literals, regex literals, and `new`.
@@ -175,7 +176,7 @@ Constructs outside this subset are reported with stable `KEYMA08x` (bodies) / `K
 
 ### Methods and setters
 
-A `@Schema` class may declare plain instance **methods** and **setters**. Unlike `@Computed` getters (which become stored, materialized fields), these are **behaviors**: code re-emitted onto the generated model class in every target, not part of the persisted record.
+A `@Schema` class may declare plain instance **methods**, **getters**, and **setters**. These are all **behaviors**: code re-emitted onto the generated model class in every target, not part of the persisted record.
 
 ```ts
 @Schema() class User {
@@ -200,4 +201,4 @@ Rules:
 - **Signatures must be explicitly typed** — every parameter, and a method's return type (use `: void` for none). Untyped signatures are rejected with `KEYMA092`.
 - **Async/generator** methods are not portable (`KEYMA082`).
 - Visibility follows the TS modifier: a `private` method is emitted only into the server bundle, a public one into both client and server.
-- A method's name must be unique among members; a **setter** may share a name with a field — e.g. a `@Computed` getter and a `set` of the same name form a get/set pair.
+- A method's name must be unique among members; a **getter** and a **setter** of the same name form a get/set accessor pair, and a setter may also share a name with a stored field.

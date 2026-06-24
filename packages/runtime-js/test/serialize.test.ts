@@ -10,7 +10,7 @@ const SCHEMA: SchemaMetadata = {
         { name: "id", type: { kind: "id" }, readonly: true },
         { name: "email", type: { kind: "string" } },
         { name: "secret", type: { kind: "string" }, visibility: "private", required: false },
-        { name: "fullName", type: { kind: "string" }, required: false, computed: true, ephemeral: true },
+        { name: "scratch", type: { kind: "string" }, required: false, ephemeral: true },
     ],
 };
 
@@ -18,25 +18,25 @@ describe("serialize", () => {
     it("client target strips private fields", () => {
         const out = serialize(
             SCHEMA,
-            { id: "u1", email: "a@b.com", secret: "x", fullName: "A B" },
+            { id: "u1", email: "a@b.com", secret: "x", scratch: "tmp" },
             { target: "client" },
         );
-        assert.deepEqual(out, { id: "u1", email: "a@b.com", fullName: "A B" });
+        assert.deepEqual(out, { id: "u1", email: "a@b.com", scratch: "tmp" });
     });
 
     it("server target keeps all fields", () => {
         const out = serialize(
             SCHEMA,
-            { id: "u1", email: "a@b.com", secret: "x", fullName: "A B" },
+            { id: "u1", email: "a@b.com", secret: "x", scratch: "tmp" },
             { target: "server" },
         );
-        assert.deepEqual(out, { id: "u1", email: "a@b.com", secret: "x", fullName: "A B" });
+        assert.deepEqual(out, { id: "u1", email: "a@b.com", secret: "x", scratch: "tmp" });
     });
 
-    it("database target strips ephemeral computed fields", () => {
+    it("database target strips ephemeral fields", () => {
         const out = serialize(
             SCHEMA,
-            { id: "u1", email: "a@b.com", secret: "x", fullName: "A B" },
+            { id: "u1", email: "a@b.com", secret: "x", scratch: "tmp" },
             { target: "database" },
         );
         assert.deepEqual(out, { id: "u1", email: "a@b.com", secret: "x" });

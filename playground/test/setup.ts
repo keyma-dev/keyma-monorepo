@@ -26,9 +26,6 @@ import {
     InviteResult,
     AccountService,
     AdminService,
-    materializeAuthor,
-    materializePost,
-    materializeCredentials,
 } from "../dist/js/server/index.js";
 
 // Re-export the generated classes so test files have a single import site.
@@ -48,9 +45,6 @@ export {
     InviteResult,
     AccountService,
     AdminService,
-    materializeAuthor,
-    materializePost,
-    materializeCredentials,
 };
 
 /** Every schema the server should know about (persisted + ephemeral wire types). */

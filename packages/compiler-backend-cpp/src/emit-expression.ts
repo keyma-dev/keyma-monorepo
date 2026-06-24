@@ -2,10 +2,10 @@ import type { IRExpression } from "@keyma/ir";
 
 /**
  * Controls how `field` nodes (`this.x`) lower. Default (typed mode) emits `this->x`
- * for computed getters / methods that operate on typed struct members. The
- * defaults/materializer emitters pass a record-oriented accessor instead. `isRefField`
- * marks reference-typed fields, whose members are reached through a `std::shared_ptr`
- * (so `author.id` lowers to `this->author->id`).
+ * for getter/method behaviors that operate on typed struct members (a reference to a
+ * getter lowers to a call, `this->x()`). The defaults emitter passes a record-oriented
+ * accessor instead. `isRefField` marks reference-typed fields, whose members are
+ * reached through a `std::shared_ptr` (so `author.id` lowers to `this->author->id`).
  */
 export type ExprOpts = { fieldExpr: (name: string) => string; isRefField?: (name: string) => boolean };
 

@@ -63,17 +63,17 @@ export async function emitPython(
 
     if (pyTarget.emitClient) {
         files.push(...emitBundle(ir, path.posix.join(pyTarget.outDir, "client"), shared, decls, {
-            includePrivate: false, includeIndexes: false, emitMaterializers: false, formPhasesOnly: true, includeDefaults: false,
+            includePrivate: false, includeIndexes: false, formPhasesOnly: true, includeDefaults: false,
         }));
     }
     if (pyTarget.emitServer) {
         files.push(...emitBundle(ir, path.posix.join(pyTarget.outDir, "server"), shared, decls, {
-            includePrivate: true, includeIndexes: true, emitMaterializers: true, formPhasesOnly: false, includeDefaults: true,
+            includePrivate: true, includeIndexes: true, formPhasesOnly: false, includeDefaults: true,
         }));
     }
     if (pyTarget.emitLibrary) {
         files.push(...emitBundle(ir, pyTarget.outDir, shared, decls, {
-            includePrivate: true, includeIndexes: true, emitMaterializers: true, formPhasesOnly: false, includeDefaults: true,
+            includePrivate: true, includeIndexes: true, formPhasesOnly: false, includeDefaults: true,
         }));
     }
 
@@ -82,7 +82,7 @@ export async function emitPython(
 
 type BundleOptions = Pick<
     ModuleEmitDeps,
-    "includePrivate" | "includeIndexes" | "emitMaterializers" | "formPhasesOnly" | "includeDefaults"
+    "includePrivate" | "includeIndexes" | "formPhasesOnly" | "includeDefaults"
 >;
 
 function emitBundle(
@@ -124,7 +124,6 @@ function emitBundle(
 
     const indexContent = emitIndexPython(visibleSchemas, shared.schemaModule, {
         includePrivate: opts.includePrivate,
-        emitMaterializers: opts.emitMaterializers,
     });
     files.push({ path: path.posix.join(bundleDir, "index.py"), content: indexContent });
     files.push({ path: path.posix.join(bundleDir, "__init__.py"), content: indexContent });

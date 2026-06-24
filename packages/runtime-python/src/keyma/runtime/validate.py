@@ -15,15 +15,11 @@ async def validate(schema: SchemaMetadata, value: Dict[str, Any]) -> List[Valida
 
     Absent values (key not present) are not passed to validators: a required field
     that is missing fails with ``code: "required"``, while an optional missing field
-    is skipped. Computed fields are never validated (they are derived outputs).
+    is skipped.
     """
     errors: List[ValidationError] = []
     context = Context(value)
     for field in schema["fields"]:
-        # Computed fields are derived outputs, never validated as input.
-        if field.get("computed") is True:
-            continue
-
         name = field["name"]
 
         # An absent value skips its validators (they would otherwise trip their own

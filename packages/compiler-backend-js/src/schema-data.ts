@@ -1,5 +1,4 @@
 import type { IRSchema, IRField, IRFieldIndex, IRIndex, IRValidatorDeclaration, IRFormatterDeclaration } from "@keyma/ir";
-import { exprToJs } from "./emit-expression.js";
 import { raw } from "./emit-literal.js";
 import { buildFactoryCall } from "./emit-validators.js";
 import { buildApplyDefaults } from "./emit-defaults.js";
@@ -54,63 +53,6 @@ export function buildSchemaData(schema: IRSchema, opts: SchemaDataOptions): Reco
     return out;
 }
 
-/**
- * Build the `materialize<Name>` function source as a string. Returns null when
- * the schema has no computed fields.
- */
-export function buildMaterializer(schema: IRSchema, includePrivate: boolean): string | null {
-    const computedFields = visibleFields(schema, includePrivate).filter((f) => f.computed !== undefined);
-    if (computedFields.length === 0) return null;
-
-    // Assign in dependency order so a computed field that reads another computed
-    // field sees the already-materialized value. Cycles are rejected upstream
-    // (KEYMA018), so a valid topological order always exists.
-    const ordered = topoSortComputed(computedFields);
-
-    const lines: string[] = [];
-    lines.push(`export function materialize${schema.sourceName}(value) {`);
-    for (const field of ordered) {
-        if (field.computed === undefined) continue;
-        const jsExpr = exprToJs(field.computed.expression, { fieldAccess: (name) => `value.${name}` });
-        lines.push(`    value.${field.name} = ${jsExpr};`);
-    }
-    lines.push(`    return value;`);
-    lines.push(`}`);
-    return lines.join("\n");
-}
-
-/** Order computed fields so each comes after the computed fields it depends on. */
-function topoSortComputed(fields: IRField[]): IRField[] {
-    const computedNames = new Set(fields.map((f) => f.name));
-    const byName = new Map(fields.map((f) => [f.name, f]));
-    const ordered: IRField[] = [];
-    const visited = new Set<string>();
-    const onPath = new Set<string>();
-
-    const visit = (field: IRField): void => {
-        if (visited.has(field.name)) return;
-        if (onPath.has(field.name)) return; // cycle guard (already rejected upstream)
-        onPath.add(field.name);
-        for (const dep of field.computed?.dependsOn ?? []) {
-            if (computedNames.has(dep)) {
-                const depField = byName.get(dep);
-                if (depField !== undefined) visit(depField);
-            }
-        }
-        onPath.delete(field.name);
-        visited.add(field.name);
-        ordered.push(field);
-    };
-
-    for (const field of fields) visit(field);
-    return ordered;
-}
-
-/** Whether a schema has any visible computed fields. */
-export function hasComputedFields(schema: IRSchema, includePrivate: boolean): boolean {
-    return visibleFields(schema, includePrivate).some((f) => f.computed !== undefined);
-}
-
 // ─── Internal helpers ────────────────────────────────────────────────────────
 
 function visibleFields(schema: IRSchema, includePrivate: boolean): IRField[] {
@@ -146,9 +88,6 @@ function buildFieldData(field: IRField, opts: SchemaDataOptions): object {
     }
     if (indexes.length > 0) base["indexes"] = indexes;
 
-    if (field.computed !== undefined) {
-        base["computed"] = true;
-    }
     if (field.ephemeral) {
         base["ephemeral"] = true;
     }

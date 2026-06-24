@@ -3,7 +3,7 @@
 Strips fields by visibility target, converts ``dateTime`` values to ISO strings,
 and recurses into embedded schemas via the metadata ``refs`` dict. Accepts either
 plain dicts or generated model instances (attribute access, so ``@property``
-computed fields serialize too)."""
+getter accessors serialize too)."""
 
 from __future__ import annotations
 

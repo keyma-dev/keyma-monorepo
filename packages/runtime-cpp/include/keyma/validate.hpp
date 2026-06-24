@@ -1,9 +1,9 @@
 #pragma once
 
 // Field validation for @keyma/runtime-cpp (mirror of runtime-js `validate.ts`).
-// Synchronous: the C++ ValidatorFn is a synchronous move_only_function. Skips
-// computed fields; an absent required field yields a "required" error; otherwise each
-// field validator runs against the present value. Returns the collected errors.
+// Synchronous: the C++ ValidatorFn is a synchronous move_only_function. An absent
+// required field yields a "required" error; otherwise each field validator runs
+// against the present value. Returns the collected errors.
 
 #include <keyma/runtime.hpp>
 
@@ -24,7 +24,6 @@ std::pmr::vector<ValidationError> validate_if(const SchemaMeta& schema, const Va
     std::pmr::vector<ValidationError> errors(a);
     Context ctx{value};
     for (const FieldMeta& f : schema.fields) {
-        if (f.computed) continue;
         if (!include_field(f)) continue;
         const Value* present = value.find(f.name);
         if (present == nullptr) {

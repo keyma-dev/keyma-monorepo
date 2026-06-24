@@ -86,7 +86,6 @@ export type FieldMetadata = {
     validators?: ValidatorFn[];
     formatters?: FormatterEntry[];
     indexes?: FieldIndex[];
-    computed?: true;
     ephemeral?: boolean;
     /** Default value applied on create when the key is absent. */
     default?: FieldDefault;

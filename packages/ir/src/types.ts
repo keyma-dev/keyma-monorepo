@@ -182,33 +182,30 @@ export type IRDefault =
     | { kind: "literal"; value: string | number | boolean | null | unknown[] }
     | { kind: "expression"; expression: IRExpression };
 
-export type IRComputed = {
-    expression: IRExpression;
-    /**
-     * Names of other fields in the same schema this computed field reads. Derived
-     * from the expression by the frontend; lets backends materialize computed
-     * fields in dependency order. A computed→computed cycle is rejected (KEYMA018).
-     */
-    dependsOn?: string[];
-};
 
 /**
- * A portable behavior emitted onto the generated model class: an instance method
- * or a setter. Unlike computed fields, behaviors are NOT part of the stored record
- * — they are re-emittable code, lowered to the same portable statement/expression
+ * A portable behavior emitted onto the generated model class: an instance method,
+ * a setter, or a getter accessor. Behaviors are NOT part of the stored record —
+ * they are re-emittable code, lowered to the same portable statement/expression
  * subset as validator/formatter bodies (plus `assign` statements). `this.<field>`
  * reads/writes the record's fields; parameters and locals are plain identifiers.
+ *
+ * Note: a getter is a behavior, not a stored/indexed/materialized field. Field-like
+ * computed semantics (`@Computed`/`@Indexed` on a getter) are deferred to a future
+ * release; the frontend warns (KEYMA098) and emits the getter as a plain accessor.
  */
 export type IRMethod = {
     name: string;
     /**
      * `"method"` → `name(params): returnType { ... }`.
      * `"setter"` → `set name(value) { ... }` (exactly one param, no return).
+     * `"getter"` → `get name(): returnType { return ... }` (no params; body is a
+     *   single `return` statement; `returnType` present).
      */
-    kind: "method" | "setter";
-    /** Typed parameters. A setter has exactly one (the incoming value). */
+    kind: "method" | "setter" | "getter";
+    /** Typed parameters. A setter has exactly one (the incoming value); a getter has none. */
     params: IRFunctionParam[];
-    /** Method return type. Absent for setters and for `void`-returning methods. */
+    /** Method/getter return type. Absent for setters and for `void`-returning methods. */
     returnType?: IRType;
     statements: IRStatement[];
     visibility: "public" | "private";
@@ -234,7 +231,6 @@ export type IRField = {
     validators: IRValidator[];
     formatters: IRFormatter[];
     indexes: IRFieldIndex[];
-    computed?: IRComputed;
     ephemeral?: boolean;
     /** Default value applied on create when the key is absent (from the field's
      *  TypeScript property initializer). */
@@ -275,8 +271,8 @@ export type IRSchema = {
      *  the project (KEYMA001) and carries the optional `schemaPrefix`. */
     name: string;
     /** The authored TS class name. EMIT-SYMBOL ONLY: backends use it as the
-     *  generated class/module/materializer identifier. Never a lookup key and
-     *  never sent over the wire — use `name` for any cross-reference. */
+     *  generated class/module identifier. Never a lookup key and never sent over
+     *  the wire — use `name` for any cross-reference. */
     sourceName: string;
     visibility: "public" | "private";
     /** When true, this schema is never persisted to the database. */

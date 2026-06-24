@@ -4,7 +4,6 @@ import {
     Format,
     FormField,
     Indexed,
-    Computed,
     Deprecated,
     Phase,
 } from "@keyma/dsl";
@@ -105,9 +104,10 @@ export class Author extends Entity {
     // client bundles and from `serialize(..., { target: "client" })`.
     private securityStamp?: string;
 
-    // Computed field + a setter that distributes the written value back into
-    // real fields (getter/setter pair).
-    @Computed() get fullName(): string {
+    // A getter behavior + a setter that distributes the written value back into
+    // real fields (getter/setter accessor pair). Getters are re-emitted as class
+    // accessors in every target; they are not schema fields.
+    get fullName(): string {
         return `${this.firstName} ${this.lastName}`;
     }
     set fullName(value: string) {

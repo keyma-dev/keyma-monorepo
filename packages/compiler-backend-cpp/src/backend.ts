@@ -104,17 +104,17 @@ export async function emitCpp(ir: KeymaIR, target: KeymaTargetConfig, _config: R
 
     if (cppTarget.emitClient) {
         files.push(...emitBundle(ir, path.posix.join(cppTarget.outDir, "client"), shared, decls, {
-            includePrivate: false, includeIndexes: false, emitMaterializers: false, formPhasesOnly: true, includeDefaults: false,
+            includePrivate: false, includeIndexes: false, formPhasesOnly: true, includeDefaults: false,
         }, cppTarget.vendorRuntime));
     }
     if (cppTarget.emitServer) {
         files.push(...emitBundle(ir, path.posix.join(cppTarget.outDir, "server"), shared, decls, {
-            includePrivate: true, includeIndexes: true, emitMaterializers: true, formPhasesOnly: false, includeDefaults: true,
+            includePrivate: true, includeIndexes: true, formPhasesOnly: false, includeDefaults: true,
         }, cppTarget.vendorRuntime));
     }
     if (cppTarget.emitLibrary) {
         files.push(...emitBundle(ir, cppTarget.outDir, shared, decls, {
-            includePrivate: true, includeIndexes: true, emitMaterializers: true, formPhasesOnly: false, includeDefaults: true,
+            includePrivate: true, includeIndexes: true, formPhasesOnly: false, includeDefaults: true,
         }, cppTarget.vendorRuntime));
     }
 
@@ -123,7 +123,7 @@ export async function emitCpp(ir: KeymaIR, target: KeymaTargetConfig, _config: R
 
 type BundleOptions = Pick<
     ModuleEmitDeps,
-    "includePrivate" | "includeIndexes" | "emitMaterializers" | "formPhasesOnly" | "includeDefaults"
+    "includePrivate" | "includeIndexes" | "formPhasesOnly" | "includeDefaults"
 >;
 
 function emitBundle(
@@ -211,7 +211,6 @@ function emitBundle(
         path: path.posix.join(bundleDir, "index.hpp"),
         content: emitIndexCpp(visibleSchemas, shared.schemaModule, {
             includePrivate: opts.includePrivate,
-            emitMaterializers: opts.emitMaterializers,
             nsRoot: shared.nsRoot,
             enums: decls.enums,
             enumModule: shared.enumModuleByName,

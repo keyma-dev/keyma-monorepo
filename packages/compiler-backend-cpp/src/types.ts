@@ -4,10 +4,10 @@ export type CppTargetConfig = {
     outDir: string;
     /** Emit a client bundle (public schemas, no private fields, no index metadata). Default: true. */
     client?: boolean;
-    /** Emit a server bundle (all schemas, all fields, index metadata, materializers). Default: true. */
+    /** Emit a server bundle (all schemas, all fields, index metadata). Default: true. */
     server?: boolean;
     /**
-     * Emit a single unified bundle directly into outDir (all schemas/fields/materializers).
+     * Emit a single unified bundle directly into outDir (all schemas/fields).
      * When true, `client` and `server` are ignored and no client/ or server/ subdirectory is created.
      */
     library?: boolean;

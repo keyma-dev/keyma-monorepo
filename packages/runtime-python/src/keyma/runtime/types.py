@@ -35,7 +35,6 @@ FormatterContext = Any
 # these aliases describe the maximal signature.
 ValidatorFn = Callable[..., Union[Optional[ValidationError], Awaitable[Optional[ValidationError]]]]
 FormatterFn = Callable[..., Any]
-MaterializerFn = Callable[[Dict[str, Any]], Dict[str, Any]]
 SchemaDefaultsFn = Callable[[Dict[str, Any]], None]
 
 
@@ -54,7 +53,6 @@ class FieldMetadata(TypedDict, total=False):
     validators: List[ValidatorFn]
     formatters: List[FormatterEntry]
     indexes: List[Dict[str, Any]]
-    computed: bool
     ephemeral: bool
     default: Dict[str, Any]
 

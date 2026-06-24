@@ -9,5 +9,3 @@ export declare class User {
     get fullName(): string;
     constructor(value?: { id?: string; firstName?: string; lastName?: string; secretNote?: string });
 }
-
-export declare function materializeUser(value: Record<string, unknown>): Record<string, unknown>;

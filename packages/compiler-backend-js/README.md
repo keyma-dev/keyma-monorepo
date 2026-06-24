@@ -88,7 +88,6 @@ metadata (`validators: [minLength(2)]`, `formatters: [{ phase, fn: trim() }]`, a
 |---|---|---|
 | Schemas | public only | all (incl. `@Schema({ private: true })`) |
 | Fields | public only | all (incl. `private`) |
-| Materializers | — | `materialize<Schema>()` per computed schema |
 | Index metadata | omitted | included |
 | Formatters in metadata | form phases only (`change`/`blur`/`submit`) | all phases (incl. `save`) |
 
@@ -96,7 +95,7 @@ The split is the seam that keeps private fields and server-only schemas out of c
 
 ## Generated code
 
-Plain ES classes — **no decorators, no `reflect-metadata`, no `tslib`**. Each model carries a frozen static `schema` (a `SchemaMetadata`); `@Computed` getters become real getters; methods and setters are re-emitted; private members appear only in the server bundle. The only external reference is a type-only import of `SchemaMetadata` from `@keyma/runtime-js` (in the `.d.ts`).
+Plain ES classes — **no decorators, no `reflect-metadata`, no `tslib`**. Each model carries a frozen static `schema` (a `SchemaMetadata`); getters, methods, and setters are re-emitted as class members (behaviors, not schema fields); private members appear only in the server bundle. The only external reference is a type-only import of `SchemaMetadata` from `@keyma/runtime-js` (in the `.d.ts`).
 
 ```js
 // client/models/user.js
@@ -115,15 +114,7 @@ export class User {
 User.schema = Object.freeze({ name: "user", sourceName: "User", fields: [ /* … */ ] });
 ```
 
-The server bundle adds a materializer for the computed field, used to recompute it on every write:
-
-```js
-// server/models/user.js
-export function materializeUser(value) {
-    value.fullName = `${value.firstName} ${value.lastName}`;
-    return value;
-}
-```
+The `fullName` getter is emitted identically in the client and server bundles (gated only by visibility, like a method). It is a behavior, not a schema field — its value is never stored, indexed, or part of `schema.fields`. (Stored/indexed computed fields are deferred to a future release; see the `@Computed` note in `@keyma/dsl`.)
 
 ## Tests
 

@@ -26,8 +26,7 @@ function moduleHeader(hasFunctions: boolean): string[] {
  * `<ctx>.object.get("<field>")`. The Python runtime hands validators/formatters a
  * context whose `.object` is the record **dict**, so generic member lowering
  * (`ctx.object.field`) would be attribute access on a dict and fail at runtime.
- * Mirrors how computed getters lower `self.X` to `value["X"]`. No-op when the inner
- * function declares no context parameter.
+ * No-op when the inner function declares no context parameter.
  */
 export function rewriteContextAccess(code: string, ctxParam: string | undefined): string {
     if (ctxParam === undefined) return code;

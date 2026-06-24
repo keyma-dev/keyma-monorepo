@@ -100,14 +100,16 @@ describe("emitCpp — library bundle", async () => {
         assert.ok(paths.includes("out/models/secret.hpp"));
     });
 
-    it("emits computed getter, method, from_value, schema(), materializer, apply_defaults", () => {
+    it("emits getter accessors, method, from_value, schema(), apply_defaults — and NO materializer", () => {
         const u = fileBySuffix(files, "models/user.hpp");
-        assert.ok(u.includes("auto fullName() const { return std::format("));
-        assert.ok(u.includes("auto tagKey() const { return this->primaryTag->id; }")); // ref member access via ->
+        assert.ok(u.includes("auto fullName() const {"));
+        assert.ok(u.includes("auto badge() const {"));
+        assert.ok(u.includes("auto tagKey() const {"));
+        assert.ok(u.includes("return this->primaryTag->id;")); // ref member access via ->
         assert.ok(u.includes("auto greet()"));
         assert.ok(u.includes("static User from_value(const keyma::Value& v, const allocator_type& a);"));
         assert.ok(u.includes("inline const keyma::SchemaMeta& User::schema()"));
-        assert.ok(u.includes("void materialize_User(keyma::Value& value)"));
+        assert.ok(!u.includes("materialize_User"), "materializers are removed — none should be emitted");
         assert.ok(u.includes("void apply_defaults_User("));
     });
 
@@ -175,14 +177,14 @@ describe("emitCpp — library bundle", async () => {
         }
     });
 
-    it("index.hpp hoists schemas, enums, materializers, and services into the root namespace", () => {
+    it("index.hpp hoists schemas, enums, and services into the root namespace", () => {
         const idx = fileBySuffix(files, "index.hpp");
         assert.ok(idx.includes("namespace app {"));
         assert.ok(idx.includes('#include "models/user.hpp"'));
         assert.ok(idx.includes('#include "services.hpp"'));
         assert.ok(idx.includes("using models::user::User;"));
         assert.ok(idx.includes("using models::user::Status;"));
-        assert.ok(idx.includes("using models::user::materialize_User;"));
+        assert.ok(!idx.includes("materialize_User"), "materializers are removed — none should be hoisted");
         assert.ok(idx.includes("using services::AccountService;"));
     });
 

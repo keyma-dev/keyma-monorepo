@@ -554,7 +554,6 @@ struct FieldMeta {
     bool required = true;
     bool nullable = false;
     bool readonly = false;
-    bool computed = false;
     bool indexed = false;
     bool ephemeral = false;
     Visibility visibility = Visibility::Public;
@@ -804,7 +803,7 @@ inline bool instance_of(const Value& v, std::string_view ctor) {
     return false;
 }
 
-// Wrap a concrete value into a Value (used by formatters/defaults/materializers).
+// Wrap a concrete value into a Value (used by formatters/defaults).
 inline Value to_value(std::string_view s, alloc_t a = {}) { return Value(s, a); }
 inline Value to_value(const std::pmr::string& s, alloc_t a = {}) { return Value(std::string_view(s), a); }
 inline Value to_value(const char* s, alloc_t a = {}) { return Value(s, a); }

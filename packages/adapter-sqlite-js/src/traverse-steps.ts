@@ -232,7 +232,7 @@ function nodeJoinExpr(
 function nodeColumns(schema: SchemaMetadata, alias: string): unknown[] {
     const out: unknown[] = [];
     for (const f of schema.fields) {
-        if (f.computed === true || f.ephemeral === true) continue;
+        if (f.ephemeral === true) continue;
         out.push(sql.ref(`${alias}.${f.name}`).as(f.name));
     }
     return out;
@@ -246,7 +246,7 @@ function edgeColumns(schema: SchemaMetadata, alias: string): unknown[] {
 function jsonObjectExpr(schema: SchemaMetadata, alias: string): ReturnType<typeof sql> {
     const fragments: ReturnType<typeof sql>[] = [];
     for (const f of schema.fields) {
-        if (f.computed === true || f.ephemeral === true) continue;
+        if (f.ephemeral === true) continue;
         fragments.push(sql`${sql.lit(f.name)}, ${sql.ref(`${alias}.${f.name}`)}`);
     }
     if (fragments.length === 0) return sql`json_object()`;

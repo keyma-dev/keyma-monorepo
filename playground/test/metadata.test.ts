@@ -28,7 +28,6 @@ type Field = {
     validators?: unknown[];
     formatters?: { phase: string; fn?: unknown }[];
     indexes?: Record<string, unknown>[];
-    computed?: boolean;
     ephemeral?: boolean;
     deprecated?: string | boolean;
     visibility?: string;
@@ -152,10 +151,11 @@ describe("metadata — Post field/index metadata", () => {
         assert.equal(field(Post.schema, "permalink").type.kind, "regexp");
     });
 
-    it("subtitle is nullable, previewToken is ephemeral, summary is computed", () => {
+    it("subtitle is nullable, previewToken is ephemeral, summary is a getter (not a field)", () => {
         assert.equal(field(Post.schema, "subtitle").nullable, true);
         assert.equal(field(Post.schema, "previewToken").ephemeral, true);
-        assert.equal(field(Post.schema, "summary").computed, true);
+        // `summary` is a getter behavior, so it is not part of `schema.fields`.
+        assert.equal(Post.schema.fields.find((f) => f.name === "summary"), undefined);
     });
 });
 

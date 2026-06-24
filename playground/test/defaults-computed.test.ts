@@ -1,17 +1,15 @@
 /**
- * Defaults, computed getters/setters, standalone setters, instance methods and
- * materializers — exercised against the generated server bundle exactly as a
- * consumer would: construct classes with `new`, call the runtime `applyDefaults`
- * / `applyMaterializers`, and invoke the emitted `materializeX` helpers.
+ * Defaults, getter/setter accessors, standalone setters, and instance methods —
+ * exercised against the generated server bundle exactly as a consumer would:
+ * construct classes with `new`, call the runtime `applyDefaults`, and read the
+ * re-emitted getter/method behaviors. Getters are accessors, not schema fields.
  */
 import { describe, it } from "node:test";
 import assert from "node:assert/strict";
-import { applyDefaults, applyMaterializers } from "@keyma/runtime-js";
+import { applyDefaults } from "@keyma/runtime-js";
 import {
     Author,
     Post,
-    materializeAuthor,
-    materializePost,
 } from "./setup.ts";
 
 describe("applyDefaults — literal + expression defaults", () => {
@@ -47,7 +45,7 @@ describe("applyDefaults — literal + expression defaults", () => {
     });
 });
 
-describe("computed getters + instance behavior", () => {
+describe("getter accessors + instance behavior", () => {
     it("Author.fullName getter joins firstName + lastName", () => {
         const a = new Author({ firstName: "Ada", lastName: "Lovelace" });
         assert.equal(a.fullName, "Ada Lovelace");
@@ -74,36 +72,9 @@ describe("computed getters + instance behavior", () => {
         const p = new Post({ title: "My Title", status: "published" });
         assert.equal(p.summary, "My Title (published)");
     });
-});
 
-describe("materializers — set computed fields on plain objects", () => {
-    it("materializeAuthor sets fullName", () => {
-        const o: Record<string, unknown> = { firstName: "Grace", lastName: "Hopper" };
-        materializeAuthor(o);
-        assert.equal(o.fullName, "Grace Hopper");
-    });
-
-    it("materializePost sets summary", () => {
-        const p: Record<string, unknown> = { title: "T", status: "draft" };
-        materializePost(p);
-        assert.equal(p.summary, "T (draft)");
-    });
-
-    it("applyMaterializers runs a materializer array onto a plain object", () => {
-        const o2: Record<string, unknown> = { firstName: "Grace", lastName: "Hopper" };
-        applyMaterializers([materializeAuthor], o2);
-        assert.equal(o2.fullName, "Grace Hopper");
-    });
-
-    it("applyMaterializers can run multiple materializers", () => {
-        const o3: Record<string, unknown> = {
-            firstName: "Grace",
-            lastName: "Hopper",
-            title: "Book",
-            status: "archived",
-        };
-        applyMaterializers([materializeAuthor, materializePost], o3);
-        assert.equal(o3.fullName, "Grace Hopper");
-        assert.equal(o3.summary, "Book (archived)");
+    it("getters are NOT schema fields (absent from schema.fields)", () => {
+        assert.equal(Author.schema.fields.find((f) => f.name === "fullName"), undefined);
+        assert.equal(Post.schema.fields.find((f) => f.name === "summary"), undefined);
     });
 });

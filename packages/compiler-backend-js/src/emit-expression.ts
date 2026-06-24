@@ -3,8 +3,8 @@ import type { IRExpression, IRStatement } from "@keyma/ir";
 export type ExprEmitOptions = {
     /**
      * How a `{ kind: "field" }` reference is rendered. Defaults to `this.<name>`
-     * (computed-getter context). Materializers pass `value.<name>` so they can
-     * assign computed values onto a plain record without a fragile post-hoc rewrite.
+     * (getter/method body context). The `applyDefaults` emitter passes `value.<name>`
+     * so it can fill defaults on a plain record without a fragile post-hoc rewrite.
      */
     fieldAccess?: (name: string) => string;
 };

@@ -1,6 +1,6 @@
 import type { IRSchema, IRField, IRValidatorDeclaration, IRFormatterDeclaration } from "@keyma/ir";
 import { typeTag } from "./ir-type-to-cpp.js";
-import { buildFactoryCall, factoryIdent } from "./emit-validators.js";
+import { buildFactoryCall } from "./emit-validators.js";
 
 export type SchemaDataOptions = {
     includePrivate: boolean;
@@ -95,37 +95,12 @@ function buildFieldMeta(field: IRField, opts: SchemaDataOptions): string {
     if (!field.required) parts.push(`.required = false`);
     if (field.nullable === true) parts.push(`.nullable = true`);
     if (field.readonly) parts.push(`.readonly = true`);
-    if (field.computed !== undefined) parts.push(`.computed = true`);
     if (opts.includeIndexes && field.indexes.length > 0) parts.push(`.indexed = true`);
     if (field.visibility === "private") parts.push(`.visibility = keyma::Visibility::Private`);
     if (field.validators.length > 0) parts.push(`.validators = std::span<const keyma::ValidatorFn>{__v_${field.name}}`);
     const formatters = opts.formPhasesOnly ? field.formatters.filter((fm) => CLIENT_PHASES.has(fm.phase)) : field.formatters;
     if (formatters.length > 0) parts.push(`.formatters = std::span<const keyma::PhasedFormatter>{__f_${field.name}}`);
     return `keyma::FieldMeta{ ${parts.join(", ")} }`;
-}
-
-/**
- * Build the materializer for a schema's computed fields (server bundles only). It
- * constructs the typed model from the record, evaluates each computed getter, and
- * writes the results back into the record Value. Returns null when there are none.
- */
-export function buildMaterializer(schema: IRSchema, includePrivate: boolean): string | null {
-    const computed = visibleFields(schema, includePrivate).filter((f) => f.computed !== undefined);
-    if (computed.length === 0) return null;
-    const lines = [
-        `inline void materialize_${factoryIdent(schema.sourceName)}(keyma::Value& value) {`,
-        `    auto __a = value.get_allocator();`,
-        `    ${schema.sourceName} __m = ${schema.sourceName}::from_value(value, __a);`,
-    ];
-    for (const f of computed) {
-        lines.push(`    value.set(${JSON.stringify(f.name)}, keyma::to_value(__m.${f.name}(), __a));`);
-    }
-    lines.push(`}`);
-    return lines.join("\n");
-}
-
-export function hasComputedFields(schema: IRSchema, includePrivate: boolean): boolean {
-    return visibleFields(schema, includePrivate).some((f) => f.computed !== undefined);
 }
 
 function visibleFields(schema: IRSchema, includePrivate: boolean): IRField[] {

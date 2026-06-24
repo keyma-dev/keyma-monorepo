@@ -2,9 +2,9 @@ import type {
     IRSchema, IRField, IRType, IRMethod, IRExpression, IRStatement,
     IRValidatorDeclaration, IRFormatterDeclaration,
 } from "@keyma/ir";
-import { exprToJs, stmtToJs } from "./emit-expression.js";
+import { stmtToJs } from "./emit-expression.js";
 import { irTypeToTs } from "./ir-type-to-ts.js";
-import { buildSchemaData, buildMaterializer, hasComputedFields } from "./schema-data.js";
+import { buildSchemaData } from "./schema-data.js";
 import { emitLiteral } from "./emit-literal.js";
 import { factoryIdent } from "./emit-validators.js";
 import { relModuleSpecifier } from "./module-path.js";
@@ -15,8 +15,6 @@ export type ModuleEmitDeps = {
     includePrivate: boolean;
     /** Include index metadata in the embedded schema literal. */
     includeIndexes: boolean;
-    /** Emit `materialize<Name>` for schemas with computed fields. */
-    emitMaterializers: boolean;
     /** Client-only: restrict formatters in the embedded schema literal to form phases. */
     formPhasesOnly: boolean;
     /** Include the per-schema `applyDefaults` arrow (server/library bundles). */
@@ -57,25 +55,18 @@ function emitSchemaClassJs(schema: IRSchema, deps: ModuleEmitDeps): string {
     lines.push(`    constructor(value) {`);
     lines.push(`        if (value) {`);
     for (const field of fields) {
-        if (field.computed !== undefined) continue;
         lines.push(`            this.${field.name} = value.${field.name};`);
     }
     lines.push(`        }`);
     lines.push(`    }`);
 
-    for (const field of fields) {
-        if (field.computed === undefined) continue;
-        lines.push("");
-        lines.push(`    get ${field.name}() {`);
-        lines.push(`        return ${exprToJs(field.computed.expression)};`);
-        lines.push(`    }`);
-    }
-
+    // Getters, setters, and methods are all behaviors re-emitted as class members.
     for (const method of visibleMethods(schema, deps.includePrivate)) {
         lines.push("");
         const params = method.params.map((p) => p.name).join(", ");
-        const signature = method.kind === "setter"
-            ? `    set ${method.name}(${params}) {`
+        const signature =
+            method.kind === "setter" ? `    set ${method.name}(${params}) {`
+            : method.kind === "getter" ? `    get ${method.name}() {`
             : `    ${method.name}(${params}) {`;
         lines.push(signature);
         for (const stmt of method.statements) lines.push(stmtToJs(stmt, "        "));
@@ -96,14 +87,6 @@ function emitSchemaClassJs(schema: IRSchema, deps: ModuleEmitDeps): string {
         refs,
     });
     lines.push(`${schema.sourceName}.schema = Object.freeze(${emitLiteral(schemaData)});`);
-
-    if (deps.emitMaterializers) {
-        const materializer = buildMaterializer(schema, deps.includePrivate);
-        if (materializer !== null) {
-            lines.push("");
-            lines.push(materializer);
-        }
-    }
 
     lines.push("");
     return lines.join("\n");
@@ -136,20 +119,11 @@ function emitSchemaClassDts(schema: IRSchema, deps: ModuleEmitDeps): string {
     lines.push(`    static readonly schema: SchemaMetadata;`);
 
     for (const field of fields) {
-        if (field.computed !== undefined) continue;
         const nul = field.nullable ? " | null" : "";
         const optional = !field.required ? " | undefined" : "";
         const ro = field.readonly ? "readonly " : "";
         for (const jsdoc of fieldJsDoc(field)) lines.push(jsdoc);
         lines.push(`    ${ro}${field.name}: ${irTypeToTs(field.type, deps.embeddedTypeNames)}${nul}${optional};`);
-    }
-
-    for (const field of fields) {
-        if (field.computed === undefined) continue;
-        const nul = field.nullable ? " | null" : "";
-        const tsType = irTypeToTs(field.type, deps.embeddedTypeNames);
-        for (const jsdoc of fieldJsDoc(field)) lines.push(jsdoc);
-        lines.push(`    get ${field.name}(): ${tsType}${nul};`);
     }
 
     for (const method of visibleMethods(schema, deps.includePrivate)) {
@@ -158,14 +132,16 @@ function emitSchemaClassDts(schema: IRSchema, deps: ModuleEmitDeps): string {
             .join(", ");
         if (method.kind === "setter") {
             lines.push(`    set ${method.name}(${params});`);
+        } else if (method.kind === "getter") {
+            const ret = method.returnType ? irTypeToTs(method.returnType, deps.embeddedTypeNames) : "void";
+            lines.push(`    get ${method.name}(): ${ret};`);
         } else {
             const ret = method.returnType ? irTypeToTs(method.returnType, deps.embeddedTypeNames) : "void";
             lines.push(`    ${method.name}(${params}): ${ret};`);
         }
     }
 
-    const ctorFields = fields.filter((f) => f.computed === undefined);
-    const ctorParams = ctorFields
+    const ctorParams = fields
         .map((f) => `${f.name}?: ${irTypeToTs(f.type, deps.embeddedTypeNames)}${f.nullable ? " | null" : ""}`)
         .join("; ");
     lines.push(`    constructor(value?: { ${ctorParams} });`);
@@ -182,11 +158,6 @@ function emitSchemaClassDts(schema: IRSchema, deps: ModuleEmitDeps): string {
         lines.push(`export type ${className} = InstanceType<typeof ${declName}>;`);
     }
 
-    if (deps.emitMaterializers && hasComputedFields(schema, deps.includePrivate)) {
-        lines.push("");
-        lines.push(`export declare function materialize${schema.sourceName}(value: Record<string, unknown>): Record<string, unknown>;`);
-    }
-
     lines.push("");
     return lines.join("\n");
 }
@@ -196,7 +167,7 @@ function emitSchemaClassDts(schema: IRSchema, deps: ModuleEmitDeps): string {
 /**
  * Build the import lines a module needs: cross-module schema/embedded refs, the
  * validator/formatter factories referenced by its fields, and any utility functions
- * referenced by its computed/materializer/method/default bodies. Same-module refs
+ * referenced by its getter/method/setter/default bodies. Same-module refs
  * are skipped (the binding is declared in this very file).
  */
 function buildImports(moduleRef: string, schemas: readonly IRSchema[], deps: ModuleEmitDeps, typeOnly: boolean): string[] {
@@ -284,12 +255,11 @@ function collectFactoryNames(fields: IRField[], which: "validators" | "formatter
     return out;
 }
 
-/** Utility-function names referenced by a module's computed/materializer/method/default bodies. */
+/** Utility-function names referenced by a module's getter/method/setter/default bodies. */
 function collectFunctionRefs(schemas: readonly IRSchema[], deps: ModuleEmitDeps): Set<string> {
     const ids = new Set<string>();
     for (const schema of schemas) {
         for (const field of visibleFields(schema, deps.includePrivate)) {
-            if (field.computed !== undefined) collectIdentifiers(field.computed.expression, ids);
             if (deps.includeDefaults && field.default !== undefined && field.default.kind === "expression") {
                 collectIdentifiers(field.default.expression, ids);
             }

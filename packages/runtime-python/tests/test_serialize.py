@@ -14,7 +14,7 @@ SCHEMA: Dict[str, Any] = {
         {"name": "id", "type": {"kind": "id"}, "readonly": True},
         {"name": "email", "type": {"kind": "string"}},
         {"name": "secret", "type": {"kind": "string"}, "visibility": "private", "required": False},
-        {"name": "fullName", "type": {"kind": "string"}, "required": False, "computed": True, "ephemeral": True},
+        {"name": "scratch", "type": {"kind": "string"}, "required": False, "ephemeral": True},
     ],
 }
 
@@ -22,25 +22,25 @@ SCHEMA: Dict[str, Any] = {
 def test_client_target_strips_private_fields():
     out = serialize(
         SCHEMA,
-        {"id": "u1", "email": "a@b.com", "secret": "x", "fullName": "A B"},
+        {"id": "u1", "email": "a@b.com", "secret": "x", "scratch": "tmp"},
         target="client",
     )
-    assert out == {"id": "u1", "email": "a@b.com", "fullName": "A B"}
+    assert out == {"id": "u1", "email": "a@b.com", "scratch": "tmp"}
 
 
 def test_server_target_keeps_all_fields():
     out = serialize(
         SCHEMA,
-        {"id": "u1", "email": "a@b.com", "secret": "x", "fullName": "A B"},
+        {"id": "u1", "email": "a@b.com", "secret": "x", "scratch": "tmp"},
         target="server",
     )
-    assert out == {"id": "u1", "email": "a@b.com", "secret": "x", "fullName": "A B"}
+    assert out == {"id": "u1", "email": "a@b.com", "secret": "x", "scratch": "tmp"}
 
 
-def test_database_target_strips_ephemeral_computed_fields():
+def test_database_target_strips_ephemeral_fields():
     out = serialize(
         SCHEMA,
-        {"id": "u1", "email": "a@b.com", "secret": "x", "fullName": "A B"},
+        {"id": "u1", "email": "a@b.com", "secret": "x", "scratch": "tmp"},
         target="database",
     )
     assert out == {"id": "u1", "email": "a@b.com", "secret": "x"}

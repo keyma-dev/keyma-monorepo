@@ -31,7 +31,7 @@ Generated code embeds static `SchemaMetadata` (a plain dict attached as `Class.s
 
 The runtime mirrors runtime-js's Promise-based API with `asyncio`: `validate`, `format`, `KeymaServer.handle`, the transport, and every adapter method are `async`. Validators and formatters may be **sync or async** — the runtime awaits awaitable results and adapts each call to the callable's real arity (so the variable-arity closures the Python backend emits, e.g. `def _v(raw, field)`, are called correctly).
 
-The pure data transforms — `apply_defaults`, `serialize`, `deserialize`, `apply_materializers` — are synchronous.
+The pure data transforms — `apply_defaults`, `serialize`, `deserialize` — are synchronous.
 
 ## Minimal server
 

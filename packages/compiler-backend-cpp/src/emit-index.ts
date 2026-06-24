@@ -1,11 +1,9 @@
 import type { IRSchema, IREnumDeclaration, IRService } from "@keyma/ir";
 import { includePath, namespaceOf, cppSanitizer } from "./module-path.js";
-import { factoryIdent } from "./emit-validators.js";
 import { SERVICES_REF } from "./emit-service.js";
 
 type IndexEmitOptions = {
     includePrivate: boolean;
-    emitMaterializers: boolean;
     nsRoot: string;
     /** Named enums (any bundle) and their declaring module refs, for hoisting. */
     enums: readonly IREnumDeclaration[];
@@ -16,8 +14,8 @@ type IndexEmitOptions = {
 
 /**
  * Emit `index.hpp`: include every model header (and `services.hpp` when present) and
- * hoist each visible schema, named enum, materializer, and service from its nested
- * namespace into the bundle's root namespace via `using` aliases. No registry —
+ * hoist each visible schema, named enum, and service from its nested namespace into
+ * the bundle's root namespace via `using` aliases. No registry —
  * validators/formatters/defaults ride directly in the schema metadata.
  */
 export function emitIndexCpp(
@@ -52,9 +50,6 @@ export function emitIndexCpp(
         for (const e of enumsByModule.get(ref) ?? []) lines.push(`using ${rel}::${cppSanitizer(e.name)};`);
         for (const schema of schemasByModule.get(ref) ?? []) {
             lines.push(`using ${rel}::${schema.sourceName};`);
-            if (opts.emitMaterializers && schema.fields.some((f) => f.computed !== undefined)) {
-                lines.push(`using ${rel}::materialize_${factoryIdent(schema.sourceName)};`);
-            }
         }
     }
     for (const svc of opts.services) lines.push(`using services::${svc.sourceName};`);

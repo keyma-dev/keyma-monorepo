@@ -46,9 +46,6 @@ export type { SerializeTarget } from "./serialize.js";
 
 export { deserialize } from "./deserialize.js";
 
-export { applyMaterializers } from "./materialize.js";
-export type { MaterializerFn } from "./materialize.js";
-
 export { applyDefaults } from "./defaults.js";
 
 export type {

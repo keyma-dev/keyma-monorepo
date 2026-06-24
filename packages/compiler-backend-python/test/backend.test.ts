@@ -21,12 +21,12 @@ const BASIC_IR: KeymaIR = {
                 { name: "id", type: { kind: "id" }, visibility: "public", readonly: true, required: true, validators: [], formatters: [], indexes: [{ unique: true }], source: SRC },
                 { name: "firstName", type: { kind: "string" }, visibility: "public", readonly: false, required: true, validators: [], formatters: [], indexes: [], source: SRC },
                 { name: "lastName", type: { kind: "string" }, visibility: "public", readonly: false, required: true, validators: [], formatters: [], indexes: [], source: SRC },
+            ],
+            // `fullName` is a getter behavior (a re-emitted accessor), not a schema field.
+            methods: [
                 {
-                    name: "fullName", type: { kind: "string" }, visibility: "public", readonly: true, required: true,
-                    validators: [], formatters: [], indexes: [],
-                    computed: {
-                        expression: { kind: "template", parts: [{ kind: "field", name: "firstName" }, { kind: "literal", value: " " }, { kind: "field", name: "lastName" }] },
-                    },
+                    name: "fullName", kind: "getter", params: [], returnType: { kind: "string" }, visibility: "public",
+                    statements: [{ kind: "return", value: { kind: "template", parts: [{ kind: "field", name: "firstName" }, { kind: "literal", value: " " }, { kind: "field", name: "lastName" }] } }],
                     source: SRC,
                 },
             ],
@@ -262,15 +262,15 @@ describe("emitPython", () => {
                     fields: [
                         { name: "firstName", type: { kind: "string" }, visibility: "public", readonly: false, required: true, validators: [], formatters: [], indexes: [], source: SRC },
                         { name: "email", type: { kind: "string" }, visibility: "public", readonly: false, required: true, validators: [], formatters: [], indexes: [], source: SRC },
-                        {
-                            name: "fullName", type: { kind: "string" }, visibility: "public", readonly: true, required: true,
-                            validators: [], formatters: [], indexes: [],
-                            computed: { expression: { kind: "field", name: "firstName" } },
-                            source: SRC,
-                        },
                     ],
                     indexes: [],
                     methods: [
+                        {
+                            // A getter behavior — a re-emitted accessor, not a schema field.
+                            name: "fullName", kind: "getter", params: [], returnType: { kind: "string" },
+                            statements: [{ kind: "return", value: { kind: "field", name: "firstName" } }],
+                            visibility: "public", source: SRC,
+                        },
                         {
                             name: "greeting", kind: "method",
                             params: [{ name: "prefix", type: { kind: "string" } }],
@@ -279,7 +279,7 @@ describe("emitPython", () => {
                             visibility: "public", source: SRC,
                         },
                         {
-                            // Paired with the `fullName` computed getter → @fullName.setter form.
+                            // Paired with the `fullName` getter behavior → @fullName.setter form.
                             name: "fullName", kind: "setter",
                             params: [{ name: "value", type: { kind: "string" } }],
                             statements: [{ kind: "assign", target: { kind: "field", name: "firstName" }, value: { kind: "identifier", name: "value" } }],

@@ -30,7 +30,7 @@ export function applyProjection<QB extends any>(
 ): QB {
     const table = tableName(schema);
     // Determine which fields to select. If projection.fields is missing or
-    // empty, select every non-computed field.
+    // empty, select every non-ephemeral field.
     const fieldNames = baseFieldNames(schema, projection?.fields);
     // eslint-disable-next-line @typescript-eslint/no-explicit-any
     let out: any = qb;
@@ -82,7 +82,7 @@ function baseFieldNames(
 ): string[] {
     if (fields === undefined) {
         return schema.fields
-            .filter((f) => f.computed !== true && f.ephemeral !== true)
+            .filter((f) => f.ephemeral !== true)
             .map((f) => f.name);
     }
     const keys = Object.keys(fields);

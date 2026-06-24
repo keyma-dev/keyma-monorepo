@@ -49,14 +49,6 @@ User.schema = Object.freeze({
             "type": {
                 "kind": "string"
             }
-        },
-        {
-            "name": "fullName",
-            "type": {
-                "kind": "string"
-            },
-            "readonly": true,
-            "computed": true
         }
     ]
 });

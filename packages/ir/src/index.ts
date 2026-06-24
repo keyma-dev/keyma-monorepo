@@ -10,7 +10,6 @@ export type {
     IRFieldIndex,
     IRIndex,
     IRExpression,
-    IRComputed,
     IRMethod,
     IRFormField,
     IRDefault,
@@ -35,8 +34,6 @@ export type {
 
 export { validateIR } from "./validate.js";
 export type { IRValidationResult, IRValidationError } from "./validate.js";
-
-export { collectFieldRefs } from "./expr-deps.js";
 
 export {
     INTRINSICS,

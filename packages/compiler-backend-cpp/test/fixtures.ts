@@ -116,13 +116,17 @@ const User: IRSchema = {
         f("primaryTag", { kind: "reference", schema: "tag", idType: { kind: "id" } }),
         f("tags", { kind: "array", of: { kind: "string" } }),
         f("meta", { kind: "json" }),
-        f("fullName", { kind: "string" }, { computed: { expression: tmpl(fieldRef("firstName"), lit(" "), fieldRef("lastName")), dependsOn: ["firstName", "lastName"] } }),
-        // Interpolates the named enum in a template literal — exercises std::formatter<enum>.
-        f("badge", { kind: "string" }, { computed: { expression: tmpl(fieldRef("firstName"), lit(" ["), fieldRef("status"), lit("]")), dependsOn: ["firstName", "status"] } }),
-        // Reads a reference's id — must lower to `this->primaryTag->id` (shared_ptr).
-        f("tagKey", { kind: "string" }, { computed: { expression: { kind: "member", object: fieldRef("primaryTag"), member: "id" }, dependsOn: ["primaryTag"] } }),
     ],
+    // Getters are behaviors (re-emitted accessors), not schema fields.
     methods: [
+        { name: "fullName", kind: "getter", params: [], returnType: { kind: "string" },
+            statements: [{ kind: "return", value: tmpl(fieldRef("firstName"), lit(" "), fieldRef("lastName")) }], visibility: "public", source: src("user.ts") },
+        // Interpolates the named enum in a template literal — exercises std::formatter<enum>.
+        { name: "badge", kind: "getter", params: [], returnType: { kind: "string" },
+            statements: [{ kind: "return", value: tmpl(fieldRef("firstName"), lit(" ["), fieldRef("status"), lit("]")) }], visibility: "public", source: src("user.ts") },
+        // Reads a reference's id — must lower to `this->primaryTag->id` (shared_ptr).
+        { name: "tagKey", kind: "getter", params: [], returnType: { kind: "string" },
+            statements: [{ kind: "return", value: { kind: "member", object: fieldRef("primaryTag"), member: "id" } }], visibility: "public", source: src("user.ts") },
         { name: "greet", kind: "method", params: [], returnType: { kind: "string" },
             statements: [{ kind: "return", value: tmpl(lit("Hi "), fieldRef("firstName")) }], visibility: "public", source: src("user.ts") },
     ],
@@ -130,7 +134,7 @@ const User: IRSchema = {
     source: src("user.ts"),
 };
 
-/** A representative IR: nested modules, embedded + reference, private schema/field, validators, formatters, defaults, computed, methods, indexes. */
+/** A representative IR: nested modules, embedded + reference, private schema/field, validators, formatters, defaults, getters, methods, indexes. */
 export function sampleIR(): KeymaIR {
     return {
         irVersion: "4.0.0", compilerVersion: "0.1.0", sourceRoot: "/proj/src",

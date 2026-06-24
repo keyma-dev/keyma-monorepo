@@ -7,7 +7,7 @@ emits. The fixtures here are shaped byte-for-byte like the backend's generated o
 - formatters are ``def _f(value): ...`` that ``raise TypeError`` on a type mismatch;
 - schema metadata is a plain camelCase ``dict`` attached as ``Class.schema``;
 - ``refs`` is a ``dict`` ``{"address": Address}``;
-- materializers are module-level ``def materializeX(value: dict) -> dict``;
+- getters are emitted as ``@property`` accessors on the class (behaviors, not fields);
 - expression defaults are a module-level ``applyDefaults`` function on the metadata.
 
 If the runtime's calling convention drifts from the backend's emitted shape, these break.
@@ -22,7 +22,6 @@ import pytest
 from keyma.runtime import (
     KeymaServer,
     apply_defaults,
-    apply_materializers,
     create_direct_transport,
     deserialize,
     format,
@@ -93,12 +92,7 @@ def trim():
     return _f
 
 
-# ── Generated-style module-level materializer + applyDefaults ────────────────
-
-
-def materialize_user(value: dict) -> dict:
-    value["fullName"] = str(value["firstName"]) + " " + str(value["lastName"])
-    return value
+# ── Generated-style module-level applyDefaults ───────────────────────────────
 
 
 def _apply_defaults_user(data: dict) -> None:
@@ -170,7 +164,6 @@ brand_schema(
             {"name": "address", "type": {"kind": "embedded", "schema": "address"}, "required": False},
             {"name": "status", "type": {"kind": "string"}, "required": False, "default": {"kind": "literal", "value": "active"}},
             {"name": "createdAt", "type": {"kind": "dateTime"}, "required": False},
-            {"name": "fullName", "type": {"kind": "string"}, "readonly": True, "computed": True},
         ],
         "refs": {"address": Address},
         "applyDefaults": _apply_defaults_user,
@@ -202,8 +195,9 @@ async def test_appends_message_less_error_dict_verbatim():
     assert age_errors == [{"field": "age", "code": "min_value"}]
 
 
-async def test_computed_field_is_not_validated():
-    # fullName is computed (no value supplied) — must not raise "required".
+async def test_getter_is_not_a_field_so_not_validated():
+    # `fullName` is a getter behavior, not a schema field — it never appears in
+    # validation (no "required" for a value that is never part of the record).
     errors = await validate(User.schema, {"firstName": "A", "lastName": "B", "email": "a@b.com", "age": 30})
     assert all(e["field"] != "fullName" for e in errors)
 
@@ -240,15 +234,6 @@ async def test_formatter_type_guard_raises_typeerror():
         await format(User.schema, {"firstName": 123}, "change")
 
 
-# ── Materializers ────────────────────────────────────────────────────────────
-
-
-def test_apply_materializers_mutates_in_place():
-    value = {"firstName": "Grace", "lastName": "Hopper"}
-    apply_materializers([materialize_user], value)
-    assert value["fullName"] == "Grace Hopper"
-
-
 # ── Defaults (literal + expression applyDefaults fn) ─────────────────────────
 
 
@@ -283,11 +268,13 @@ def test_serialize_recurses_embedded_via_dict_refs_and_converts_datetime():
     assert out["createdAt"] == "2024-01-02T03:04:05.000Z"
 
 
-def test_serialize_includes_computed_property_from_instance():
-    # Reading a model INSTANCE must pick up the @property computed field.
+def test_serialize_omits_getter_accessor():
+    # `fullName` is a getter behavior, not a schema field, so it is NOT serialized —
+    # serialize only walks `schema["fields"]`. The accessor stays on the instance.
     user = User({"id": "u1", "firstName": "Ada", "lastName": "Lovelace"})
+    assert user.fullName == "Ada Lovelace"  # the accessor still works on the instance
     out = serialize(User.schema, user, target="server")
-    assert out["fullName"] == "Ada Lovelace"
+    assert "fullName" not in out
 
 
 def test_deserialize_instantiates_embedded_and_parses_datetime():

@@ -17,7 +17,7 @@ Any change to these types affects every frontend and backend, so keep IR nodes J
 
 ```ts
 import {
-    validateIR, collectFieldRefs,
+    validateIR,
     INTRINSICS, intrinsicByOp, intrinsicByMember,
 } from "@keyma/ir";
 import type { KeymaIR, IRSchema, IRField, IRType } from "@keyma/ir";
@@ -35,7 +35,7 @@ import type { KeymaIR, IRSchema, IRField, IRType } from "@keyma/ir";
 | `IRValidator` | Discriminated union of all built-in validators. |
 | `IRFormatter` / `IRFormatterSpec` | A formatter entry (`{ phase, spec }`) and the spec union. |
 | `IRComputed` | Computed-field descriptor. |
-| `IRExpression` | Discriminated union for computed-getter / body expressions. |
+| `IRExpression` | Discriminated union for getter / method / body expressions. |
 | `IRStatement` (+ `IRReturnStmt`, `IRIfStmt`, `IRConstDecl`, `IRExprStmt`, `IRAssignStmt`) | Portable statement nodes for method/setter/validator/formatter bodies. |
 | `IRMethod`, `IRParam`, `IRFunctionBody` | Method / behavior descriptors. |
 | `IRFieldIndex` / `IRIndex` | Single-field and composite index descriptors. |
@@ -58,9 +58,8 @@ if (!result.valid) {
 }
 ```
 
-### `collectFieldRefs(...)` and the intrinsic registry
+### The intrinsic registry
 
-- `collectFieldRefs` walks an expression/body and reports the fields it reads — used to order computed-field materialization.
 - `INTRINSICS`, `intrinsicByOp`, and `intrinsicByMember` describe the **portable method/property calls** (e.g. `.trim()`, `.includes()`, `.length`) that may appear in getter/method/validator bodies. The human-readable catalog is `intrinsics.md` in this package; frontends use it to reject non-portable calls and backends use it to re-emit the supported ones.
 
 ### `schema.json`

@@ -1,6 +1,6 @@
 # @keyma/compiler-backend-python
 
-Python code-generation backend for Keyma. It consumes a `KeymaIR` document and emits **standalone Python** — plain classes that carry their schema metadata, expose computed fields as properties, and ship materializer functions for server-side use.
+Python code-generation backend for Keyma. It consumes a `KeymaIR` document and emits **standalone Python** — plain classes that carry their schema metadata and re-emit getters/methods/setters as class members (behaviors).
 
 It is a `KeymaBackend` plugin for the `@keyma/compiler` driver and does **no file I/O**: `emit` returns `EmitFile[]`. The `@keyma/cli` registers it by default alongside the JS backend, so adding a `python` entry to your `keyma.config` `targets` is all it takes to emit Python.
 
@@ -40,7 +40,7 @@ export default {
 
 ## Output
 
-A Python package: `models/<schema>.py` (one per schema), an `index.py` + `__init__.py` barrel, and — when the IR declares them — `validators.py`/`registry.py`, `formatters.py`/`formatter_registry.py`, and `functions.py`. Every directory gets an `__init__.py`. The client/server split mirrors the JS backend: client = public schemas and fields, form-phase formatters, no indexes or materializers; server = everything.
+A Python package: `models/<schema>.py` (one per schema), an `index.py` + `__init__.py` barrel, and — when the IR declares them — `validators.py`/`registry.py`, `formatters.py`/`formatter_registry.py`, and `functions.py`. Every directory gets an `__init__.py`. The client/server split mirrors the JS backend: client = public schemas and fields, form-phase formatters, no indexes; server = everything.
 
 Generated models are **plain classes** (no dataclasses, no Pydantic) that use only the standard library (`typing`, `datetime`, `re`) — there is no Keyma Python runtime to install:
 
@@ -57,18 +57,14 @@ class User:
         return (str(self.firstName) + " " + str(self.lastName))
 
 User.schema = { "name": "user", "sourceName": "User", "fields": [ ... ] }
-
-def materializeUser(value: dict) -> dict:
-    value["fullName"] = (str(value["firstName"]) + " " + str(value["lastName"]))
-    return value
 ```
 
-- `@Computed` getters become `@property`; methods and setters are re-emitted; `materialize<Schema>()` is emitted server-side for schemas with computed fields.
+- Getters become `@property` accessors; methods and setters are re-emitted. These are behaviors, not schema fields — `fullName` above is **not** in `schema["fields"]`. (Stored/indexed computed fields are deferred to a future release; see the `@Computed` note in `@keyma/dsl`.)
 - Type mapping: `string → str`, `integer → int`, `number → float`, `boolean → bool`, `bigint → int`, `decimal → str`, `bytes → bytes`, `dateTime → datetime`, `date`/`time → str`, `json → Any`, `enum → Literal[...]`, `array → List[...]`, `reference`/`embedded → the referenced class`. Optionality and nullability both widen the hint to `Optional[...]`.
 
 ## Status
 
-The backend emits model classes, schema metadata, computed properties, materializers, validators, and formatters, and lowers the portable expression subset (binary/unary/ternary ops, template strings, regex, intrinsics). Two things to keep in mind:
+The backend emits model classes, schema metadata, getter/method/setter behaviors, validators, and formatters, and lowers the portable expression subset (binary/unary/ternary ops, template strings, regex, intrinsics). Two things to keep in mind:
 
 - **No Python runtime package yet.** Unlike the JS target there is no server/query/adapter layer for Python — the output is schema and model code you consume directly.
 - **Unsupported intrinsics degrade gracefully, not loudly.** An expression outside the supported set lowers to a `__keyma_unsupported_intrinsic__("…")` call rather than failing the build, so review the output if you rely on exotic getter or method bodies.

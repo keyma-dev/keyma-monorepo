@@ -172,16 +172,15 @@ describe("validateIR", () => {
         }
     });
 
-    it("rejects an unknown intrinsic op in a computed expression", () => {
+    it("rejects an unknown intrinsic op in a getter behavior", () => {
         const doc = {
             ...goldenIR,
             schemas: [{
                 ...minimalSchema,
-                fields: [{
-                    ...minimalField,
-                    computed: {
-                        expression: { kind: "intrinsic", op: "string.bogus", receiver: { kind: "field", name: "x" }, args: [] },
-                    },
+                methods: [{
+                    name: "bad", kind: "getter", params: [] as unknown[], returnType: { kind: "string" },
+                    statements: [{ kind: "return", value: { kind: "intrinsic", op: "string.bogus", receiver: { kind: "field", name: "x" }, args: [] } }],
+                    visibility: "public", source: minimalSource,
                 }],
             }],
         };
@@ -190,16 +189,15 @@ describe("validateIR", () => {
         assert.ok(result.errors.some((e) => e.message.includes("unknown intrinsic op")));
     });
 
-    it("accepts a known intrinsic op", () => {
+    it("accepts a known intrinsic op in a getter behavior", () => {
         const doc = {
             ...goldenIR,
             schemas: [{
                 ...minimalSchema,
-                fields: [{
-                    ...minimalField,
-                    computed: {
-                        expression: { kind: "intrinsic", op: "array.length", receiver: { kind: "field", name: "x" }, args: [] },
-                    },
+                methods: [{
+                    name: "good", kind: "getter", params: [] as unknown[], returnType: { kind: "integer" },
+                    statements: [{ kind: "return", value: { kind: "intrinsic", op: "array.length", receiver: { kind: "field", name: "x" }, args: [] } }],
+                    visibility: "public", source: minimalSource,
                 }],
             }],
         };
@@ -333,17 +331,16 @@ describe("validateIR", () => {
         assert.equal(validateIR(doc).valid, true);
     });
 
-    it("accepts a field with a computed expression", () => {
+    it("accepts a getter behavior with a portable expression body", () => {
         const doc = {
             ...goldenIR,
             schemas: [{
                 ...minimalSchema,
-                fields: [{
-                    ...minimalField,
-                    name: "fullName",
-                    type: { kind: "string" },
-                    computed: {
-                        expression: {
+                methods: [{
+                    name: "fullName", kind: "getter", params: [] as unknown[], returnType: { kind: "string" },
+                    statements: [{
+                        kind: "return",
+                        value: {
                             kind: "template",
                             parts: [
                                 { kind: "field", name: "firstName" },
@@ -351,7 +348,8 @@ describe("validateIR", () => {
                                 { kind: "field", name: "lastName" },
                             ],
                         },
-                    },
+                    }],
+                    visibility: "public", source: minimalSource,
                 }],
             }],
         };

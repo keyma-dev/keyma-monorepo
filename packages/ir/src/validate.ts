@@ -235,9 +235,6 @@ function checkField(field: unknown, path: string): IRValidationError[] {
         field["indexes"].forEach((idx, i) => errors.push(...checkFieldIndex(idx, `${path}.indexes[${i}]`)));
     }
 
-    if ("computed" in field && field["computed"] !== undefined) {
-        errors.push(...checkComputed(field["computed"], `${path}.computed`));
-    }
     if ("default" in field && field["default"] !== undefined) {
         errors.push(...checkDefault(field["default"], `${path}.default`));
     }
@@ -650,17 +647,12 @@ function checkEnumDeclaration(decl: unknown, path: string): IRValidationError[] 
     return errors;
 }
 
-function checkComputed(computed: unknown, path: string): IRValidationError[] {
-    if (!isObj(computed)) return [e(path, "must be an object")];
-    return checkExpression(computed["expression"], `${path}.expression`);
-}
-
 function checkMethod(m: unknown, path: string): IRValidationError[] {
     if (!isObj(m)) return [e(path, "must be an object")];
     const errors: IRValidationError[] = [];
     if (!isStr(m["name"]) || m["name"] === "") errors.push(e(`${path}.name`, "must be a non-empty string"));
-    if (m["kind"] !== "method" && m["kind"] !== "setter") {
-        errors.push(e(`${path}.kind`, 'must be "method" or "setter"'));
+    if (m["kind"] !== "method" && m["kind"] !== "setter" && m["kind"] !== "getter") {
+        errors.push(e(`${path}.kind`, 'must be "method", "setter", or "getter"'));
     }
     if (!isArr(m["params"])) {
         errors.push(e(`${path}.params`, "must be an array"));

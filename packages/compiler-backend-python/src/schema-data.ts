@@ -1,5 +1,4 @@
 import type { IRSchema, IRField, IRFieldIndex, IRIndex, IRValidatorDeclaration, IRFormatterDeclaration } from "@keyma/ir";
-import { exprToPython } from "./emit-expression.js";
 import { raw } from "./emit-literal.js";
 import { buildFactoryCall } from "./emit-validators.js";
 
@@ -41,24 +40,6 @@ export function buildSchemaData(schema: IRSchema, opts: SchemaDataOptions): Reco
     return out;
 }
 
-export function buildMaterializer(schema: IRSchema, includePrivate: boolean): string | null {
-    const computedFields = visibleFields(schema, includePrivate).filter((f) => f.computed !== undefined);
-    if (computedFields.length === 0) return null;
-
-    const lines: string[] = [`def materialize${schema.sourceName}(value: dict) -> dict:`];
-    for (const field of computedFields) {
-        if (field.computed === undefined) continue;
-        const pyExpr = exprToPython(field.computed.expression).replace(/self\.([a-zA-Z0-9_]+)/g, 'value["$1"]');
-        lines.push(`    value["${field.name}"] = ${pyExpr}`);
-    }
-    lines.push(`    return value`);
-    return lines.join("\n");
-}
-
-export function hasComputedFields(schema: IRSchema, includePrivate: boolean): boolean {
-    return visibleFields(schema, includePrivate).some((f) => f.computed !== undefined);
-}
-
 function visibleFields(schema: IRSchema, includePrivate: boolean): IRField[] {
     return includePrivate ? schema.fields : schema.fields.filter((f) => f.visibility === "public");
 }
@@ -87,7 +68,6 @@ function buildFieldData(field: IRField, opts: SchemaDataOptions): object {
         }));
     }
     if (indexes.length > 0) base["indexes"] = indexes;
-    if (field.computed !== undefined) base["computed"] = true;
     if (field.ephemeral) base["ephemeral"] = true;
     if (field.default !== undefined && field.default.kind === "literal") base["default"] = field.default;
 

@@ -9,10 +9,10 @@ export const KEYMA010 = "KEYMA010"; // Unknown field type
 export const KEYMA011 = "KEYMA011"; // Non-literal decorator argument
 export const KEYMA012 = "KEYMA012"; // Validator/formatter incompatible with field type
 export const KEYMA013 = "KEYMA013"; // Missing required option on parameterized marker
-export const KEYMA014 = "KEYMA014"; // Unsupported computed getter expression
-export const KEYMA015 = "KEYMA015"; // (obsolete) Computed getter must have no setter — a getter/setter pair is now allowed (getter = computed field, setter = behavior)
-export const KEYMA018 = "KEYMA018"; // Computed getter dependency cycle (incl. self-reference)
-export const KEYMA019 = "KEYMA019"; // Getter without @Computed is ignored / @Computed on a non-getter
+export const KEYMA014 = "KEYMA014"; // Unsupported getter accessor body expression
+export const KEYMA015 = "KEYMA015"; // (obsolete) Computed getter must have no setter — a getter/setter pair is now allowed (getter + setter accessor pair)
+export const KEYMA018 = "KEYMA018"; // (obsolete) Computed getter dependency cycle — getters are now plain accessors (computed fields deferred), so no materialization order to cycle-check
+export const KEYMA019 = "KEYMA019"; // @Computed applied to a non-getter (plain property)
 
 // Validator / formatter errors
 export const KEYMA020 = "KEYMA020"; // Unknown validator
@@ -71,6 +71,9 @@ export const KEYMA091 = "KEYMA091"; // OBSOLETE — defaults are now property in
 
 // Method / setter behavior errors
 export const KEYMA092 = "KEYMA092"; // Method/setter parameter or return type must be explicitly annotated (portable subset)
+
+// Deferred-feature warnings
+export const KEYMA098 = "KEYMA098"; // @Computed/@Indexed (etc.) on a getter is ignored — computed-field support is deferred; the getter is emitted as a plain accessor
 
 // Service (remote function call) errors
 export const KEYMA093 = "KEYMA093"; // Service method must be abstract (a signature with no body)

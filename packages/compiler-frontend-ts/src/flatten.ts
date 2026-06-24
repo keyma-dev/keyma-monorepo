@@ -79,11 +79,16 @@ function flattenSchema(
     return out;
 }
 
-/** Merge inherited and own behaviors; a child behavior overrides a parent's by name. */
+/**
+ * Merge inherited and own behaviors; a child behavior overrides a parent's by
+ * identity. Identity is `kind:name`, not `name` alone, so a getter and a setter of
+ * the same name (an accessor pair) coexist instead of clobbering each other.
+ */
 function mergeMethods(parentMethods: IRMethod[], childMethods: IRMethod[]): IRMethod[] {
     const result = new Map<string, IRMethod>();
-    for (const m of parentMethods) result.set(m.name, m);
-    for (const m of childMethods) result.set(m.name, m);
+    const key = (m: IRMethod): string => `${m.kind}:${m.name}`;
+    for (const m of parentMethods) result.set(key(m), m);
+    for (const m of childMethods) result.set(key(m), m);
     return [...result.values()];
 }
 

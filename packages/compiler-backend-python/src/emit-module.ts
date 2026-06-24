@@ -1,8 +1,7 @@
 import type { IRSchema, IRField, IRType, IRMethod, IRExpression, IRStatement, IRValidatorDeclaration, IRFormatterDeclaration } from "@keyma/ir";
-import { exprToPython } from "./emit-expression.js";
 import { stmtToPython, factoryIdent } from "./emit-validators.js";
 import { irTypeToPython } from "./ir-type-to-python.js";
-import { buildSchemaData, buildMaterializer } from "./schema-data.js";
+import { buildSchemaData } from "./schema-data.js";
 import { buildApplyDefaults } from "./emit-defaults.js";
 import { emitLiteral } from "./emit-literal.js";
 import { pythonRelImport } from "./module-path.js";
@@ -10,7 +9,6 @@ import { pythonRelImport } from "./module-path.js";
 export type ModuleEmitDeps = {
     includePrivate: boolean;
     includeIndexes: boolean;
-    emitMaterializers: boolean;
     formPhasesOnly: boolean;
     includeDefaults: boolean;
     /** sourceName → bundle-relative module ref (e.g. "models/user/user"). */
@@ -56,25 +54,22 @@ function emitSchemaClass(schema: IRSchema, deps: ModuleEmitDeps): string[] {
     lines.push(`        if value:`);
     let assigned = false;
     for (const field of fields) {
-        if (field.computed !== undefined) continue;
         lines.push(`            self.${field.name}: ${fieldAnnotation(field, deps.classNameByName)} = value.get("${field.name}")`);
         assigned = true;
     }
     if (!assigned && schema.extends === undefined) lines.push(`            pass`);
 
-    const computedNames = new Set<string>();
-    for (const field of fields) {
-        if (field.computed === undefined) continue;
-        computedNames.add(field.name);
+    // Getters, setters, and methods are all behaviors re-emitted as class members.
+    // Emit getters first so a paired `@name.setter` follows its `@property`.
+    const behaviors = visibleMethods(schema, deps.includePrivate);
+    const getterNames = new Set(behaviors.filter((m) => m.kind === "getter").map((m) => m.name));
+    const ordered = [
+        ...behaviors.filter((m) => m.kind === "getter"),
+        ...behaviors.filter((m) => m.kind !== "getter"),
+    ];
+    for (const method of ordered) {
         lines.push("");
-        lines.push(`    @property`);
-        lines.push(`    def ${field.name}(self) -> ${fieldAnnotation(field, deps.classNameByName)}:`);
-        lines.push(`        return ${exprToPython(field.computed.expression)}`);
-    }
-
-    for (const method of visibleMethods(schema, deps.includePrivate)) {
-        lines.push("");
-        lines.push(...emitMethodPython(method, computedNames));
+        lines.push(...emitMethodPython(method, getterNames, deps.classNameByName));
     }
     lines.push("");
 
@@ -99,13 +94,6 @@ function emitSchemaClass(schema: IRSchema, deps: ModuleEmitDeps): string[] {
     });
     lines.push(`${schema.sourceName}.schema = ${emitLiteral(schemaData)}`);
 
-    if (deps.emitMaterializers) {
-        const materializer = buildMaterializer(schema, deps.includePrivate);
-        if (materializer !== null) {
-            lines.push("");
-            lines.push(materializer);
-        }
-    }
     return lines;
 }
 
@@ -179,7 +167,6 @@ function collectFunctionRefs(schemas: readonly IRSchema[], deps: ModuleEmitDeps)
     const ids = new Set<string>();
     for (const schema of schemas) {
         for (const field of visibleFields(schema, deps.includePrivate)) {
-            if (field.computed !== undefined) collectIdentifiers(field.computed.expression, ids);
             if (deps.includeDefaults && field.default !== undefined && field.default.kind === "expression") {
                 collectIdentifiers(field.default.expression, ids);
             }
@@ -234,13 +221,22 @@ function visibleMethods(schema: IRSchema, includePrivate: boolean): IRMethod[] {
     return includePrivate ? methods : methods.filter((m) => m.visibility === "public");
 }
 
-function emitMethodPython(method: IRMethod, computedNames: ReadonlySet<string>): string[] {
+function emitMethodPython(
+    method: IRMethod,
+    getterNames: ReadonlySet<string>,
+    classNameByName: ReadonlyMap<string, string>,
+): string[] {
     const lines: string[] = [];
     const body = method.statements.length === 0 ? ["        pass"] : method.statements.map((s) => stmtToPython(s, "        "));
 
+    if (method.kind === "getter") {
+        const ret = method.returnType !== undefined ? irTypeToPython(method.returnType, classNameByName) : "Any";
+        lines.push(`    @property`, `    def ${method.name}(self) -> ${ret}:`, ...body);
+        return lines;
+    }
     if (method.kind === "setter") {
         const valueParam = method.params[0]?.name ?? "value";
-        if (computedNames.has(method.name)) {
+        if (getterNames.has(method.name)) {
             lines.push(`    @${method.name}.setter`, `    def ${method.name}(self, ${valueParam}):`, ...body);
         } else {
             const helper = `_set_${method.name}`;

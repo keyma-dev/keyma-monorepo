@@ -1,4 +1,4 @@
-import { Schema, Indexed, Computed } from "@keyma/dsl";
+import { Schema, Indexed } from "@keyma/dsl";
 import type { Reference } from "@keyma/dsl";
 import { Entity } from "./base.js";
 import { Author } from "./author.js";
@@ -16,9 +16,8 @@ export class Credentials extends Entity {
 
     declare passwordHash: string;
 
-    // A computed, indexed field on a private schema.
-    @Computed()
-    @Indexed({ unique: true })
+    // A getter behavior on a private schema (re-emitted as an accessor, not a
+    // schema field — so it is not indexed/stored).
     get authorKey(): string {
         return this.author.id;
     }

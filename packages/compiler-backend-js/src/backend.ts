@@ -73,17 +73,17 @@ export async function emitJs(
 
     if (jsTarget.emitClient) {
         files.push(...emitBundle(ir, path.posix.join(jsTarget.outDir, "client"), shared, decls, {
-            includePrivate: false, includeIndexes: false, emitMaterializers: false, formPhasesOnly: true, includeDefaults: false,
+            includePrivate: false, includeIndexes: false, formPhasesOnly: true, includeDefaults: false,
         }));
     }
     if (jsTarget.emitServer) {
         files.push(...emitBundle(ir, path.posix.join(jsTarget.outDir, "server"), shared, decls, {
-            includePrivate: true, includeIndexes: true, emitMaterializers: true, formPhasesOnly: false, includeDefaults: true,
+            includePrivate: true, includeIndexes: true, formPhasesOnly: false, includeDefaults: true,
         }));
     }
     if (jsTarget.emitLibrary) {
         files.push(...emitBundle(ir, jsTarget.outDir, shared, decls, {
-            includePrivate: true, includeIndexes: true, emitMaterializers: true, formPhasesOnly: false, includeDefaults: true,
+            includePrivate: true, includeIndexes: true, formPhasesOnly: false, includeDefaults: true,
         }));
     }
 
@@ -92,7 +92,7 @@ export async function emitJs(
 
 type BundleOptions = Pick<
     ModuleEmitDeps,
-    "includePrivate" | "includeIndexes" | "emitMaterializers" | "formPhasesOnly" | "includeDefaults"
+    "includePrivate" | "includeIndexes" | "formPhasesOnly" | "includeDefaults"
 >;
 
 function emitBundle(
@@ -157,7 +157,7 @@ function emitBundle(
     }
 
     const serviceNames = visibleServices.map((s) => s.sourceName);
-    const indexOpts = { includePrivate: opts.includePrivate, emitMaterializers: opts.emitMaterializers };
+    const indexOpts = { includePrivate: opts.includePrivate };
     files.push({ path: path.posix.join(bundleDir, "index.js"), content: emitIndexJs(visibleSchemas, shared.schemaModule, indexOpts, serviceNames) });
     files.push({ path: path.posix.join(bundleDir, "index.d.ts"), content: emitIndexDts(visibleSchemas, shared.schemaModule, indexOpts, serviceNames) });
 

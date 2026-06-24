@@ -9,7 +9,7 @@ export type { ValidatorContext, ValidatorFn } from "./types.js";
  *
  * Absent (`undefined`) values are not passed to validators: a required field that
  * is missing fails with `code: "required"`, while an optional missing field is
- * skipped. Computed fields are never validated (they are derived outputs).
+ * skipped.
  */
 export async function validate(
     schema: SchemaMetadata,
@@ -18,9 +18,6 @@ export async function validate(
     const errors: ValidationError[] = [];
     const context: ValidatorContext = { object: value };
     for (const field of schema.fields) {
-        // Computed fields are derived outputs, never validated as input.
-        if (field.computed === true) continue;
-
         const raw = value[field.name];
 
         // An absent value skips its validators (they would otherwise trip their

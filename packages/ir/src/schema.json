@@ -112,7 +112,7 @@
       "additionalProperties": false,
       "properties": {
         "name": { "type": "string", "minLength": 1 },
-        "kind": { "type": "string", "enum": ["method", "setter"] },
+        "kind": { "type": "string", "enum": ["method", "setter", "getter"] },
         "params": {
           "type": "array",
           "items": { "$ref": "#/$defs/IRFunctionParam" }
@@ -149,7 +149,6 @@
           "type": "array",
           "items": { "$ref": "#/$defs/IRFieldIndex" }
         },
-        "computed": { "$ref": "#/$defs/IRComputed" },
         "ephemeral": { "type": "boolean" },
         "default": { "$ref": "#/$defs/IRDefault" },
         "form": { "$ref": "#/$defs/IRFormField" },
@@ -280,15 +279,6 @@
       "type": "object",
       "required": ["kind"],
       "properties": { "kind": { "type": "string" } }
-    },
-    "IRComputed": {
-      "type": "object",
-      "required": ["expression"],
-      "additionalProperties": false,
-      "properties": {
-        "expression": { "$ref": "#/$defs/IRExpression" },
-        "dependsOn": { "type": "array", "items": { "type": "string" } }
-      }
     },
     "IRParam": {
       "type": "object",

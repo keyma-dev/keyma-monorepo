@@ -20,7 +20,6 @@ from .types import (
     EdgeMetadata,
     FieldMetadata,
     FieldType,
-    MaterializerFn,
     RequestContext,
     SchemaMetadata,
     SerializeTarget,
@@ -36,7 +35,6 @@ from .format import format
 from .defaults import apply_defaults
 from .serialize import serialize
 from .deserialize import deserialize
-from .materialize import apply_materializers
 
 # ── Errors ─────────────────────────────────────────────────────────────────────
 from .errors import (
@@ -97,14 +95,12 @@ __all__ = [
     "apply_defaults",
     "serialize",
     "deserialize",
-    "apply_materializers",
     # metadata types
     "SchemaMetadata",
     "FieldMetadata",
     "FieldType",
     "EdgeMetadata",
     "ValidationError",
-    "MaterializerFn",
     "SerializeTarget",
     "RequestContext",
     "ServiceMetadata",

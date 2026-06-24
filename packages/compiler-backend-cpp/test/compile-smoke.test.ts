@@ -88,8 +88,8 @@ int main() {
     }
     if (m.apply_defaults) m.apply_defaults(rec, a);
     assert(rec.at("role").as_string() == "user");        // literal default applied
-    app::materialize_User(rec);
-    assert(rec.at("fullName").as_string() == "  Ada  Lovelace");
+    // Getters are accessors on the typed struct (no materializer is emitted).
+    assert(u.fullName() == "  Ada  Lovelace");
 
     // Presence matrix: a single-axis optional collapses absent and present-null to
     // nullopt; a two-axis keyma::Field<T> keeps absent / present-null / present-value distinct.

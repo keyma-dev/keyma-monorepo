@@ -63,14 +63,6 @@ User.schema = Object.freeze({
             },
             "visibility": "private",
             "required": false
-        },
-        {
-            "name": "fullName",
-            "type": {
-                "kind": "string"
-            },
-            "readonly": true,
-            "computed": true
         }
     ],
     "indexes": [
@@ -85,8 +77,3 @@ User.schema = Object.freeze({
         }
     ]
 });
-
-export function materializeUser(value) {
-    value.fullName = `${value.firstName} ${value.lastName}`;
-    return value;
-}

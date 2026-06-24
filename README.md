@@ -142,7 +142,6 @@ export class User {
     @Indexed({ unique: true })
     email: string;
 
-    @Indexed()
     get fullName() {
         return `${this.firstName} ${this.lastName}`;
     }
@@ -154,13 +153,11 @@ export class User {
 }
 ```
 
-The getter-only property `fullName` is treated as a **computed field**. Because it is `@Indexed()`, the compiler will:
+The getter-only property `fullName` is a **computed getter**. It is re-emitted as a plain accessor on the generated model class in every target — client and server alike — so `user.fullName` works everywhere. A getter is **not** a schema field: it is not stored, indexed, validated, or sent over the wire.
 
-* materialize its value on every write (the backend stores it as a real column/document field),
-* expose it as an index in the generated server library,
-* expose it as a normal getter on the client.
+> **Stored/indexed computed fields are planned for a future release.** Persisting and indexing a getter's value (`@Computed()`/`@Indexed()` on a getter) is not yet supported — today those decorators are accepted with a warning (`KEYMA098`) and otherwise ignored, and the getter is still emitted as an accessor.
 
-Computed getters must be expressible in Keyma's **portable expression subset** (field access, literals, template strings, basic operators, conditional expressions). The compiler emits a diagnostic if a getter uses unsupported constructs, so the same field can be generated correctly across all target languages.
+Computed getters must be expressible in Keyma's **portable expression subset** (field access, literals, template strings, basic operators, conditional expressions). The compiler emits a diagnostic if a getter uses unsupported constructs, so the same getter can be generated correctly across all target languages.
 
 Let's add formatting and form behavior:
 

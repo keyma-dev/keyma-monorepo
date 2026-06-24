@@ -7,7 +7,7 @@ export function buildCreateTable(schema: SchemaMetadata): string {
     let idColumn: string | undefined;
 
     for (const field of schema.fields) {
-        if (isComputedOrEphemeral(field)) continue;
+        if (isEphemeral(field)) continue;
         const { sql, isId, refSchema } = columnDef(field);
         cols.push(sql);
         if (isId) idColumn = field.name;
@@ -32,8 +32,8 @@ export function buildCreateTable(schema: SchemaMetadata): string {
     );
 }
 
-function isComputedOrEphemeral(field: FieldMetadata): boolean {
-    return field.computed === true || field.ephemeral === true;
+function isEphemeral(field: FieldMetadata): boolean {
+    return field.ephemeral === true;
 }
 
 type ColumnDef = { sql: string; isId: boolean; refSchema?: string };
