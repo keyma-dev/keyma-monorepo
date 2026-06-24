@@ -1,7 +1,7 @@
 {
     "name": "@keyma/runtime-js",
     "version": "0.0.0",
-    "description": "Tiny runtime consumed by Keyma-generated JavaScript — validate/format/defaults, query builder, server, and adapter interfaces",
+    "description": "Tiny runtime to consume Keyma-generated JavaScript — validate/format/defaults, query builder, server, and adapter interfaces",
     "type": "module",
     "exports": {
         ".": "./dist/src/index.js",
