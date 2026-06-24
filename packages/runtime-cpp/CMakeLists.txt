@@ -44,6 +44,18 @@ target_include_directories(keyma-runtime-cpp INTERFACE
 # Consumers that link this target are compiled as C++23.
 target_compile_features(keyma-runtime-cpp INTERFACE cxx_std_23)
 
+# Homebrew/MacPorts GCC vs the macOS SDK: SDK headers (reached transitively through
+# <cstdlib>, e.g. <mach/arm/_structs.h>) use the C11 keyword _Alignof unconditionally,
+# which GCC's C++ frontend rejects — it spells the operator `alignof`. Apple Clang accepts
+# _Alignof as an extension, so only real GCC on macOS needs the spelling mapped through.
+# _Alignof is not a keyword in GCC's C++ mode, so defining it is safe and `alignof(<type>)`
+# is exactly equivalent. INTERFACE so every consumer of keyma::runtime inherits the fix.
+# Passed as a raw compile option, not a compile definition: CMake silently drops
+# function-like (parenthesized) macro names from target_compile_definitions.
+if(APPLE AND CMAKE_CXX_COMPILER_ID STREQUAL "GNU")
+    target_compile_options(keyma-runtime-cpp INTERFACE "-D_Alignof(x)=alignof(x)")
+endif()
+
 # So the installed/exported target is `keyma::runtime` (namespace + EXPORT_NAME), matching
 # the build-tree ALIAS above — consumers use one name on every integration path.
 set_target_properties(keyma-runtime-cpp PROPERTIES EXPORT_NAME runtime)

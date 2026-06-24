@@ -84,6 +84,13 @@ npm install @keyma/runtime-cpp
 c++ -std=c++23 -I node_modules/@keyma/runtime-cpp/include -I <generated-bundle-dir> main.cpp
 ```
 
+> **GCC on macOS:** the macOS SDK headers (reached transitively through `<cstdlib>`) use
+> the C11 keyword `_Alignof`, which GCC's C++ frontend rejects with `'_Alignof' was not
+> declared in this scope` (Apple Clang accepts it as an extension, so it only affects
+> GCC). Add `-D'_Alignof(x)=alignof(x)'` to the compile line — `_Alignof` is not a GCC C++
+> keyword, so the macro is safe and `alignof` is exactly equivalent. The CMake target
+> applies this automatically for GCC builds on macOS.
+
 ### CMake
 
 A `CMakeLists.txt` ships with the package, exposing a header-only INTERFACE target

@@ -15,18 +15,31 @@ if [ -z "$CXX" ]; then
     exit 0
 fi
 
+# Homebrew/MacPorts GCC vs the macOS SDK: SDK headers (e.g. <mach/arm/_structs.h>, reached
+# transitively through <cstdlib>) use the C11 keyword _Alignof unconditionally. GCC's C++
+# frontend doesn't accept _Alignof — it spells the operator `alignof` — whereas Apple Clang
+# takes _Alignof as an extension, so this only bites real GCC on macOS. Map the spelling
+# through. _Alignof is not a keyword in GCC's C++ mode, so defining it as a macro is safe;
+# `alignof(<type>)` is exactly equivalent and the SDK only ever writes `_Alignof(<type>)`.
+COMPAT=""
+if [ "$(uname)" = Darwin ] \
+   && "$CXX" -dM -E -x c++ /dev/null 2>/dev/null | grep -q '__GNUC__' \
+   && ! "$CXX" -dM -E -x c++ /dev/null 2>/dev/null | grep -q '__clang__'; then
+    COMPAT="-D_Alignof(x)=alignof(x)"
+fi
+
 WORK="$(mktemp -d)"
 trap 'rm -rf "$WORK"' EXIT
 
 # 1) Syntax-check the runtime header against the generated-code-shape TU (no runtime deps).
-"$CXX" -std=c++23 -Iinclude -fsyntax-only test/tu.cpp
+"$CXX" -std=c++23 $COMPAT -Iinclude -fsyntax-only test/tu.cpp
 
 # 2) Compile and run the behavioral tests: the server/client/json consumer layer under the
 #    default Sync policy, a (blocking) std::future policy, and a genuinely-suspending C++23
 #    coroutine-task policy — proving the Async<> template is not coupled to Sync (bring your
 #    own scheduler) on both the eager and the deferred path.
 for t in server futures coroutine typed; do
-    "$CXX" -std=c++23 -Iinclude "test/$t.test.cpp" -o "$WORK/$t.test"
+    "$CXX" -std=c++23 $COMPAT -Iinclude "test/$t.test.cpp" -o "$WORK/$t.test"
     "$WORK/$t.test"
 done
 
@@ -47,7 +60,7 @@ struct Rec {
 };
 int main() { (void)keyma::eq(Rec::f::n, "not-an-int"); }  // string into an int field
 CPP
-if "$CXX" -std=c++23 -Iinclude -fsyntax-only "$NEG" 2>/dev/null; then
+if "$CXX" -std=c++23 $COMPAT -Iinclude -fsyntax-only "$NEG" 2>/dev/null; then
     echo "runtime-cpp: NEGATIVE-COMPILE TEST FAILED — a mistyped filter compiled"
     exit 1
 fi
