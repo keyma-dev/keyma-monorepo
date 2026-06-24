@@ -19,7 +19,7 @@ The generated schema libraries have **no** external dependencies; you can use th
 * **Declarative** — define data models, relationships, and graph edges using clear, concise decorators.
 * **Compiled** — TypeScript is the authoring language. Keyma parses your source via the TypeScript compiler API, builds a language-neutral intermediate representation (IR), and emits target-specific code.
 * **Full stack** — write once and consume your schemas on both client and server. Keyma produces two distinct generated libraries: one for the backend (with private fields and server-only schemas) and one for the frontend (with only public surface area).
-* **Multi-language** — the compiler has a frontend/backend architecture. The built-in frontend reads TypeScript. Backends can target any language; JavaScript and Python backends ship today, and C++ and others can be added.
+* **Multi-language** — the compiler has a frontend/backend architecture. The built-in frontend reads TypeScript. Backends can target any language; JavaScript, Python, and C++ backends ship today, and others can be added.
 * **Database-agnostic** — one schema, many storage models. Adapters bridge the runtime to graph, document, or relational databases. Computed fields and edge traversals are lowered appropriately for each.
 * **Transport-agnostic** — the generated client emits portable query documents. You provide the transport.
 * **Lightweight output** — generated code is plain — no decorators, no reflect-metadata, no tslib. Only a small runtime library is required at consumption time.
@@ -54,8 +54,8 @@ Pipeline order (each package depends on the one above):
 | [`@keyma/ir`](packages/ir) | The language-neutral IR types, JSON Schema, and intrinsic registry. |
 | [`@keyma/compiler-frontend-ts`](packages/compiler-frontend-ts) | TypeScript frontend — parses schema files into IR. |
 | [`@keyma/compiler`](packages/compiler) | Driver + plugin interfaces (`KeymaFrontend`, `KeymaBackend`). |
-| [`@keyma/compiler-backend-js`](packages/compiler-backend-js) · [`@keyma/compiler-backend-python`](packages/compiler-backend-python) | Code-generation backends. |
-| [`@keyma/runtime-js`](packages/runtime-js) | The JS runtime — query builder, `KeymaServer`, adapter interface, plugin protocol. |
+| [`@keyma/compiler-backend-js`](packages/compiler-backend-js) · [`@keyma/compiler-backend-python`](packages/compiler-backend-python) · [`@keyma/compiler-backend-cpp`](packages/compiler-backend-cpp) | Code-generation backends (JavaScript, Python, C++23). |
+| [`@keyma/runtime-js`](packages/runtime-js) · [`@keyma/runtime-python`](packages/runtime-python) · [`@keyma/runtime-cpp`](packages/runtime-cpp) | Target runtimes — query builder, `KeymaServer`, adapter interface, plugin protocol (JS, Python, C++). |
 | [`@keyma/adapter-mongodb-js`](packages/adapter-mongodb-js) · [`@keyma/adapter-sqlite-js`](packages/adapter-sqlite-js) · [`@keyma/adapter-gremlin-js`](packages/adapter-gremlin-js) | Database adapters. |
 | [`@keyma/plugin-acl-js`](packages/plugin-acl-js) | Declarative access-control server plugin. |
 | [`@keyma/cli`](packages/cli) | Project scaffolding and build orchestration. |
@@ -350,9 +350,44 @@ export default {
     outDir: "dist",
     targets: [
         { language: "js", client: true, server: true },
-        { language: "python" }
+        { language: "python" },
+        { language: "cpp", client: true, server: true }
     ]
 };
+```
+
+## Multi-language targets
+
+Every backend lowers the same IR, so the generated client/server split, validators, formatters, computed fields, edges, and traversals behave identically across languages. All three backends mirror the **source-file layout** — schemas authored in one source file are emitted into one model module — and emit validators/formatters as direct-ref factory functions with no name-keyed registry.
+
+### Python (`@keyma/compiler-backend-python` + `@keyma/runtime-python`)
+
+The Python backend mirrors the JS backend with Python-sanitized module names. The runtime is published to PyPI as **`keyma-runtime`** and imported as `keyma.runtime`.
+
+* It is an `asyncio` mirror of the Promise-based JS runtime, with a `snake_case` surface (`apply_defaults`, `ensure_schema`, plugin hooks `transform_filter` / `check_write`, adapter `list` / `delete`, …).
+* The schema-metadata **dict keys stay camelCase** (`sourceName`, `applyDefaults`, `fromField`) — that dict is the cross-language contract shared with the JS runtime.
+* Validators/formatters are invoked **arity-adaptively**: the backend emits variable-arity closures, and the runtime truncates `(value, field, context)` to each callable's real arity and awaits awaitables. Three-arg validators receive a `Context` whose `.object` is the record dict, so cross-field validation works the same as in JS.
+
+### C++23 (`@keyma/compiler-backend-cpp` + `@keyma/runtime-cpp`)
+
+The C++ backend emits **header-only** model modules under `models/<path>`. Each generated struct is `std::pmr`-allocator-aware and specializes `keyma::value_traits<T>`, so the runtime's generic `keyma::from_value<T>` / `keyma::to_value<T>` own all per-field coercion and the per-struct code stays thin. Validators/formatters are direct-ref factory functions in `validators.hpp` / `formatters.hpp`.
+
+`@keyma/runtime-cpp` is a C++23 header-only runtime whose single source of truth is `include/keyma/runtime.hpp` (`keyma::Value`, the schema-metadata structs, the intrinsics, the `value_traits` / `from_value` / `to_value` serialization layer, plus the `KeymaServer`, query builder, and adapter/plugin/service interfaces templated on a bring-your-own-scheduler async policy).
+
+* **Runtime dependency is a deliberate exception.** Generated headers `#include <keyma/runtime.hpp>` by default — compile with `-I node_modules/@keyma/runtime-cpp/include`. A header-only runtime cannot be practically re-inlined per model header, so unlike the JS/Python output this target is not zero-dependency by default.
+* **`vendorRuntime: true`** restores the zero-dependency property by baking a self-contained `keyma_runtime.hpp` into each bundle.
+* **One bundle per translation unit.** A program/TU must include exactly one bundle — client *xor* server *xor* `library` (the single-bundle mode). The per-bundle `keyma::value_traits<T>` specializations make mixing two bundles in one TU an ODR violation by design.
+
+C++ targets accept a few extra options alongside `client` / `server`:
+
+```typescript
+{
+    language: "cpp",
+    library: true,             // emit one combined bundle instead of client/server
+    namespace: "app",          // root C++ namespace for generated code (default "app")
+    vendorRuntime: true,       // inline keyma_runtime.hpp; no @keyma/runtime-cpp dependency
+    runtimeInclude: "<keyma/runtime.hpp>" // include path when not vendoring
+}
 ```
 
 ## Server-side implementation
