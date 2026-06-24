@@ -1,6 +1,6 @@
 {
   "name": "@keyma/validators",
-  "version": "0.1.0",
+  "version": "0.0.0",
   "description": "Built-in validators for Keyma schemas (pure-TS source, compiled into schemas by Keyma)",
   "type": "module",
   "main": "./src/index.ts",
@@ -10,6 +10,17 @@
       "types": "./src/index.ts",
       "import": "./src/index.ts"
     }
+  },
+  "files": [
+    "src"
+  ],
+  "repository": {
+    "type": "git",
+    "url": "git+https://github.com/keyma-dev/keyma-monorepo.git",
+    "directory": "packages/validators"
+  },
+  "publishConfig": {
+    "access": "public"
   },
   "scripts": {
     "build": "tsc --noEmit",

@@ -1,6 +1,6 @@
 {
   "name": "@keyma/compiler-frontend-ts",
-  "version": "0.1.0",
+  "version": "0.0.0",
   "description": "TypeScript compiler frontend for Keyma — ingests .ts schema files and produces IR",
   "type": "module",
   "main": "./dist/src/index.js",
@@ -10,6 +10,17 @@
       "import": "./dist/src/index.js",
       "types": "./dist/src/index.d.ts"
     }
+  },
+  "files": [
+    "dist/src"
+  ],
+  "repository": {
+    "type": "git",
+    "url": "git+https://github.com/keyma-dev/keyma-monorepo.git",
+    "directory": "packages/compiler-frontend-ts"
+  },
+  "publishConfig": {
+    "access": "public"
   },
   "scripts": {
     "build": "tsc",

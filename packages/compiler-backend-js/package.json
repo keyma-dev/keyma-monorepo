@@ -1,11 +1,23 @@
 {
     "name": "@keyma/compiler-backend-js",
-    "version": "0.1.0",
+    "version": "0.0.0",
+    "description": "JavaScript backend for Keyma — emits dependency-free client/server JS bundles from IR",
     "type": "module",
+    "main": "./dist/src/index.js",
     "exports": {
         ".": "./dist/src/index.js"
     },
-    "main": "./dist/src/index.js",
+    "files": [
+        "dist/src"
+    ],
+    "repository": {
+        "type": "git",
+        "url": "git+https://github.com/keyma-dev/keyma-monorepo.git",
+        "directory": "packages/compiler-backend-js"
+    },
+    "publishConfig": {
+        "access": "public"
+    },
     "scripts": {
         "gen-types": "node scripts/gen-emitted-types.mjs",
         "prebuild": "node scripts/gen-emitted-types.mjs",

@@ -1,11 +1,23 @@
 {
     "name": "@keyma/compiler-backend-cpp",
-    "version": "0.1.0",
+    "version": "0.0.0",
+    "description": "C++23 backend for Keyma — emits header-only C++ model modules from IR",
     "type": "module",
+    "main": "./dist/src/index.js",
     "exports": {
         ".": "./dist/src/index.js"
     },
-    "main": "./dist/src/index.js",
+    "files": [
+        "dist/src"
+    ],
+    "repository": {
+        "type": "git",
+        "url": "git+https://github.com/keyma-dev/keyma-monorepo.git",
+        "directory": "packages/compiler-backend-cpp"
+    },
+    "publishConfig": {
+        "access": "public"
+    },
     "scripts": {
         "gen-runtime-header": "node scripts/gen-runtime-header.mjs",
         "prebuild": "node scripts/gen-runtime-header.mjs",
@@ -15,10 +27,10 @@
     },
     "dependencies": {
         "@keyma/ir": "*",
-        "@keyma/compiler": "*",
-        "@keyma/runtime-cpp": "*"
+        "@keyma/compiler": "*"
     },
     "devDependencies": {
+        "@keyma/runtime-cpp": "*",
         "@types/node": "*",
         "typescript": "*"
     },

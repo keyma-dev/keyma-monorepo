@@ -1,6 +1,6 @@
 {
   "name": "@keyma/ir",
-  "version": "0.1.0",
+  "version": "0.0.0",
   "description": "TypeScript types and JSON schema for the Keyma language-neutral IR",
   "type": "module",
   "main": "./dist/src/index.js",
@@ -11,6 +11,18 @@
       "types": "./dist/src/index.d.ts"
     },
     "./schema.json": "./src/schema.json"
+  },
+  "files": [
+    "dist/src",
+    "src/schema.json"
+  ],
+  "repository": {
+    "type": "git",
+    "url": "git+https://github.com/keyma-dev/keyma-monorepo.git",
+    "directory": "packages/ir"
+  },
+  "publishConfig": {
+    "access": "public"
   },
   "scripts": {
     "build": "tsc",

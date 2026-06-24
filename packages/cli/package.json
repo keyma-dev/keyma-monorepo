@@ -1,6 +1,6 @@
 {
     "name": "@keyma/cli",
-    "version": "0.1.0",
+    "version": "0.0.0",
     "description": "Command-line interface for Keyma — project scaffolding and build orchestration",
     "type": "module",
     "main": "./dist/src/index.js",
