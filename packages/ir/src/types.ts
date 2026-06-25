@@ -82,7 +82,14 @@ export type IRExpression =
     | { kind: "conditional"; condition: IRExpression; whenTrue: IRExpression; whenFalse: IRExpression }
     | { kind: "object"; properties: Array<{ key: string; value: IRExpression }> }
     | { kind: "regexp"; pattern: string; flags: string }
-    | { kind: "arrow"; params: string[]; body: IRExpression }
+    /**
+     * An arrow function. Exactly ONE of `body` (a concise expression arrow — the common
+     * inline case) or `statements` (a multi-statement block arrow) is present. `returnType`
+     * is the inferred return type when the frontend could determine it (best-effort; may be
+     * absent). A block whose sole statement is `return e` is normalized by the frontend down
+     * to `body: e` so the inline path is preserved.
+     */
+    | { kind: "arrow"; params: string[]; body?: IRExpression; statements?: IRStatement[]; returnType?: IRType }
     | { kind: "new"; callee: IRExpression; args: IRExpression[] }
     /**
      * A canonical, language-neutral operation that each backend translates to an
@@ -198,8 +205,8 @@ export type IRMethod = {
     /**
      * `"method"` → `name(params): returnType { ... }`.
      * `"setter"` → `set name(value) { ... }` (exactly one param, no return).
-     * `"getter"` → `get name(): returnType { return ... }` (no params; body is a
-     *   single `return` statement; `returnType` present).
+     * `"getter"` → `get name(): returnType { ... }` (no params; body is the portable
+     *   statement subset — `const`/`if`/`return` — reaching a `return`; `returnType` present).
      */
     kind: "method" | "setter" | "getter";
     /** Typed parameters. A setter has exactly one (the incoming value); a getter has none. */

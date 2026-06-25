@@ -23,7 +23,10 @@ export function collectIdentifiers(expr: IRExpression, out: Set<string>): void {
             collectIdentifiers(expr.whenFalse, out);
             break;
         case "object": expr.properties.forEach((p) => collectIdentifiers(p.value, out)); break;
-        case "arrow": collectIdentifiers(expr.body, out); break;
+        case "arrow":
+            if (expr.body) collectIdentifiers(expr.body, out);
+            (expr.statements ?? []).forEach((s) => collectStatementIdentifiers(s, out));
+            break;
         case "intrinsic":
             if (expr.receiver) collectIdentifiers(expr.receiver, out);
             expr.args.forEach((a) => collectIdentifiers(a, out));

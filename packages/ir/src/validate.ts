@@ -489,7 +489,23 @@ function checkExpression(expr: unknown, path: string): IRValidationError[] {
                     if (!isStr(p) || p === "") errors.push(e(`${path}.params[${i}]`, "must be a non-empty string"));
                 });
             }
-            errors.push(...checkExpression(expr["body"], `${path}.body`));
+            // Exactly one of `body` (concise) or `statements` (block) must be present.
+            const hasBody = expr["body"] !== undefined;
+            const hasStmts = expr["statements"] !== undefined;
+            if (hasBody === hasStmts) {
+                errors.push(e(path, "arrow must have exactly one of `body` or `statements`"));
+            }
+            if (hasBody) errors.push(...checkExpression(expr["body"], `${path}.body`));
+            if (hasStmts) {
+                if (!isArr(expr["statements"])) {
+                    errors.push(e(`${path}.statements`, "must be an array"));
+                } else {
+                    expr["statements"].forEach((s, i) => errors.push(...checkStatement(s, `${path}.statements[${i}]`)));
+                }
+            }
+            if ("returnType" in expr && expr["returnType"] !== undefined) {
+                errors.push(...checkType(expr["returnType"], `${path}.returnType`));
+            }
             return errors;
         }
         case "new": {

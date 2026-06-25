@@ -5,7 +5,7 @@ import { fileURLToPath, pathToFileURL } from "node:url";
 import { readFileSync } from "node:fs";
 import { compile, compileVirtual } from "../src/compile.js";
 import * as CODES from "../src/diagnostics.js";
-import type { IRExpression, IRSchema } from "@keyma/ir";
+import type { IRExpression, IRSchema, IRStatement } from "@keyma/ir";
 
 const __filename = fileURLToPath(import.meta.url);
 const __dirname = path.dirname(__filename);
@@ -39,6 +39,18 @@ function getterExpr(schema: IRSchema | undefined, name: string): IRExpression | 
     const m = (schema?.methods ?? []).find((mm) => mm.kind === "getter" && mm.name === name);
     const stmt = m?.statements[0];
     return stmt !== undefined && stmt.kind === "return" ? (stmt.value ?? undefined) : undefined;
+}
+
+/** Return the full lowered statement list of a getter behavior by name. */
+function getterStatements(schema: IRSchema | undefined, name: string): IRStatement[] | undefined {
+    return (schema?.methods ?? []).find((mm) => mm.kind === "getter" && mm.name === name)?.statements;
+}
+
+/** Extract the first arrow argument of an intrinsic expression (e.g. a filter/map predicate). */
+function firstArrow(expr: IRExpression | undefined): Extract<IRExpression, { kind: "arrow" }> | undefined {
+    if (expr === undefined || expr.kind !== "intrinsic") return undefined;
+    const a = expr.args[0];
+    return a !== undefined && a.kind === "arrow" ? a : undefined;
 }
 
 // ─── Snapshot tests for every supported expression kind ──────────────────────
@@ -118,22 +130,6 @@ describe("KEYMA014 — unsupported getter body expressions", () => {
         assert.ok(hasError(result, CODES.KEYMA014), `Expected KEYMA014. Got: ${JSON.stringify(result.diagnostics)}`);
     });
 
-    it("emits KEYMA014 for a multi-statement getter body", () => {
-        const result = cv({
-            "schema.ts": `
-                import { Schema, Computed } from "@keyma/dsl";
-                @Schema() class Foo {
-                    declare n: number;
-                    @Computed() get doubled(): number {
-                        const x = this.n;
-                        return x * 2;
-                    }
-                }
-            `,
-        });
-        assert.ok(hasError(result, CODES.KEYMA014), `Expected KEYMA014. Got: ${JSON.stringify(result.diagnostics)}`);
-    });
-
     it("emits KEYMA014 for a getter with no return statement", () => {
         const result = cv({
             "schema.ts": `
@@ -149,6 +145,112 @@ describe("KEYMA014 — unsupported getter body expressions", () => {
         assert.ok(hasError(result, CODES.KEYMA014), `Expected KEYMA014. Got: ${JSON.stringify(result.diagnostics)}`);
     });
 
+});
+
+// ─── Multi-statement getter bodies (portable statement subset) ───────────────
+
+describe("getters — multi-statement portable bodies", () => {
+    it("lowers `const x = this.n; return x * 2`, resolving x as a local identifier", () => {
+        const result = cv({
+            "schema.ts": `
+                import { Schema, Computed } from "@keyma/dsl";
+                @Schema() class Foo {
+                    declare n: number;
+                    @Computed() get doubled(): number {
+                        const x = this.n;
+                        return x * 2;
+                    }
+                }
+            `,
+        });
+        assert.deepEqual(errorCodes(result), [], JSON.stringify(result.diagnostics));
+        const foo = result.ir.schemas.find((s) => s.sourceName === "Foo");
+        assert.deepEqual(getterStatements(foo, "doubled"), [
+            { kind: "const", name: "x", init: { kind: "field", name: "n" } },
+            {
+                kind: "return",
+                value: {
+                    kind: "binary", op: "*",
+                    left: { kind: "identifier", name: "x" }, // local, NOT { kind: "field" }
+                    right: { kind: "literal", value: 2 },
+                },
+            },
+        ]);
+    });
+
+    it("lowers an `if` with an early return", () => {
+        const result = cv({
+            "schema.ts": `
+                import { Schema, Computed } from "@keyma/dsl";
+                @Schema() class Foo {
+                    declare n: number;
+                    @Computed() get sign(): string {
+                        if (this.n < 0) {
+                            return "neg";
+                        }
+                        return "pos";
+                    }
+                }
+            `,
+        });
+        assert.deepEqual(errorCodes(result), [], JSON.stringify(result.diagnostics));
+        const foo = result.ir.schemas.find((s) => s.sourceName === "Foo");
+        assert.deepEqual(getterStatements(foo, "sign"), [
+            {
+                kind: "if",
+                condition: { kind: "binary", op: "<", left: { kind: "field", name: "n" }, right: { kind: "literal", value: 0 } },
+                consequent: [{ kind: "return", value: { kind: "literal", value: "neg" } }],
+            },
+            { kind: "return", value: { kind: "literal", value: "pos" } },
+        ]);
+    });
+
+    it("rejects (KEYMA014) a body whose only path through an `if` has no reachable return", () => {
+        const result = cv({
+            "schema.ts": `
+                import { Schema, Computed } from "@keyma/dsl";
+                @Schema() class Foo {
+                    declare n: number;
+                    @Computed() get sign(): number {
+                        if (this.n < 0) {
+                            const y = this.n;
+                        }
+                    }
+                }
+            `,
+        });
+        assert.ok(hasError(result, CODES.KEYMA014), `Expected KEYMA014. Got: ${JSON.stringify(result.diagnostics)}`);
+    });
+
+    it("resolves an arrow param as a local, not a schema field (latent-bug fix)", () => {
+        const result = cv({
+            "schema.ts": `
+                import { Schema, Computed } from "@keyma/dsl";
+                @Schema() class Foo {
+                    declare tags: string[];
+                    @Computed() get shortTags(): string[] {
+                        return this.tags.filter(t => t.length < 3);
+                    }
+                }
+            `,
+        });
+        assert.deepEqual(errorCodes(result), [], JSON.stringify(result.diagnostics));
+        const foo = result.ir.schemas.find((s) => s.sourceName === "Foo");
+        assert.deepEqual(getterExpr(foo, "shortTags"), {
+            kind: "intrinsic", op: "array.filter",
+            receiver: { kind: "field", name: "tags" },
+            args: [{
+                kind: "arrow", params: ["t"],
+                body: {
+                    kind: "binary", op: "<",
+                    // t.length — receiver is the local `t`, NOT { kind: "field", name: "t" }
+                    left: { kind: "intrinsic", op: "string.length", receiver: { kind: "identifier", name: "t" }, args: [] },
+                    right: { kind: "literal", value: 3 },
+                },
+                returnType: { kind: "boolean" }, // inferred (Part 2)
+            }],
+        });
+    });
 });
 
 // ─── Newly-supported getter expressions (unified portable engine) ─────────────
@@ -251,6 +353,182 @@ describe("getters — newly-supported portable expressions", () => {
             }
         `, "count");
         assert.deepEqual(expr, { kind: "intrinsic", op: "array.length", receiver: { kind: "field", name: "tags" }, args: [] });
+    });
+});
+
+// ─── New intrinsics: Math.*, String()/Number(), array.map/some/every ─────────
+
+describe("intrinsics — Math, coercion, array map/some/every", () => {
+    function lowered(src: string, getter: string): IRExpression | undefined {
+        const result = cv({ "schema.ts": src });
+        assert.deepEqual(errorCodes(result), [], `Unexpected errors: ${JSON.stringify(result.diagnostics)}`);
+        return getterExpr(result.ir.schemas.find((s) => s.sourceName === "Foo"), getter);
+    }
+
+    it("lowers Math.round(...) to a free-standing math.round intrinsic", () => {
+        const expr = lowered(`
+            import { Schema, Computed } from "@keyma/dsl";
+            @Schema() class Foo {
+                declare n: number;
+                @Computed() get r(): number { return Math.round(this.n * 1.5); }
+            }
+        `, "r");
+        assert.deepEqual(expr, {
+            kind: "intrinsic", op: "math.round", receiver: null,
+            args: [{ kind: "binary", op: "*", left: { kind: "field", name: "n" }, right: { kind: "literal", value: 1.5 } }],
+        });
+    });
+
+    it("lowers variadic Math.min(...) with multiple args", () => {
+        const expr = lowered(`
+            import { Schema, Computed } from "@keyma/dsl";
+            @Schema() class Foo {
+                declare a: number;
+                declare b: number;
+                @Computed() get m(): number { return Math.min(this.a, this.b, 0); }
+            }
+        `, "m");
+        assert.deepEqual(expr, {
+            kind: "intrinsic", op: "math.min", receiver: null,
+            args: [{ kind: "field", name: "a" }, { kind: "field", name: "b" }, { kind: "literal", value: 0 }],
+        });
+    });
+
+    it("rejects an unsupported Math method (KEYMA085)", () => {
+        const r = cv({ "schema.ts": `
+            import { Schema, Computed } from "@keyma/dsl";
+            @Schema() class Foo {
+                declare n: number;
+                @Computed() get h(): number { return Math.hypot(this.n, 1); }
+            }
+        `});
+        assert.ok(hasError(r, "KEYMA085"), JSON.stringify(r.diagnostics));
+    });
+
+    it("lowers String(x) to a to-string intrinsic", () => {
+        const expr = lowered(`
+            import { Schema, Computed } from "@keyma/dsl";
+            @Schema() class Foo {
+                declare n: number;
+                @Computed() get s(): string { return String(this.n); }
+            }
+        `, "s");
+        assert.deepEqual(expr, { kind: "intrinsic", op: "to-string", receiver: null, args: [{ kind: "field", name: "n" }] });
+    });
+
+    it("lowers Number(x) to a to-number intrinsic", () => {
+        const expr = lowered(`
+            import { Schema, Computed } from "@keyma/dsl";
+            @Schema() class Foo {
+                declare s: string;
+                @Computed() get n(): number { return Number(this.s); }
+            }
+        `, "n");
+        assert.deepEqual(expr, { kind: "intrinsic", op: "to-number", receiver: null, args: [{ kind: "field", name: "s" }] });
+    });
+
+    it("lowers array.map with an arrow whose param is a local identifier", () => {
+        const expr = lowered(`
+            import { Schema, Computed } from "@keyma/dsl";
+            @Schema() class Foo {
+                declare tags: string[];
+                @Computed() get lengths(): number[] { return this.tags.map(t => t.length); }
+            }
+        `, "lengths");
+        assert.deepEqual(expr, {
+            kind: "intrinsic", op: "array.map",
+            receiver: { kind: "field", name: "tags" },
+            args: [{
+                kind: "arrow", params: ["t"],
+                body: { kind: "intrinsic", op: "string.length", receiver: { kind: "identifier", name: "t" }, args: [] },
+                returnType: { kind: "number" }, // inferred (Part 2)
+            }],
+        });
+    });
+
+    it("lowers array.some / array.every", () => {
+        const some = lowered(`
+            import { Schema, Computed } from "@keyma/dsl";
+            @Schema() class Foo {
+                declare tags: string[];
+                @Computed() get anyLong(): boolean { return this.tags.some(t => t.length > 5); }
+            }
+        `, "anyLong");
+        assert.equal(some?.kind, "intrinsic");
+        assert.equal((some as { op: string }).op, "array.some");
+
+        const every = lowered(`
+            import { Schema, Computed } from "@keyma/dsl";
+            @Schema() class Foo {
+                declare nums: number[];
+                @Computed() get allPos(): boolean { return this.nums.every(x => x > 0); }
+            }
+        `, "allPos");
+        assert.equal((every as { op: string }).op, "array.every");
+    });
+});
+
+// ─── Arrow block bodies + return-type inference (Part 2) ─────────────────────
+
+describe("arrows — block bodies & return-type inference", () => {
+    function lowered(src: string, getter: string): IRExpression | undefined {
+        const result = cv({ "schema.ts": src });
+        assert.deepEqual(errorCodes(result), [], `Unexpected errors: ${JSON.stringify(result.diagnostics)}`);
+        return getterExpr(result.ir.schemas.find((s) => s.sourceName === "Foo"), getter);
+    }
+
+    it("lowers a genuinely multi-statement block-arrow predicate to `statements`", () => {
+        const arrow = firstArrow(lowered(`
+            import { Schema, Computed } from "@keyma/dsl";
+            @Schema() class Foo {
+                declare tags: string[];
+                @Computed() get longTrimmed(): string[] {
+                    return this.tags.filter(x => { const t = x.trim(); return t.length > 3; });
+                }
+            }
+        `, "longTrimmed"));
+        assert.ok(arrow !== undefined);
+        assert.equal(arrow.body, undefined);
+        assert.deepEqual(arrow.statements, [
+            { kind: "const", name: "t", init: { kind: "intrinsic", op: "string.trim", receiver: { kind: "identifier", name: "x" }, args: [] } },
+            {
+                kind: "return",
+                value: {
+                    kind: "binary", op: ">",
+                    left: { kind: "intrinsic", op: "string.length", receiver: { kind: "identifier", name: "t" }, args: [] },
+                    right: { kind: "literal", value: 3 },
+                },
+            },
+        ]);
+        assert.deepEqual(arrow.returnType, { kind: "boolean" });
+    });
+
+    it("normalizes a single-return block arrow `{ return e }` down to a concise `body`", () => {
+        const arrow = firstArrow(lowered(`
+            import { Schema, Computed } from "@keyma/dsl";
+            @Schema() class Foo {
+                declare nums: number[];
+                @Computed() get pos(): number[] {
+                    return this.nums.filter(x => { return x > 0; });
+                }
+            }
+        `, "pos"));
+        assert.ok(arrow !== undefined);
+        assert.equal(arrow.statements, undefined);
+        assert.deepEqual(arrow.body, { kind: "binary", op: ">", left: { kind: "identifier", name: "x" }, right: { kind: "literal", value: 0 } });
+        assert.deepEqual(arrow.returnType, { kind: "boolean" });
+    });
+
+    it("infers a string return type (`s => s.toUpperCase()`)", () => {
+        const arrow = firstArrow(lowered(`
+            import { Schema, Computed } from "@keyma/dsl";
+            @Schema() class Foo {
+                declare tags: string[];
+                @Computed() get upper(): string[] { return this.tags.map(s => s.toUpperCase()); }
+            }
+        `, "upper"));
+        assert.ok(arrow !== undefined);
+        assert.deepEqual(arrow.returnType, { kind: "string" });
     });
 });
 

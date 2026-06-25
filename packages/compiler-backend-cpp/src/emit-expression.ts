@@ -1,4 +1,8 @@
-import type { IRExpression } from "@keyma/ir";
+import type { IRExpression, IRType } from "@keyma/ir";
+// Block-body arrows re-emit statements; stmtToCpp/plainReturn live in emit-validators, which
+// imports exprToCpp from here. The cycle is safe — both directions are used only at emit time
+// (inside functions), never during module initialization.
+import { stmtToCpp, plainReturn } from "./emit-validators.js";
 
 /**
  * Controls how `field` nodes (`this.x`) lower. Default (typed mode) emits `this->x`
@@ -66,8 +70,18 @@ export function exprToCpp(expr: IRExpression, opts: ExprOpts = TYPED): string {
         case "regexp":
             return `keyma::make_regex(${cppStr(expr.pattern)}, ${cppStr(expr.flags)})`;
 
-        case "arrow":
-            return `[&](${expr.params.map((p) => `auto ${p}`).join(", ")}) { return ${exprToCpp(expr.body, opts)}; }`;
+        case "arrow": {
+            const params = expr.params.map((p) => `auto ${p}`).join(", ");
+            // Block-body arrow → a statement lambda. An explicit return type (when the frontend
+            // inferred a simple one) guards against `auto` deduction failing on multiple returns.
+            if (expr.statements !== undefined) {
+                const ret = expr.returnType !== undefined ? simpleCppReturnType(expr.returnType) : undefined;
+                const arrow = ret !== undefined ? ` -> ${ret}` : "";
+                const body = expr.statements.map((s) => stmtToCpp(s, "    ", plainReturn, opts)).join("\n");
+                return `[&](${params})${arrow} {\n${body}\n}`;
+            }
+            return `[&](${params}) { return ${exprToCpp(expr.body!, opts)}; }`;
+        }
 
         case "new": {
             if (expr.callee.kind === "identifier" && expr.callee.name === "RegExp") return regexpNewToCpp(expr.args, opts);
@@ -122,6 +136,27 @@ function intrinsicToCpp(expr: Extract<IRExpression, { kind: "intrinsic" }>, opts
             return `keyma::join(${recv}, ${arg0 ?? '","'})`;
         case "array.filter":
             return `keyma::filter(${recv}, ${arg0})`;
+        case "array.map":
+            return `keyma::map(${recv}, ${arg0})`;
+        case "array.some":
+            return `keyma::some(${recv}, ${arg0})`;
+        case "array.every":
+            return `keyma::every(${recv}, ${arg0})`;
+        // ── Math numerics (free-standing). floor/ceil/sqrt/pow/abs map onto <cmath>;
+        //    round/trunc/sign use keyma:: helpers that reproduce JS semantics; min/max variadic.
+        case "math.floor": return `keyma::floor(${arg0})`;
+        case "math.ceil":  return `keyma::ceil(${arg0})`;
+        case "math.sqrt":  return `keyma::sqrt(${arg0})`;
+        case "math.pow":   return `keyma::pow(${arg0}, ${args[1]})`;
+        case "math.abs":   return `keyma::abs(${arg0})`;
+        case "math.round": return `keyma::math_round(${arg0})`;
+        case "math.trunc": return `keyma::math_trunc(${arg0})`;
+        case "math.sign":  return `keyma::math_sign(${arg0})`;
+        case "math.min":   return `keyma::min(${args.join(", ")})`;
+        case "math.max":   return `keyma::max(${args.join(", ")})`;
+        // ── JS coercion (free-standing) via keyma:: helpers.
+        case "to-string":  return `keyma::to_string(${arg0})`;
+        case "to-number":  return `keyma::to_number(${arg0})`;
         case "regexp.test":
             return `keyma::regex_test(${recv}, ${arg0})`;
         case "date.getTime":
@@ -197,6 +232,21 @@ function cppStr(s: string): string {
 /** Read a string-literal arg's value (type/constructor name), or "" if not a literal. */
 function literalText(expr: IRExpression | undefined): string {
     return expr !== undefined && expr.kind === "literal" && typeof expr.value === "string" ? expr.value : "";
+}
+
+/**
+ * Map a block arrow's inferred return type to a concrete C++ type for an explicit `-> T`.
+ * Only the simple value types are mapped (a `bool` predicate is the common case); anything
+ * needing allocator/owning context (`string`/array) or a named type (`enum`/reference) returns
+ * undefined so the lambda falls back to `auto` deduction.
+ */
+function simpleCppReturnType(t: IRType): string | undefined {
+    switch (t.kind) {
+        case "boolean": return "bool";
+        case "number": case "decimal": return "double";
+        case "integer": case "bigint": return "std::int64_t";
+        default: return undefined;
+    }
 }
 
 /** Wrap in parens if grouping is needed in certain positions. */

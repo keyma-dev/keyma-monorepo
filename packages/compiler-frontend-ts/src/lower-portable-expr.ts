@@ -1,8 +1,9 @@
 import ts from "typescript";
-import type { IRExpression, IRStatement, IRDiagnostic } from "@keyma/ir";
+import type { IRExpression, IRStatement, IRType, IRDiagnostic } from "@keyma/ir";
 import { intrinsicByMember, intrinsicByOp } from "@keyma/ir";
 import { mkError, KEYMA082, KEYMA085, KEYMA087 } from "./diagnostics.js";
 import { getLocation } from "./util.js";
+import { inferIRTypeFromType } from "./map-type.js";
 
 /**
  * How a call to a bare identifier should be treated when lowering a body:
@@ -41,6 +42,13 @@ export type PortableExprCtx = {
     classifyFunction?: (ident: ts.Identifier) => FnRefVerdict;
     /** How bare/`this` references resolve. Defaults to `"params"`. */
     refMode?: "fields" | "params";
+    /**
+     * Lexically-visible local bindings (getter `const`s, arrow params). Consulted
+     * only in **field mode**: a bare identifier in this set lowers to a local
+     * `{kind:"identifier"}` rather than a schema `{kind:"field"}`. A no-op in params
+     * mode, where every bare identifier is already an `identifier`.
+     */
+    locals?: ReadonlySet<string>;
     /** Diagnostic code for unsupported constructs. Defaults to KEYMA082. */
     unsupportedCode?: string;
     /**
@@ -127,15 +135,28 @@ export function lowerStatement(stmt: ts.Statement, ctx: PortableExprCtx): IRStat
     return null;
 }
 
-export function lowerBlock(node: ts.Statement, ctx: PortableExprCtx): IRStatement[] {
-    if (ts.isBlock(node)) {
-        const stmts: IRStatement[] = [];
-        for (const s of node.statements) {
-            const irS = lowerStatement(s, ctx);
-            if (irS !== null) stmts.push(irS);
-        }
-        return stmts;
+/**
+ * Lower a statement list, threading lexical scope: each `const` binding becomes
+ * visible to the statements that follow it (so in field mode a later bare reference
+ * resolves to that local, not a schema field). A statement that fails to lower is
+ * dropped (its diagnostic was already pushed); callers that must reject a partial
+ * result (e.g. getters) check for new diagnostics.
+ */
+export function lowerStatements(stmts: readonly ts.Statement[], ctx: PortableExprCtx): IRStatement[] {
+    const out: IRStatement[] = [];
+    let locals = ctx.locals;
+    for (const s of stmts) {
+        const stmtCtx: PortableExprCtx = locals === undefined ? ctx : { ...ctx, locals };
+        const irS = lowerStatement(s, stmtCtx);
+        if (irS === null) continue;
+        out.push(irS);
+        if (irS.kind === "const") locals = new Set([...(locals ?? []), irS.name]);
     }
+    return out;
+}
+
+export function lowerBlock(node: ts.Statement, ctx: PortableExprCtx): IRStatement[] {
+    if (ts.isBlock(node)) return lowerStatements(node.statements, ctx);
     const irS = lowerStatement(node, ctx);
     return irS !== null ? [irS] : [];
 }
@@ -153,10 +174,13 @@ export function lowerExpr(node: ts.Expression, ctx: PortableExprCtx): IRExpressi
     if (node.kind === ts.SyntaxKind.UndefinedKeyword) return { kind: "identifier", name: "undefined" };
 
     // Bare identifier: a schema field (getter mode) or a param/local (body mode).
+    // In field mode, a name shadowed by a local binding (getter `const`, arrow param)
+    // resolves to that local, not a schema field.
     if (ts.isIdentifier(node)) {
-        return isFieldMode(ctx)
-            ? { kind: "field", name: node.text }
-            : { kind: "identifier", name: node.text };
+        if (isFieldMode(ctx) && ctx.locals?.has(node.text) !== true) {
+            return { kind: "field", name: node.text };
+        }
+        return { kind: "identifier", name: node.text };
     }
 
     if (ts.isTypeOfExpression(node)) {
@@ -198,14 +222,7 @@ export function lowerExpr(node: ts.Expression, ctx: PortableExprCtx): IRExpressi
     }
 
     if (ts.isArrowFunction(node)) {
-        if (ts.isBlock(node.body)) {
-            ctx.diagnostics.push(mkError(unsupp(ctx), "Arrow functions in portable bodies must have a concise expression body (no block)", getLocation(node, ctx.sourceFile)));
-            return null;
-        }
-        const params = node.parameters.map((p) => (ts.isIdentifier(p.name) ? p.name.text : "_"));
-        const body = lowerExpr(node.body, ctx);
-        if (body === null) return null;
-        return { kind: "arrow", params, body };
+        return lowerArrow(node, ctx);
     }
 
     if (ts.isBinaryExpression(node)) return lowerBinary(node, ctx);
@@ -229,6 +246,44 @@ export function lowerExpr(node: ts.Expression, ctx: PortableExprCtx): IRExpressi
         getLocation(node, ctx.sourceFile),
     ));
     return null;
+}
+
+/**
+ * Lower an arrow function. Params shadow outer scope inside the body (field mode: they are
+ * locals, not schema fields). A concise expression body lowers to `body`; a block body lowers
+ * to `statements`, except a block whose single statement is `return e` normalizes down to
+ * `body: e` (preserving the inline fast path — e.g. a `filter` predicate stays a comprehension
+ * in Python, not a hoisted def). The return type is inferred best-effort.
+ */
+function lowerArrow(node: ts.ArrowFunction, ctx: PortableExprCtx): IRExpression | null {
+    const params = node.parameters.map((p) => (ts.isIdentifier(p.name) ? p.name.text : "_"));
+    const childCtx: PortableExprCtx = { ...ctx, locals: new Set([...(ctx.locals ?? []), ...params]) };
+    const returnType = inferArrowReturnType(node, ctx);
+    const rt = returnType !== undefined ? { returnType } : {};
+
+    if (ts.isBlock(node.body)) {
+        const before = ctx.diagnostics.length;
+        const statements = lowerStatements(node.body.statements, childCtx);
+        if (ctx.diagnostics.length > before) return null; // a statement failed to lower
+        // Normalize `{ return e; }` to a concise body so backends keep the inline path.
+        const only = statements.length === 1 ? statements[0] : undefined;
+        if (only !== undefined && only.kind === "return" && only.value !== null) {
+            return { kind: "arrow", params, body: only.value, ...rt };
+        }
+        return { kind: "arrow", params, statements, ...rt };
+    }
+
+    const body = lowerExpr(node.body, childCtx);
+    if (body === null) return null;
+    return { kind: "arrow", params, body, ...rt };
+}
+
+/** Infer an arrow's return type (best-effort; `undefined` when not determinable). */
+function inferArrowReturnType(node: ts.ArrowFunction, ctx: PortableExprCtx): IRType | undefined {
+    const t = ts.isBlock(node.body)
+        ? ctx.checker.getSignatureFromDeclaration(node)?.getReturnType()
+        : ctx.checker.getTypeAtLocation(node.body);
+    return t !== undefined ? inferIRTypeFromType(t, ctx.checker) : undefined;
 }
 
 // ─── Intrinsic recognition ────────────────────────────────────────────────────
@@ -282,6 +337,22 @@ function lowerCall(node: ts.CallExpression, ctx: PortableExprCtx): IRExpression 
         intrinsicByOp("date.now") !== undefined
     ) {
         return { kind: "intrinsic", op: "date.now", receiver: null, args: [] };
+    }
+
+    // Free-standing `Math.<fn>(...)` → numeric intrinsic. The receiver is the global `Math`
+    // object (not a string/array/date), so it would otherwise fall through; recognize it
+    // before the receiver-method branch and the field-mode rejection so getters work too.
+    {
+        const mathIntr = tryLowerMathCall(node, ctx);
+        if (mathIntr !== undefined) return mathIntr;
+    }
+
+    // Free-standing `String(x)` / `Number(x)` coercion → intrinsic. Recognized before the
+    // classifyFunction branch below, which would otherwise reject these ambient globals as
+    // non-local function calls.
+    {
+        const coerce = tryLowerCoercion(node, ctx);
+        if (coerce !== undefined) return coerce;
     }
 
     // Method-call intrinsic? e.g. value.includes("x")
@@ -353,6 +424,69 @@ function lowerArgs(argNodes: ts.NodeArray<ts.Expression>, ctx: PortableExprCtx):
         args.push(a);
     }
     return args;
+}
+
+/** Math member names with a registered `math.<name>` intrinsic. */
+const MATH_FNS = new Set(["floor", "ceil", "round", "trunc", "abs", "sign", "sqrt", "pow", "min", "max"]);
+
+/**
+ * Recognize a free-standing `Math.<fn>(...)` call. Returns the lowered intrinsic on
+ * success, `null` if it is a `Math.*` call that failed (diagnostic pushed), or
+ * `undefined` if the call is not a `Math.*` call at all (caller keeps lowering).
+ */
+function tryLowerMathCall(node: ts.CallExpression, ctx: PortableExprCtx): IRExpression | null | undefined {
+    const callee = node.expression;
+    if (!ts.isPropertyAccessExpression(callee) || !ts.isIdentifier(callee.expression)) return undefined;
+    if (callee.expression.text !== "Math") return undefined;
+    // Confirm it is the global `Math` object, not a user binding that shadows the name.
+    if (ctx.checker.getTypeAtLocation(callee.expression).getSymbol()?.getName() !== "Math") return undefined;
+
+    const name = callee.name.text;
+    const intr = MATH_FNS.has(name) ? intrinsicByOp(`math.${name}`) : undefined;
+    if (intr === undefined) {
+        ctx.diagnostics.push(mkError(
+            KEYMA085,
+            `"Math.${name}" is not a supported numeric intrinsic — see packages/ir/intrinsics.md`,
+            getLocation(node, ctx.sourceFile),
+        ));
+        return null;
+    }
+    if (node.arguments.length < intr.minArgs || node.arguments.length > intr.maxArgs) {
+        ctx.diagnostics.push(mkError(
+            KEYMA085,
+            `Intrinsic "${intr.op}" expects ${intr.minArgs}..${intr.maxArgs} args, got ${node.arguments.length}`,
+            getLocation(node, ctx.sourceFile),
+        ));
+        return null;
+    }
+    const args = lowerArgs(node.arguments, ctx);
+    if (args === null) return null;
+    return { kind: "intrinsic", op: intr.op, receiver: null, args };
+}
+
+/** Bare-identifier coercion callees → intrinsic op id. */
+const COERCION_OPS = new Map<string, string>([["String", "to-string"], ["Number", "to-number"]]);
+
+/**
+ * Recognize a free-standing `String(x)` / `Number(x)` coercion call. Returns the lowered
+ * intrinsic on success, `null` on a recognized-but-malformed call, or `undefined` when the
+ * callee is not one of these globals (caller keeps lowering).
+ */
+function tryLowerCoercion(node: ts.CallExpression, ctx: PortableExprCtx): IRExpression | null | undefined {
+    if (!ts.isIdentifier(node.expression)) return undefined;
+    const op = COERCION_OPS.get(node.expression.text);
+    if (op === undefined) return undefined;
+    if (node.arguments.length !== 1) {
+        ctx.diagnostics.push(mkError(
+            KEYMA085,
+            `${node.expression.text}() expects exactly 1 argument`,
+            getLocation(node, ctx.sourceFile),
+        ));
+        return null;
+    }
+    const args = lowerArgs(node.arguments, ctx);
+    if (args === null) return null;
+    return { kind: "intrinsic", op, receiver: null, args };
 }
 
 // ─── Templates / operators / literals ─────────────────────────────────────────

@@ -56,14 +56,19 @@ declare name: string;
 
 ### KEYMA014 — Unsupported getter accessor body
 
-A getter body contains an expression that cannot be lowered to `IRExpression`. A getter is a
-behavior (a re-emitted class accessor) and must be a single `return <expr>`; its body shares the
-same portable expression engine as validator/formatter bodies, so intrinsics, `typeof`,
-conditionals, templates and `new` are allowed; arbitrary function/method calls and array literals
-are not.
+A getter body contains a statement or expression that cannot be lowered to portable IR, or
+never reaches a `return`. A getter is a behavior (a re-emitted class accessor); its body lowers
+the full portable **statement** subset (`const`/`if`/`return`) through the same engine as
+validator/formatter bodies, so intrinsics, `typeof`, conditionals, templates, `new`, local
+`const` bindings, and arrow params are allowed; arbitrary function/method calls and array
+literals are not, and the body must reach a `return` statement (assignment is not allowed — a
+getter reads, it does not mutate). Bare names bound by a local `const`/arrow param resolve to
+that local, not a schema field.
 
 ```typescript
-get name(): string { return someExternalFunction(); } // KEYMA014
+get name(): string { return someExternalFunction(); }          // KEYMA014 — non-portable call
+get size(): number { const n = this.items.length; }            // KEYMA014 — no return statement
+get scaled(): number { const x = this.n; return x * 2; }       // OK — multi-statement, x is a local
 ```
 
 ### KEYMA015 — (obsolete) Computed getter must have no setter

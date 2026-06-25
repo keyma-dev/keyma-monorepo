@@ -442,8 +442,9 @@ function extractField(
 
 /**
  * Lower a getter to an `IRMethod` behavior (`kind: "getter"`) — a re-emitted class
- * accessor, NOT a schema field. The body must be a single `return <expr>` (portable
- * subset, KEYMA014). Field-only decorators on a getter (`@Computed`, `@Indexed`,
+ * accessor, NOT a schema field. The body lowers the full portable statement subset
+ * (`const`/`if`/`return`) and must reach a `return` (KEYMA014). Field-only decorators
+ * on a getter (`@Computed`, `@Indexed`,
  * `@FormField`, `@Deprecated`) carry no behavior meaning yet: computed-field support
  * (storage / indexing / materialization) is deferred to a future release, so they
  * are ignored with a single KEYMA098 warning and the getter is emitted as a plain
@@ -457,15 +458,15 @@ function lowerGetter(
 ): IRMethod | null {
     const sf = ctx.sourceFile;
 
-    // Lower the body to an expression (shared portable engine, field-reference mode).
-    const expr = lowerGetterBody(getter, {
+    // Lower the body to portable statements (shared portable engine, field-reference mode).
+    const statements = lowerGetterBody(getter, {
         diagnostics: ctx.diagnostics,
         sourceFile: sf,
         checker: ctx.checker,
         dslModuleName: ctx.dslModuleName,
         schemaClassNames: ctx.schemaClassNames,
     });
-    if (expr === null) {
+    if (statements === null) {
         return null;
     }
 
@@ -514,7 +515,7 @@ function lowerGetter(
         kind: "getter",
         params: [],
         returnType,
-        statements: [{ kind: "return", value: expr }],
+        statements,
         visibility,
         source: getLocation(getter, sf),
     };

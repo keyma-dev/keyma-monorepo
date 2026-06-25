@@ -1,6 +1,7 @@
 import type { IRSchema, IRField, IRMethod, IRValidatorDeclaration, IRFormatterDeclaration } from "@keyma/ir";
 import { collectRefTargets, collectFunctionRefs, filterVisibleFields, filterVisibleMethods } from "@keyma/compiler-util";
-import { stmtToPython, factoryIdent } from "./emit-validators.js";
+import { renderStatements, factoryIdent } from "./emit-validators.js";
+import { intrinsicImports } from "./emit-expression.js";
 import { irTypeToPython } from "./ir-type-to-python.js";
 import { buildSchemaData } from "./schema-data.js";
 import { buildApplyDefaults } from "./emit-defaults.js";
@@ -27,20 +28,25 @@ export type ModuleEmitDeps = {
 const CLIENT_PHASES = new Set(["change", "blur", "submit"]);
 
 export function emitModulePython(moduleRef: string, schemas: readonly IRSchema[], deps: ModuleEmitDeps): string {
+    // Emit the class bodies first so the header can pull in only the math/coercion-intrinsic
+    // imports they actually reference (getter/method/default expressions may use them).
+    const body: string[] = [];
+    for (const schema of schemas) {
+        body.push(...emitSchemaClass(schema, deps));
+        body.push("");
+    }
+
     const lines: string[] = [
         "from __future__ import annotations",
         "from typing import Any, List, Optional, Literal, Dict",
         "from datetime import datetime, timezone",
         "import re",
+        ...intrinsicImports(body.join("\n")),
         "",
     ];
     lines.push(...buildImports(moduleRef, schemas, deps));
     lines.push("", "");
-
-    for (const schema of schemas) {
-        lines.push(...emitSchemaClass(schema, deps));
-        lines.push("");
-    }
+    lines.push(...body);
     return lines.join("\n");
 }
 
@@ -160,7 +166,7 @@ function emitMethodPython(
     classNameByName: ReadonlyMap<string, string>,
 ): string[] {
     const lines: string[] = [];
-    const body = method.statements.length === 0 ? ["        pass"] : method.statements.map((s) => stmtToPython(s, "        "));
+    const body = method.statements.length === 0 ? ["        pass"] : [renderStatements(method.statements, "        ")];
 
     if (method.kind === "getter") {
         const ret = method.returnType !== undefined ? irTypeToPython(method.returnType, classNameByName) : "Any";

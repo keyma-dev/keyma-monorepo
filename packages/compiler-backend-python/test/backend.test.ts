@@ -1,8 +1,9 @@
 import { describe, it, before } from "node:test";
 import assert from "node:assert/strict";
-import type { KeymaIR, IRExpression } from "@keyma/ir";
+import type { KeymaIR, IRExpression, IRStatement } from "@keyma/ir";
 import { emitPython } from "../src/backend.js";
 import { exprToPython } from "../src/emit-expression.js";
+import { renderStatements } from "../src/emit-validators.js";
 import { irTypeToPython } from "../src/ir-type-to-python.js";
 import type { PythonTargetConfig } from "../src/types.js";
 
@@ -74,6 +75,63 @@ describe("exprToPython", () => {
             whenFalse: { kind: "literal" as const, value: 0 },
         };
         assert.equal(exprToPython(expr), "1 if self.ok else 0");
+    });
+});
+
+describe("exprToPython — new intrinsics (Math, coercion, map/some/every)", () => {
+    const field = (name: string): IRExpression => ({ kind: "field", name });
+    const intr = (op: string, args: IRExpression[]): IRExpression => ({ kind: "intrinsic", op, receiver: null, args });
+
+    it("Math.floor/ceil/sqrt → math module; round/trunc/sign → JS-semantics shims", () => {
+        assert.equal(exprToPython(intr("math.floor", [field("n")])), "math.floor(self.n)");
+        assert.equal(exprToPython(intr("math.sqrt", [field("n")])), "math.sqrt(self.n)");
+        assert.equal(exprToPython(intr("math.round", [field("n")])), "math_round(self.n)");
+        assert.equal(exprToPython(intr("math.sign", [field("n")])), "math_sign(self.n)");
+        assert.equal(exprToPython(intr("math.min", [field("a"), field("b")])), "min(self.a, self.b)");
+    });
+
+    it("String()/Number() → keyma.runtime coercion helpers", () => {
+        assert.equal(exprToPython(intr("to-string", [field("n")])), "to_string(self.n)");
+        assert.equal(exprToPython(intr("to-number", [field("s")])), "to_number(self.s)");
+    });
+
+    it("array.map/some/every with an expression arrow → comprehension / any / all", () => {
+        const arrow = (body: IRExpression): IRExpression => ({ kind: "arrow", params: ["x"], body });
+        const mk = (op: string, body: IRExpression): IRExpression => ({ kind: "intrinsic", op, receiver: field("xs"), args: [arrow(body)] });
+        assert.equal(
+            exprToPython(mk("array.map", { kind: "binary", op: "*", left: { kind: "identifier", name: "x" }, right: { kind: "literal", value: 2 } })),
+            "[x * 2 for x in self.xs]",
+        );
+        assert.equal(
+            exprToPython(mk("array.some", { kind: "binary", op: ">", left: { kind: "identifier", name: "x" }, right: { kind: "literal", value: 0 } })),
+            "any(x > 0 for x in self.xs)",
+        );
+        assert.equal(
+            exprToPython(mk("array.every", { kind: "binary", op: ">", left: { kind: "identifier", name: "x" }, right: { kind: "literal", value: 0 } })),
+            "all(x > 0 for x in self.xs)",
+        );
+    });
+});
+
+describe("renderStatements — block-arrow hoisting", () => {
+    it("hoists a block-arrow filter predicate to a nested def + list(filter(...))", () => {
+        const blockArrow: IRExpression = {
+            kind: "arrow", params: ["n"],
+            statements: [
+                { kind: "const", name: "x", init: { kind: "binary", op: "*", left: { kind: "identifier", name: "n" }, right: { kind: "literal", value: 2 } } },
+                { kind: "return", value: { kind: "binary", op: ">", left: { kind: "identifier", name: "x" }, right: { kind: "literal", value: 10 } } },
+            ],
+        };
+        const stmt: IRStatement = {
+            kind: "return",
+            value: { kind: "intrinsic", op: "array.filter", receiver: { kind: "field", name: "items" }, args: [blockArrow] },
+        };
+        assert.equal(renderStatements([stmt], ""), [
+            "def _arrow0(n):",
+            "    x = n * 2",
+            "    return x > 10",
+            "return list(filter(_arrow0, self.items))",
+        ].join("\n"));
     });
 });
 

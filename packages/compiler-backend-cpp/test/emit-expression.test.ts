@@ -59,6 +59,27 @@ describe("exprToCpp — expression kinds", () => {
         );
     });
 
+    it("block-body arrow → statement lambda with explicit `-> bool` return type", () => {
+        const arrow: IRExpression = {
+            kind: "arrow", params: ["n"],
+            statements: [
+                { kind: "const", name: "x", init: { kind: "binary", op: "*", left: id("n"), right: lit(2) } },
+                { kind: "return", value: { kind: "binary", op: ">", left: id("x"), right: lit(10) } },
+            ],
+            returnType: { kind: "boolean" },
+        };
+        assert.equal(exprToCpp(arrow), "[&](auto n) -> bool {\n    auto x = n * 2;\n    return x > 10;\n}");
+    });
+
+    it("block-body arrow without a known return type omits the explicit type (auto)", () => {
+        const arrow: IRExpression = {
+            kind: "arrow", params: ["n"],
+            statements: [{ kind: "return", value: id("n") }],
+            // returnType absent (e.g. an array/enum element) → `auto` deduction
+        };
+        assert.equal(exprToCpp(arrow), "[&](auto n) {\n    return n;\n}");
+    });
+
     it("new Date() / components / RegExp", () => {
         assert.equal(exprToCpp({ kind: "new", callee: id("Date"), args: [] }), "keyma::date_now()");
         assert.equal(

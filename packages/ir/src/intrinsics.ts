@@ -57,6 +57,9 @@ export const INTRINSICS: readonly IntrinsicDef[] = [
     { op: "array.indexOf",      receiver: "array",  form: "method",   tsName: "indexOf",     minArgs: 1, maxArgs: 1, tier: "recommended" },
     { op: "array.join",         receiver: "array",  form: "method",   tsName: "join",        minArgs: 0, maxArgs: 1, tier: "recommended" },
     { op: "array.filter",       receiver: "array",  form: "method",   tsName: "filter",      minArgs: 1, maxArgs: 1, tier: "recommended" },
+    { op: "array.map",          receiver: "array",  form: "method",   tsName: "map",         minArgs: 1, maxArgs: 1, tier: "recommended" },
+    { op: "array.some",         receiver: "array",  form: "method",   tsName: "some",        minArgs: 1, maxArgs: 1, tier: "recommended" },
+    { op: "array.every",        receiver: "array",  form: "method",   tsName: "every",       minArgs: 1, maxArgs: 1, tier: "recommended" },
     { op: "array.length",       receiver: "array",  form: "property", tsName: "length",      minArgs: 0, maxArgs: 0, tier: "required" },
 
     // ── Regexp methods ────────────────────────────────────────────────────────
@@ -82,6 +85,26 @@ export const INTRINSICS: readonly IntrinsicDef[] = [
     // `date.now`: result of the static `Date.now()`. No instance receiver, so it is synthesized by
     // the frontend (empty `tsName` keeps it out of BY_RECEIVER_NAME); resolve it via `intrinsicByOp`.
     { op: "date.now",           receiver: "value",  form: "method",   tsName: "",            minArgs: 0, maxArgs: 0, tier: "recommended" },
+
+    // ── Math numerics (free-standing `Math.x(...)`; synthesized by the frontend) ───────────────
+    // No instance receiver — recognized via the global `Math` identifier and emitted with
+    // `receiver: null`, the args riding in `args`. Empty `tsName` keeps them out of
+    // BY_RECEIVER_NAME (resolve via `intrinsicByOp("math.<name>")`).
+    { op: "math.floor",         receiver: "value",  form: "method",   tsName: "",            minArgs: 1, maxArgs: 1, tier: "recommended" },
+    { op: "math.ceil",          receiver: "value",  form: "method",   tsName: "",            minArgs: 1, maxArgs: 1, tier: "recommended" },
+    { op: "math.round",         receiver: "value",  form: "method",   tsName: "",            minArgs: 1, maxArgs: 1, tier: "recommended" },
+    { op: "math.trunc",         receiver: "value",  form: "method",   tsName: "",            minArgs: 1, maxArgs: 1, tier: "recommended" },
+    { op: "math.abs",           receiver: "value",  form: "method",   tsName: "",            minArgs: 1, maxArgs: 1, tier: "recommended" },
+    { op: "math.sign",          receiver: "value",  form: "method",   tsName: "",            minArgs: 1, maxArgs: 1, tier: "recommended" },
+    { op: "math.sqrt",          receiver: "value",  form: "method",   tsName: "",            minArgs: 1, maxArgs: 1, tier: "recommended" },
+    { op: "math.pow",           receiver: "value",  form: "method",   tsName: "",            minArgs: 2, maxArgs: 2, tier: "recommended" },
+    // Variadic: `Math.min(a, b, …)` / `Math.max(…)`. At least one arg in practice.
+    { op: "math.min",           receiver: "value",  form: "method",   tsName: "",            minArgs: 1, maxArgs: 255, tier: "recommended" },
+    { op: "math.max",           receiver: "value",  form: "method",   tsName: "",            minArgs: 1, maxArgs: 255, tier: "recommended" },
+
+    // ── Coercion (free-standing `String(x)` / `Number(x)`; synthesized by the frontend) ────────
+    { op: "to-string",          receiver: "value",  form: "method",   tsName: "",            minArgs: 1, maxArgs: 1, tier: "recommended" },
+    { op: "to-number",          receiver: "value",  form: "method",   tsName: "",            minArgs: 1, maxArgs: 1, tier: "recommended" },
 ];
 
 const BY_OP = new Map<string, IntrinsicDef>(INTRINSICS.map((d) => [d.op, d]));

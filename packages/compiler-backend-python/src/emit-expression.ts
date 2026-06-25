@@ -1,4 +1,30 @@
 import type { IRExpression } from "@keyma/ir";
+import { renderStatements } from "./emit-validators.js";
+
+/**
+ * Hoist accumulator for block-body arrows. Python lambdas are expression-only, so a
+ * multi-statement arrow becomes a nested `def` collected here and drained (emitted as
+ * indented lines) immediately before the statement that uses it. `n` is a boxed counter
+ * giving each hoisted def a unique name within its statement.
+ */
+export type Hoist = { defs: string[]; n: { v: number } };
+
+// The hoist in effect while a statement's expressions are being rendered. Set by
+// `withHoist` (called from `renderStatements` per statement); read by the block-arrow case.
+// Codegen is synchronous and single-threaded, so a module-level context is safe and avoids
+// threading a `hoist` parameter through every expression helper.
+let currentHoist: Hoist | undefined;
+
+/** Run `fn` with `hoist` installed as the current accumulator, restoring the previous one after. */
+export function withHoist<T>(hoist: Hoist, fn: () => T): T {
+    const prev = currentHoist;
+    currentHoist = hoist;
+    try {
+        return fn();
+    } finally {
+        currentHoist = prev;
+    }
+}
 
 /** Lower an IRExpression to a Python source string. */
 export function exprToPython(expr: IRExpression): string {
@@ -60,8 +86,16 @@ export function exprToPython(expr: IRExpression): string {
             return regexpLiteralToPython(expr.pattern, expr.flags); // Requires import re
 
         case "arrow": {
-            const body = exprToPython(expr.body);
-            return `lambda ${expr.params.join(", ")}: ${body}`;
+            // Block-body arrow → a hoisted nested `def` (Python lambdas are expression-only).
+            // Always rendered inside a statement context, so `currentHoist` is set.
+            if (expr.statements !== undefined) {
+                const hoist = currentHoist!;
+                const name = `_arrow${hoist.n.v++}`;
+                const body = renderStatements(expr.statements, "    ");
+                hoist.defs.push(`def ${name}(${expr.params.join(", ")}):\n${body}`);
+                return name;
+            }
+            return `lambda ${expr.params.join(", ")}: ${exprToPython(expr.body!)}`;
         }
 
         case "new": {
@@ -90,6 +124,17 @@ export function exprToPython(expr: IRExpression): string {
  */
 function intrinsicToPython(expr: Extract<IRExpression, { kind: "intrinsic" }>): string {
     const recv = expr.receiver !== null ? wrapIfComplex(expr.receiver) : "";
+
+    // Ops that re-lower an arrow/regex argument from the raw node — handled BEFORE the eager
+    // `args.map` below so a block-arrow argument is lowered (and hoisted) exactly once.
+    switch (expr.op) {
+        case "array.filter": return arrayFilterToPython(recv, expr.args[0]);
+        case "array.map":    return arrayMapToPython(recv, expr.args[0]);
+        case "array.some":   return arrayQuantifierToPython(recv, expr.args[0], "any");
+        case "array.every":  return arrayQuantifierToPython(recv, expr.args[0], "all");
+        case "string.replace": return stringReplaceToPython(recv, expr.args[0], expr.args[1]);
+    }
+
     const args = expr.args.map(exprToPython);
     const arg0 = args[0];
 
@@ -124,10 +169,23 @@ function intrinsicToPython(expr: Extract<IRExpression, { kind: "intrinsic" }>): 
             const sep = arg0 ?? '","';
             return `${sep}.join(${recv})`;
         }
-        case "array.filter":
-            return arrayFilterToPython(recv, expr.args[0]);
-        case "string.replace":
-            return stringReplaceToPython(recv, expr.args[0], expr.args[1]);
+        // ── Math numerics (free-standing). floor/ceil/sqrt/pow use the stdlib `math`
+        //    module; abs/min/max are builtins; round/trunc/sign route through keyma.runtime
+        //    shims reproducing JS semantics (half-up rounding, NaN/Infinity, ±0).
+        case "math.floor": return `math.floor(${arg0})`;
+        case "math.ceil":  return `math.ceil(${arg0})`;
+        case "math.sqrt":  return `math.sqrt(${arg0})`;
+        case "math.pow":   return `math.pow(${arg0}, ${args[1]})`;
+        case "math.abs":   return `abs(${arg0})`;
+        case "math.round": return `math_round(${arg0})`;
+        case "math.trunc": return `math_trunc(${arg0})`;
+        case "math.sign":  return `math_sign(${arg0})`;
+        // Variadic min/max; a single scalar arg is its own min/max (Python min/max need an iterable).
+        case "math.min":   return args.length > 1 ? `min(${args.join(", ")})` : `(${arg0 ?? "0"})`;
+        case "math.max":   return args.length > 1 ? `max(${args.join(", ")})` : `(${arg0 ?? "0"})`;
+        // ── JS coercion (free-standing) via keyma.runtime helpers.
+        case "to-string":  return `to_string(${arg0})`;
+        case "to-number":  return `to_number(${arg0})`;
         case "regexp.test":
             return `(${recv}.search(${arg0}) is not None)`;
         // ── Date accessors. Compound forms are self-parenthesized: an `intrinsic` node is not
@@ -169,17 +227,67 @@ function intrinsicToPython(expr: Extract<IRExpression, { kind: "intrinsic" }>): 
     }
 }
 
-/** `arr.filter(pred)` → list comprehension. */
+/** `arr.filter(pred)` → comprehension (expression arrow) or `list(filter(def, recv))` (block arrow). */
 function arrayFilterToPython(recv: string, pred: IRExpression | undefined): string {
     if (pred === undefined || pred.kind !== "arrow") {
         return `[__x for __x in ${recv} if ${pred !== undefined ? exprToPython(pred) : "True"}]`;
     }
+    if (pred.statements !== undefined) {
+        return `list(filter(${exprToPython(pred)}, ${recv}))`; // hoists the def, returns its name
+    }
     const item = pred.params[0] ?? "__x";
     const idx = pred.params[1];
-    const body = exprToPython(pred.body);
+    const body = exprToPython(pred.body!);
     return idx !== undefined
         ? `[${item} for ${idx}, ${item} in enumerate(${recv}) if ${body}]`
         : `[${item} for ${item} in ${recv} if ${body}]`;
+}
+
+/** `arr.map(fn)` → comprehension (expression arrow) or `list(map(def, recv))` (block arrow / non-arrow). */
+function arrayMapToPython(recv: string, fn: IRExpression | undefined): string {
+    if (fn === undefined || fn.kind !== "arrow") {
+        return `list(map(${fn !== undefined ? exprToPython(fn) : "None"}, ${recv}))`;
+    }
+    if (fn.statements !== undefined) {
+        return `list(map(${exprToPython(fn)}, ${recv}))`;
+    }
+    const item = fn.params[0] ?? "__x";
+    const idx = fn.params[1];
+    const body = exprToPython(fn.body!);
+    return idx !== undefined
+        ? `[${body} for ${idx}, ${item} in enumerate(${recv})]`
+        : `[${body} for ${item} in ${recv}]`;
+}
+
+/** `arr.some(pred)`/`arr.every(pred)` → `any(...)`/`all(...)` over a generator (or hoisted def). */
+function arrayQuantifierToPython(recv: string, pred: IRExpression | undefined, quantifier: "any" | "all"): string {
+    if (pred === undefined || pred.kind !== "arrow") {
+        return `${quantifier}(map(${pred !== undefined ? exprToPython(pred) : "None"}, ${recv}))`;
+    }
+    if (pred.statements !== undefined) {
+        return `${quantifier}(map(${exprToPython(pred)}, ${recv}))`;
+    }
+    const item = pred.params[0] ?? "__x";
+    const idx = pred.params[1];
+    const body = exprToPython(pred.body!);
+    return idx !== undefined
+        ? `${quantifier}(${body} for ${idx}, ${item} in enumerate(${recv}))`
+        : `${quantifier}(${body} for ${item} in ${recv})`;
+}
+
+/**
+ * Extra import lines a generated module needs for the math/coercion intrinsics it
+ * references. Scans the already-emitted module body (string match on the emitted call
+ * shapes): `import math` covers floor/ceil/sqrt/pow; the keyma.runtime shims cover the
+ * JS-semantics round/trunc/sign and the String()/Number() coercion. Empty when none used.
+ */
+export function intrinsicImports(code: string): string[] {
+    const out: string[] = [];
+    if (/\bmath\.(floor|ceil|sqrt|pow)\(/.test(code)) out.push("import math");
+    const helpers = ["to_string", "to_number", "math_round", "math_trunc", "math_sign"]
+        .filter((h) => new RegExp(`\\b${h}\\(`).test(code));
+    if (helpers.length > 0) out.push(`from keyma.runtime import ${helpers.join(", ")}`);
+    return out;
 }
 
 /** `s.replace(pat, repl)` → str.replace (string pattern) or re.sub (regex pattern). */

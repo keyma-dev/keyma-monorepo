@@ -347,6 +347,42 @@ describe("exprToJs", () => {
         };
         assert.equal(exprToJs(expr), "new Date(this.ts)");
     });
+
+    it("emits Math.*, String()/Number(), and array.map intrinsics natively", () => {
+        assert.equal(
+            exprToJs({ kind: "intrinsic", op: "math.round", receiver: null, args: [{ kind: "field", name: "n" }] }),
+            "Math.round(this.n)",
+        );
+        assert.equal(
+            exprToJs({ kind: "intrinsic", op: "math.min", receiver: null, args: [{ kind: "field", name: "a" }, { kind: "literal", value: 0 }] }),
+            "Math.min(this.a, 0)",
+        );
+        assert.equal(
+            exprToJs({ kind: "intrinsic", op: "to-string", receiver: null, args: [{ kind: "field", name: "n" }] }),
+            "String(this.n)",
+        );
+        assert.equal(
+            exprToJs({ kind: "intrinsic", op: "to-number", receiver: null, args: [{ kind: "field", name: "s" }] }),
+            "Number(this.s)",
+        );
+        const mapExpr: IRExpression = {
+            kind: "intrinsic", op: "array.map", receiver: { kind: "field", name: "tags" },
+            args: [{ kind: "arrow", params: ["t"], body: { kind: "intrinsic", op: "string.length", receiver: { kind: "identifier", name: "t" }, args: [] } }],
+        };
+        assert.equal(exprToJs(mapExpr), "this.tags.map((t) => t.length)");
+    });
+
+    it("emits a block-body arrow as a native block lambda", () => {
+        const arrow: IRExpression = {
+            kind: "arrow", params: ["n"],
+            statements: [
+                { kind: "const", name: "x", init: { kind: "binary", op: "*", left: { kind: "identifier", name: "n" }, right: { kind: "literal", value: 2 } } },
+                { kind: "return", value: { kind: "binary", op: ">", left: { kind: "identifier", name: "x" }, right: { kind: "literal", value: 10 } } },
+            ],
+            returnType: { kind: "boolean" }, // ignored by JS
+        };
+        assert.equal(exprToJs(arrow), "(n) => { const x = n * 2; return x > 10; }");
+    });
 });
 
 // ─── irTypeToTs unit tests ────────────────────────────────────────────────────

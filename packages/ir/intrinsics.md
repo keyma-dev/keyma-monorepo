@@ -45,6 +45,9 @@ table keyed by `op`.
 | `array.indexOf` | array | `a.indexOf(x)` | recommended |
 | `array.join` | array | `a.join([sep])` | recommended |
 | `array.filter` | array | `a.filter(pred)` | recommended |
+| `array.map` | array | `a.map(fn)` | recommended |
+| `array.some` | array | `a.some(pred)` | recommended |
+| `array.every` | array | `a.every(pred)` | recommended |
 | `regexp.test` | regexp | `re.test(s)` | recommended |
 | `date.getTime` | date | `d.getTime()` | recommended |
 | `date.getFullYear` | date | `d.getFullYear()` | recommended |
@@ -57,6 +60,18 @@ table keyed by `op`.
 | `date.getMilliseconds` | date | `d.getMilliseconds()` | recommended |
 | `date.toISOString` | date | `d.toISOString()` | recommended |
 | `date.now` | value | `Date.now()` | recommended |
+| `math.floor` | value | `Math.floor(x)` | recommended |
+| `math.ceil` | value | `Math.ceil(x)` | recommended |
+| `math.round` | value | `Math.round(x)` | recommended |
+| `math.trunc` | value | `Math.trunc(x)` | recommended |
+| `math.abs` | value | `Math.abs(x)` | recommended |
+| `math.sign` | value | `Math.sign(x)` | recommended |
+| `math.sqrt` | value | `Math.sqrt(x)` | recommended |
+| `math.pow` | value | `Math.pow(x, y)` | recommended |
+| `math.min` | value | `Math.min(…)` | recommended |
+| `math.max` | value | `Math.max(…)` | recommended |
+| `to-string` | value | `String(x)` | recommended |
+| `to-number` | value | `Number(x)` | recommended |
 | `type-is` | value | `typeof x === "<name>"` | required |
 | `instance-of` | value | `x instanceof Ctor` | required |
 
@@ -67,7 +82,11 @@ These accept function/regex arguments, so backends branch on `args[0].kind`:
 - **`string.replace(pat, repl)`** — `pat` may be a `regexp` node (or `new RegExp(...)`) or a plain string;
   `repl` may be a string or an `arrow` (function replacement, called with the matched substring). A regex
   with the `g` flag replaces all matches, without it only the first.
-- **`array.filter(pred)`** — `pred` is an `arrow` node `(x) => …` or `(x, i) => …`.
+- **`array.filter(pred)` / `array.map(fn)` / `array.some(pred)` / `array.every(pred)`** — the
+  argument is an `arrow` node `(x) => …` or `(x, i) => …`. JS backends emit the native method;
+  Python emits a comprehension (`filter`/`map`) or `any(...)`/`all(...)` (`some`/`every`) for an
+  expression-body arrow, falling back to the functional form over a hoisted nested `def` for a
+  block-body arrow; C++ emits `keyma::filter/map/some/every` runtime helpers.
 - **`regexp.test(s)`** — the receiver is a regex literal or a `new RegExp(...)` expression.
 
 ### `type-is` and `instance-of`
@@ -108,6 +127,34 @@ The **`new Date(...)` constructor** is *not* an intrinsic — it stays a `new` I
 its `new`-expression handler (the JS backend re-emits it verbatim). A target may legitimately diverge
 from JS on out-of-range component rollover and on lenient (non-ISO) string parsing; backends should
 document their chosen policy.
+
+### Math numerics (`math.*`)
+
+The `math.*` ops are **free-standing** (`receiver: null`) — the frontend recognizes a
+`Math.<fn>(...)` call on the global `Math` object and synthesizes the intrinsic with the call
+arguments in `args` (so they are not member intrinsics and carry an empty `tsName`). `math.pow`
+takes exactly 2 args; `math.min`/`math.max` are variadic (≥ 1 arg); the rest take 1.
+
+Backends must reproduce JS numeric semantics where they diverge from the target stdlib:
+
+- `Math.round` rounds **half toward +Infinity** (`Math.round(2.5) === 3`, `Math.round(-2.5) === -2`),
+  *not* banker's rounding. Python (`round`) and C++ have no built-in for this — both route through a
+  runtime shim (`keyma.runtime.math_round`, `keyma::math_round`).
+- `Math.trunc` truncates toward zero and `Math.sign` returns `-1`/`0`/`1`; both pass `NaN`/`±Infinity`
+  through unchanged and preserve signed zero. Python/C++ route these through runtime shims
+  (`math_trunc`/`math_sign`) for the NaN/Infinity edge cases.
+- `floor`/`ceil`/`sqrt`/`pow`/`abs`/`min`/`max` map onto the target stdlib/builtins directly (JS
+  `Math.*`; Python `math.*` / builtins; C++ `keyma::*`).
+
+### `String()` / `Number()` coercion (`to-string` / `to-number`)
+
+Free-standing single-arg coercions, recognized from a bare `String(x)` / `Number(x)` call. They
+follow JS coercion rules (`String(null) === "null"`, `String(true) === "true"`, integral numbers
+print without a trailing `.0`; `Number("") === 0`, `Number(true) === 1`, non-numeric strings → `NaN`).
+JS emits the native `String(x)`/`Number(x)`; Python and C++ route through runtime helpers
+(`keyma.runtime.to_string`/`to_number`, `keyma::to_string`/`keyma::to_number`) that reproduce those
+rules — the target's own string/number conversions differ (Python `str(3.0) === "3.0"`, banker's
+rounding, `int("")` raising, etc.).
 
 ## Adding an intrinsic
 

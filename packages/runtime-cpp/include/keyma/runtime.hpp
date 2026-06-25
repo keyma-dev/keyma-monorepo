@@ -19,6 +19,8 @@
 #include <cstddef>
 #include <cstdint>
 #include <cstdio>
+#include <cstdlib>
+#include <limits>
 #include <expected>
 #include <format>
 #include <functional>
@@ -597,7 +599,12 @@ using alloc_t = std::pmr::polymorphic_allocator<std::byte>;
 // unspecialized primaries fail to compile (so a missing enum is caught loudly).
 // Call sites: keyma::to_string(v) (deduced) and keyma::from_string<E>(s) (explicit).
 template <class> inline constexpr bool always_false = false;
-template <class E> std::string_view to_string(E) { static_assert(always_false<E>, "no keyma::to_string for this type"); return {}; }
+// Enum-only so the coercion `to_string` overloads below (numbers/bool/strings/Value) own
+// non-enum arguments without competing with this template (which would otherwise be an exact
+// match for e.g. an integer and trip the static_assert). Each emitted enum still provides a
+// full specialization `to_string<E>` that satisfies this constraint.
+template <class E> requires std::is_enum_v<E>
+std::string_view to_string(E) { static_assert(always_false<E>, "no keyma::to_string for this type"); return {}; }
 template <class E> E from_string(std::string_view) { static_assert(always_false<E>, "no keyma::from_string for this type"); return E{}; }
 
 inline std::int64_t length(std::string_view s) { return static_cast<std::int64_t>(s.size()); }
@@ -717,6 +724,166 @@ std::pmr::string replace(std::string_view s, const std::regex& re, Fn fn, alloc_
     }
     out.append(in.data() + last, in.size() - last);
     return out;
+}
+
+// ─── Math (JS Math.* semantics) ───────────────────────────────────────────────
+// floor/ceil/sqrt/pow/abs map onto <cmath>/comparison; round/trunc/sign reproduce JS
+// semantics (half-up rounding, truncate-toward-zero, signed-zero) and pass NaN/±Infinity
+// through unchanged. min/max are variadic over a common numeric type.
+template <class T> double floor(T x) { return std::floor(static_cast<double>(x)); }
+template <class T> double ceil(T x)  { return std::ceil(static_cast<double>(x)); }
+template <class T> double sqrt(T x)  { return std::sqrt(static_cast<double>(x)); }
+template <class A, class B> double pow(A a, B b) { return std::pow(static_cast<double>(a), static_cast<double>(b)); }
+template <class T> auto abs(T x) { return x < T{} ? -x : x; }
+
+template <class T> double math_round(T x) {
+    const double d = static_cast<double>(x);
+    if (std::isnan(d) || std::isinf(d)) return d;
+    return std::floor(d + 0.5);
+}
+template <class T> double math_trunc(T x) {
+    const double d = static_cast<double>(x);
+    if (std::isnan(d) || std::isinf(d)) return d;
+    return std::trunc(d);
+}
+template <class T> double math_sign(T x) {
+    const double d = static_cast<double>(x);
+    if (std::isnan(d)) return d;
+    if (d > 0) return 1.0;
+    if (d < 0) return -1.0;
+    return d;  // ±0 → itself
+}
+
+template <class T, class... Ts>
+std::common_type_t<T, Ts...> min(T a, Ts... rest) {
+    std::common_type_t<T, Ts...> m = a;
+    (((static_cast<std::common_type_t<T, Ts...>>(rest) < m) ? (m = rest) : m), ...);
+    return m;
+}
+template <class T, class... Ts>
+std::common_type_t<T, Ts...> max(T a, Ts... rest) {
+    std::common_type_t<T, Ts...> m = a;
+    (((static_cast<std::common_type_t<T, Ts...>>(rest) > m) ? (m = rest) : m), ...);
+    return m;
+}
+
+// ─── Array map / some / every (JS Array.prototype.*) ──────────────────────────
+// Arity-adaptive: a callback may take just the element or both element and index.
+template <class T, class Fn>
+auto map(const std::pmr::vector<T>& v, Fn fn, alloc_t a = {}) {
+    auto call = [&fn](const T& e, std::int64_t i) {
+        if constexpr (std::is_invocable_v<Fn, const T&, std::int64_t>) return fn(e, i);
+        else return fn(e);
+    };
+    using R = std::remove_cvref_t<decltype(call(v.front(), std::int64_t{0}))>;
+    std::pmr::vector<R> out(a);
+    out.reserve(v.size());
+    std::int64_t i = 0;
+    for (const auto& e : v) { out.push_back(call(e, i)); ++i; }
+    return out;
+}
+template <class T, class Pred>
+bool some(const std::pmr::vector<T>& v, Pred pred) {
+    std::int64_t i = 0;
+    for (const auto& e : v) {
+        const bool keep = [&] {
+            if constexpr (std::is_invocable_v<Pred, const T&, std::int64_t>) return pred(e, i);
+            else return pred(e);
+        }();
+        if (keep) return true;
+        ++i;
+    }
+    return false;
+}
+template <class T, class Pred>
+bool every(const std::pmr::vector<T>& v, Pred pred) {
+    std::int64_t i = 0;
+    for (const auto& e : v) {
+        const bool keep = [&] {
+            if constexpr (std::is_invocable_v<Pred, const T&, std::int64_t>) return pred(e, i);
+            else return pred(e);
+        }();
+        if (!keep) return false;
+        ++i;
+    }
+    return true;
+}
+
+// ─── JS coercion: String(x) / Number(x) ───────────────────────────────────────
+// `to_string` reproduces JS `String(x)`: lowercase booleans, integral floats without a
+// trailing `.0`, NaN/Infinity spellings, arrays comma-joined, objects → "[object Object]".
+// Declared before the Value overload so its body can reach the numeric/string forms.
+inline std::pmr::string to_string(bool b, alloc_t a = {}) { return std::pmr::string(b ? "true" : "false", a); }
+template <class T> requires (std::is_arithmetic_v<T> && !std::is_same_v<T, bool>)
+std::pmr::string to_string(T x, alloc_t a = {}) {
+    if constexpr (std::is_floating_point_v<T>) {
+        if (std::isnan(x)) return std::pmr::string("NaN", a);
+        if (std::isinf(x)) return std::pmr::string(x < 0 ? "-Infinity" : "Infinity", a);
+    }
+    return std::pmr::string(std::format("{}", x), a);
+}
+inline std::pmr::string to_string(std::string_view s, alloc_t a = {}) { return std::pmr::string(s, a); }
+inline std::pmr::string to_string(const std::pmr::string& s, alloc_t a = {}) { return std::pmr::string(s, a); }
+inline std::pmr::string to_string(const char* s, alloc_t a = {}) { return std::pmr::string(s, a); }
+inline std::pmr::string to_string(const Value& v, alloc_t a = {}) {
+    if (v.is_string()) return std::pmr::string(v.as_string(), a);
+    if (v.is_null())   return std::pmr::string("null", a);
+    if (v.is_bool())   return to_string(v.as_bool(), a);
+    if (v.is_int())    return to_string(v.as_int(), a);
+    if (v.is_double()) return to_string(v.as_double(), a);
+    if (v.is_array()) {
+        std::pmr::string out(a);
+        bool first = true;
+        for (const auto& e : v.as_array()) {
+            if (!first) out += ",";
+            if (!e.is_null()) out += to_string(e, a);  // JS joins null/undefined as empty
+            first = false;
+        }
+        return out;
+    }
+    if (v.is_object()) return std::pmr::string("[object Object]", a);
+    return std::pmr::string(a);
+}
+
+// `to_number` reproduces JS `Number(x)`: empty/whitespace → 0, booleans → 0/1, numeric
+// strings (incl. 0x/0o/0b and the `Infinity` spellings) → their value, anything else → NaN.
+inline double to_number(bool b) { return b ? 1.0 : 0.0; }
+template <class T> requires (std::is_arithmetic_v<T> && !std::is_same_v<T, bool>)
+double to_number(T x) { return static_cast<double>(x); }
+inline double to_number(std::string_view sv) {
+    std::size_t b = 0, e = sv.size();
+    while (b < e && std::isspace(static_cast<unsigned char>(sv[b]))) ++b;
+    while (e > b && std::isspace(static_cast<unsigned char>(sv[e - 1]))) --e;
+    if (b == e) return 0.0;  // empty / whitespace-only → 0
+    const std::string s(sv.substr(b, e - b));
+    if (s.size() > 2 && s[0] == '0') {  // JS hex/octal/binary integer literals
+        int base = 0;
+        switch (s[1]) {
+            case 'x': case 'X': base = 16; break;
+            case 'o': case 'O': base = 8;  break;
+            case 'b': case 'B': base = 2;  break;
+            default: break;
+        }
+        if (base != 0) {
+            char* end = nullptr;
+            const unsigned long long val = std::strtoull(s.c_str() + 2, &end, base);
+            return (end != nullptr && *end == '\0') ? static_cast<double>(val) : std::numeric_limits<double>::quiet_NaN();
+        }
+    }
+    if (s == "Infinity" || s == "+Infinity") return std::numeric_limits<double>::infinity();
+    if (s == "-Infinity") return -std::numeric_limits<double>::infinity();
+    char* end = nullptr;
+    const double d = std::strtod(s.c_str(), &end);
+    return (end != nullptr && *end == '\0') ? d : std::numeric_limits<double>::quiet_NaN();
+}
+inline double to_number(const std::pmr::string& s) { return to_number(std::string_view(s)); }
+inline double to_number(const char* s) { return to_number(std::string_view(s)); }
+inline double to_number(const Value& v) {
+    if (v.is_number()) return v.as_double();
+    if (v.is_bool())   return v.as_bool() ? 1.0 : 0.0;
+    if (v.is_null())   return 0.0;
+    if (v.is_string()) return to_number(std::string_view(v.as_string()));
+    return std::numeric_limits<double>::quiet_NaN();
 }
 
 // ─── Regex ────────────────────────────────────────────────────────────────────

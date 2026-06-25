@@ -417,6 +417,47 @@ describe("validateIR — intrinsics & declarations", () => {
         assert.equal(validateIR(doc).valid, false);
     });
 
+    // ── Arrow node: exactly one of body|statements, optional returnType ──────────
+    const arrowValidator = (arrow: unknown) => ({
+        name: "v",
+        factoryParams: [] as unknown[],
+        inputType: { kind: "array" as const, of: { kind: "string" as const } },
+        body: {
+            params: [{ name: "value", role: "value" as const }],
+            statements: [{
+                kind: "return" as const,
+                value: { kind: "intrinsic" as const, op: "array.filter", receiver: { kind: "field" as const, name: "value" }, args: [arrow] },
+            }],
+        },
+        source: minimalSource,
+    });
+    const validateArrow = (arrow: unknown) => validateIR({ ...goldenIR, validatorDeclarations: [arrowValidator(arrow)] });
+
+    it("accepts a concise-body arrow", () => {
+        const r = validateArrow({ kind: "arrow", params: ["x"], body: { kind: "binary", op: ">", left: { kind: "identifier", name: "x" }, right: { kind: "literal", value: 0 } } });
+        assert.equal(r.valid, true, JSON.stringify(r.errors));
+    });
+
+    it("accepts a block-body arrow (statements + returnType)", () => {
+        const r = validateArrow({ kind: "arrow", params: ["x"], statements: [{ kind: "return", value: { kind: "identifier", name: "x" } }], returnType: { kind: "boolean" } });
+        assert.equal(r.valid, true, JSON.stringify(r.errors));
+    });
+
+    it("rejects an arrow with BOTH body and statements", () => {
+        const r = validateArrow({ kind: "arrow", params: ["x"], body: { kind: "identifier", name: "x" }, statements: [{ kind: "return", value: { kind: "identifier", name: "x" } }] });
+        assert.equal(r.valid, false);
+    });
+
+    it("rejects an arrow with NEITHER body nor statements", () => {
+        const r = validateArrow({ kind: "arrow", params: ["x"] });
+        assert.equal(r.valid, false);
+    });
+
+    it("rejects an arrow with an invalid returnType", () => {
+        const r = validateArrow({ kind: "arrow", params: ["x"], body: { kind: "identifier", name: "x" }, returnType: { kind: "bogus" } });
+        assert.equal(r.valid, false);
+    });
+
     it("requires inputType on a validator declaration", () => {
         const bad = structuredClone(validatorDecl) as any;
         delete bad.inputType;

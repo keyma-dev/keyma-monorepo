@@ -87,8 +87,23 @@ from .server import KeymaServer
 from .client import create_direct_transport
 from .query import Input, Keyma
 
+# ── Intrinsic helpers (referenced by generated expression code) ───────────────
+from .intrinsics import (
+    math_round,
+    math_sign,
+    math_trunc,
+    to_number,
+    to_string,
+)
+
 __all__ = [
     "__version__",
+    # intrinsic helpers
+    "to_string",
+    "to_number",
+    "math_round",
+    "math_trunc",
+    "math_sign",
     # data transforms
     "validate",
     "format",

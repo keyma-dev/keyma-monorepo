@@ -1,6 +1,6 @@
 import type { IRSchema } from "@keyma/ir";
 import { filterVisibleFields } from "@keyma/compiler-util";
-import { exprToPython } from "./emit-expression.js";
+import { exprToPython, withHoist, type Hoist } from "./emit-expression.js";
 
 /**
  * Build a module-level `apply_defaults` function for a schema's expression-kind
@@ -15,11 +15,15 @@ export function buildApplyDefaults(schema: IRSchema, includePrivate: boolean): {
 
     const name = `_apply_defaults_${schema.sourceName}`;
     const lines = [`def ${name}(value):`];
+    const rw = (s: string): string => s.replace(/self\.([a-zA-Z0-9_]+)/g, 'value["$1"]');
     for (const f of fields) {
         const expr = (f.default as { kind: "expression"; expression: import("@keyma/ir").IRExpression }).expression;
-        const py = exprToPython(expr).replace(/self\.([a-zA-Z0-9_]+)/g, 'value["$1"]');
+        const hoist: Hoist = { defs: [], n: { v: 0 } };
+        const raw = withHoist(hoist, () => exprToPython(expr));
         lines.push(`    if value.get("${f.name}") is None:`);
-        lines.push(`        value["${f.name}"] = ${py}`);
+        // Drain any block-arrow defs into the if-block, before the assignment (also self→value rewritten).
+        for (const def of hoist.defs) for (const dl of def.split("\n")) lines.push(dl === "" ? "" : "        " + rw(dl));
+        lines.push(`        value["${f.name}"] = ${rw(raw)}`);
     }
     return { name, def: lines.join("\n") };
 }

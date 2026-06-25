@@ -66,6 +66,36 @@ function makeArray(inner: { type: IRType; nullable?: boolean }): IRType {
         : { kind: "array", of: inner.type };
 }
 
+/**
+ * Best-effort lowering of a resolved `ts.Type` to an `IRType`. Used to infer an arrow's
+ * return type for the IR (and reusable for any future inference need). Handles the portable
+ * primitives (`string`/`number`/`boolean`/`bigint`), string-literal unions (→ `enum`), and
+ * arrays of any of those. Returns `undefined` for anything else — inference is optional
+ * ("when possible"), never an error.
+ */
+export function inferIRTypeFromType(t: ts.Type, checker: ts.TypeChecker): IRType | undefined {
+    if (t.isUnion()) {
+        const members = t.types;
+        if (members.length > 0 && members.every((x) => (x.flags & ts.TypeFlags.StringLiteral) !== 0)) {
+            return { kind: "enum", values: members.map((x) => String((x as ts.StringLiteralType).value)) };
+        }
+        if (members.length > 0 && members.every((x) => (x.flags & ts.TypeFlags.BooleanLike) !== 0)) {
+            return { kind: "boolean" };
+        }
+        return undefined;
+    }
+    if ((t.flags & ts.TypeFlags.StringLike) !== 0) return { kind: "string" };
+    if ((t.flags & ts.TypeFlags.NumberLike) !== 0) return { kind: "number" };
+    if ((t.flags & ts.TypeFlags.BooleanLike) !== 0) return { kind: "boolean" };
+    if ((t.flags & ts.TypeFlags.BigIntLike) !== 0) return { kind: "bigint" };
+    if (checker.isArrayType(t)) {
+        const elem = checker.getTypeArguments(t as ts.TypeReference)[0];
+        const inner = elem !== undefined ? inferIRTypeFromType(elem, checker) : undefined;
+        return inner !== undefined ? { kind: "array", of: inner } : undefined;
+    }
+    return undefined;
+}
+
 export function mapTypeNode(
     typeNode: ts.TypeNode,
     ctx: TypeMapContext

@@ -63,8 +63,13 @@ export function exprToJs(expr: IRExpression, opts: ExprEmitOptions = {}): string
                 return `/${e.pattern}/${e.flags}`;
 
             case "arrow": {
-                // Parenthesize an object-literal body so it isn't parsed as a block.
-                const body = e.body.kind === "object" ? `(${emit(e.body)})` : emit(e.body);
+                // Block-body arrow (multi-statement): a native block lambda.
+                if (e.statements !== undefined) {
+                    const stmts = e.statements.map((s) => stmtToJs(s, "", opts)).join(" ");
+                    return `(${e.params.join(", ")}) => { ${stmts} }`;
+                }
+                // Concise body. Parenthesize an object-literal body so it isn't parsed as a block.
+                const body = e.body!.kind === "object" ? `(${emit(e.body!)})` : emit(e.body!);
                 return `(${e.params.join(", ")}) => ${body}`;
             }
 
@@ -124,7 +129,13 @@ export function exprToJs(expr: IRExpression, opts: ExprEmitOptions = {}): string
             case "date.now":
                 // Static `Date.now()` — no instance receiver.
                 return `Date.now()`;
+            case "to-string":
+                return `String(${args[0]})`;
+            case "to-number":
+                return `Number(${args[0]})`;
             default: {
+                // Free-standing `Math.<fn>(...)` — near-identity in JS.
+                if (e.op.startsWith("math.")) return `Math.${e.op.slice(5)}(${args.join(", ")})`;
                 const method = JS_METHOD[e.op];
                 if (method !== undefined) return `${recv}.${method}(${args.join(", ")})`;
                 return `__keyma_unsupported_intrinsic__(${JSON.stringify(e.op)})`;
@@ -185,6 +196,9 @@ const JS_METHOD: Record<string, string> = {
     "string.replace": "replace",
     "array.join": "join",
     "array.filter": "filter",
+    "array.map": "map",
+    "array.some": "some",
+    "array.every": "every",
     "regexp.test": "test",
     "date.getTime": "getTime",
     "date.getFullYear": "getFullYear",
