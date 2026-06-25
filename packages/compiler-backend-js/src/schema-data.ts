@@ -101,6 +101,10 @@ function buildFieldData(field: IRField, opts: SchemaDataOptions): object {
     if (field.deprecated !== undefined) {
         base["deprecated"] = field.deprecated;
     }
+    // Stable binary wire tag (present only when binary serialization is enabled).
+    if (field.tag !== undefined) {
+        base["tag"] = field.tag;
+    }
 
     return base;
 }

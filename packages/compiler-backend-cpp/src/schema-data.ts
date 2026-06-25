@@ -98,8 +98,27 @@ function buildFieldMeta(field: IRField, opts: SchemaDataOptions): string {
     if (field.readonly) parts.push(`.readonly = true`);
     if (opts.includeIndexes && field.indexes.length > 0) parts.push(`.indexed = true`);
     if (field.visibility === "private") parts.push(`.visibility = keyma::Visibility::Private`);
+    // Nested-type wire detail (consumed by serialize.hpp and the binary codec). For an array
+    // the element carries the relevant bits/unsigned/target/idType (TypeInfo::element_of), so
+    // resolve the "core" type first. `.element`/`.target` precede validators in declaration
+    // order; `.bits`/`.is_unsigned`/`.id_type`/`.id_unsigned` trail `.tag`.
+    const core = field.type.kind === "array" ? field.type.of : field.type;
+    if (field.type.kind === "array") parts.push(`.element = ${typeTag(core)}`);
+    if (core.kind === "embedded" || core.kind === "reference") parts.push(`.target = ${JSON.stringify(core.schema)}`);
     if (field.validators.length > 0) parts.push(`.validators = std::span<const keyma::ValidatorFn>{__v_${field.name}}`);
     const formatters = opts.formPhasesOnly ? field.formatters.filter((fm) => CLIENT_PHASES.has(fm.phase)) : field.formatters;
     if (formatters.length > 0) parts.push(`.formatters = std::span<const keyma::PhasedFormatter>{__f_${field.name}}`);
+    // Stable binary wire tag (present only when binary serialization is enabled). Trailing
+    // defaulted member, so this stays in declaration order after `.formatters`.
+    if (field.tag !== undefined) parts.push(`.tag = ${field.tag}`);
+    // Binary-wire scalar detail: float32 vs float64, plain vs zigzag ints, and the bare-id
+    // wire kind of a reference. Defaults (bits 64, signed, id_type Id ⇒ length) are omitted.
+    if (core.kind === "number" && core.bits === 32) parts.push(`.bits = 32`);
+    if (core.kind === "integer" && core.unsigned === true) parts.push(`.is_unsigned = true`);
+    if (core.kind === "reference" && core.idType !== undefined) {
+        const idTag = typeTag(core.idType);
+        if (idTag !== "keyma::TypeTag::Id") parts.push(`.id_type = ${idTag}`);
+        if (core.idType.kind === "integer" && core.idType.unsigned === true) parts.push(`.id_unsigned = true`);
+    }
     return `keyma::FieldMeta{ ${parts.join(", ")} }`;
 }

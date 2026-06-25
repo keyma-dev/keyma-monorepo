@@ -5,7 +5,7 @@ import type {
 import { collectRefTargets, collectFunctionRefs, unwrapArray, filterVisibleFields, filterVisibleMethods } from "@keyma/compiler-util";
 import { exprToCpp, type ExprOpts } from "./emit-expression.js";
 import { stmtToCpp, factoryIdent, type ReturnLowerer } from "./emit-validators.js";
-import { irTypeToCpp, memberType, traitsArg, whereValueType, fieldKind, refTargetType } from "./ir-type-to-cpp.js";
+import { irTypeToCpp, memberType, traitsArg, whereValueType, fieldKind, refTargetType, binaryFieldPlan, type BinaryFieldPlan } from "./ir-type-to-cpp.js";
 import { buildSchemaMeta } from "./schema-data.js";
 import { buildApplyDefaults } from "./emit-defaults.js";
 import { emitEnumClass, emitEnumConversions } from "./emit-enum.js";
@@ -16,6 +16,9 @@ export type ModuleEmitDeps = {
     includeIndexes: boolean;
     formPhasesOnly: boolean;
     includeDefaults: boolean;
+    /** Emit the typed binary codec (keyma::binary_traits<T>) alongside value_traits. Driven
+     *  by the project's `binary` config; off ⇒ JSON-only output is byte-for-byte unchanged. */
+    binary: boolean;
     nsRoot: string;
     /** sourceName → bundle-relative module ref (e.g. "models/user"). */
     schemaModule: ReadonlyMap<string, string>;
@@ -54,6 +57,9 @@ export function emitModuleCpp(
     const funcsUsed = collectFunctionRefs(schemas, deps);
 
     const lines: string[] = ["#pragma once", `#include ${deps.runtimeInclude}`];
+    // The typed binary codec lives in a separate runtime header (keeps the binary-only
+    // primitives out of the baked runtime.hpp); pulled in only when binary is enabled.
+    if (deps.binary) lines.push(`#include <keyma/binary-typed.hpp>`);
     for (const inc of buildIncludes(moduleRef, schemas, deps, funcsUsed.size > 0)) lines.push(`#include "${inc}"`);
 
     // Forward declarations for every reference target (same- and cross-module). A
@@ -70,6 +76,14 @@ export function emitModuleCpp(
     const traitDecls = valueTraitsForwardDecls(ns, schemas, deps);
     if (traitDecls.length > 0) { lines.push(""); lines.push(...traitDecls); }
 
+    // binary_traits explicit-specialization forward declarations (same discipline as
+    // value_traits) so a binary_traits body that names a sibling's or a reference target's
+    // binary_traits has seen its declaration first. Gated on deps.binary.
+    if (deps.binary) {
+        const binDecls = binaryTraitsForwardDecls(schemas, deps);
+        if (binDecls.length > 0) lines.push(...binDecls);
+    }
+
     // ── Enums first: definitions + keyma:: conversions + std::formatter, all BEFORE
     // the structs. A getter may interpolate an enum via std::format (analyzed
     // in complete-class context), so the formatter specialization must already be seen. ──
@@ -78,7 +92,7 @@ export function emitModuleCpp(
         for (const e of enums) lines.push(emitEnumClass(e));
         lines.push(`}  // namespace ${ns}`, "");
         for (const e of enums) {
-            lines.push(emitEnumConversions(e, deps.enumTypeByName.get(e.name) ?? `${ns}::${cppSanitizer(e.name)}`), "");
+            lines.push(emitEnumConversions(e, deps.enumTypeByName.get(e.name) ?? `${ns}::${cppSanitizer(e.name)}`, deps.binary), "");
         }
     }
 
@@ -104,7 +118,11 @@ export function emitModuleCpp(
     // value_traits is at least declared above, so the per-field cross-references resolve.
     // All cross-trait references live in function bodies → instantiated lazily at the
     // consumer's odr-use, where every specialization is fully defined. ──
-    for (const schema of ordered) { lines.push(...emitValueTraits(schema, deps)); lines.push(""); }
+    for (const schema of ordered) {
+        lines.push(...emitValueTraits(schema, deps));
+        if (deps.binary) lines.push(...emitBinaryTraits(schema, deps));
+        lines.push("");
+    }
 
     // ── Block 2b: out-of-line apply_defaults / schema() + the thin
     // from_value/to_value forwarder definitions (after the value_traits they delegate to). ──
@@ -345,6 +363,160 @@ function emitValueTraits(schema: IRSchema, deps: ModuleEmitDeps): string[] {
 
     lines.push(`};`, `}  // namespace keyma`);
     return lines;
+}
+
+// ─── Typed binary codec (keyma::binary_traits<T>) ─────────────────────────────
+//
+// The struct↔bytes counterpart of value_traits<T>, mirroring it 1:1: forward-declared like
+// value_traits (so reference cycles compile), defined in Block 2a after each emitValueTraits.
+// encode_record writes per-field key + presence/null framing + payload; decode_record is
+// tag-keyed and order-independent. The leaves in keyma/binary-typed.hpp own all payload
+// bytes, so the typed path is byte-identical to the dynamic codec (binary.hpp). Reference
+// targets additionally get id helpers (the binary analogues of value_traits' set_id/id_value).
+
+/** `keyma::binary_traits<T>` forward declarations for same-module structs + reference targets. */
+function binaryTraitsForwardDecls(schemas: readonly IRSchema[], deps: ModuleEmitDeps): string[] {
+    const fqns = new Set<string>();
+    for (const s of schemas) {
+        const fqn = deps.cppTypeByName.get(s.name);
+        if (fqn !== undefined) fqns.add(fqn);
+    }
+    const fields = schemas.flatMap((s) => filterVisibleFields(s, deps.includePrivate));
+    for (const target of collectTargetsByKind(fields, "reference")) {
+        const fqn = deps.cppTypeByName.get(target);
+        if (fqn !== undefined) fqns.add(fqn);
+    }
+    return [...fqns].sort().map((fqn) => `namespace keyma { template <> struct binary_traits<${fqn}>; }`);
+}
+
+/** Block 2a: the `keyma::binary_traits<T>` specialization for one schema. */
+function emitBinaryTraits(schema: IRSchema, deps: ModuleEmitDeps): string[] {
+    const C = deps.cppTypeByName.get(schema.name) ?? schema.sourceName;
+    const stored = filterVisibleFields(schema, deps.includePrivate);
+    const plans = stored.map((f, i) => binaryFieldPlan(f, i, deps.cppTypeByName, deps.enumTypeByName));
+
+    const encodeLines = plans.flatMap((p) => binaryEncodeField(p));
+    const decodeCases = plans.map((p) => binaryDecodeCase(p));
+
+    const lines: string[] = [
+        `namespace keyma {`,
+        `template <>`,
+        `struct binary_traits<${C}> {`,
+        `    using T = ${C};`,
+        `    static void encode_record(keyma::ByteBuf& out, const T& x, keyma::alloc_t a) {`,
+        ...encodeLines,
+        `    }`,
+        `    static T decode_record(keyma::binary_detail::Reader& r, keyma::alloc_t a) {`,
+        `        T __o(a);`,
+        `        while (r.pos < r.end) {`,
+        `            std::uint64_t __key = keyma::binary_detail::read_varint(r);`,
+        `            std::uint32_t tag = (std::uint32_t)(__key >> 3);`,
+        `            std::uint8_t wt = (std::uint8_t)(__key & 7);`,
+        `            switch (tag) {`,
+        ...decodeCases,
+        `                default: keyma::binary_detail::skip_value(r, wt);`,
+        `            }`,
+        `        }`,
+        `        return __o;`,
+        `    }`,
+        // Length-windowed payload methods (+ wiretype), so this struct can itself be an
+        // embedded field OR a vector<T> array element — routed via binary_traits<T> like any
+        // leaf. encode_record/decode_record stay the top-level (unframed) entry points.
+        `    static constexpr std::uint8_t wiretype = keyma::binary_detail::WIRE_LENGTH;`,
+        `    static void encode_payload(keyma::ByteBuf& out, const T& x, keyma::alloc_t a) {`,
+        `        keyma::ByteBuf __b(a); encode_record(__b, x, a);`,
+        `        keyma::binary_detail::write_len_raw(out, std::span<const std::byte>(__b.data(), __b.size()));`,
+        `    }`,
+        `    static T decode_payload(keyma::binary_detail::Reader& r, std::uint8_t, keyma::alloc_t a) {`,
+        `        keyma::binary_detail::Reader __inner = keyma::binary_detail::read_len_window(r);`,
+        `        return decode_record(__inner, a);`,
+        `    }`,
+    ];
+
+    // Reference-target id helpers (route through binary_traits<IdType> so signed-int ids
+    // zigzag, unsigned plain, string/Id length — matching the dynamic reference branch).
+    if (deps.referenceTargetNames.has(schema.name)) {
+        const idName = deps.idFieldByName.get(schema.name) ?? "id";
+        const idField = schema.fields.find((f) => f.name === idName);
+        const idTmpl = idField !== undefined ? memberType(idField, deps.cppTypeByName, deps.enumTypeByName) : "std::pmr::string";
+        lines.push(
+            `    static constexpr std::uint8_t id_wiretype = keyma::binary_traits<${idTmpl}>::wiretype;`,
+            `    static void encode_id_payload(keyma::ByteBuf& out, const T& t, keyma::alloc_t a) { keyma::encode_payload<${idTmpl}>(out, t.${idName}, a); }`,
+            `    static void decode_id_into(T& t, keyma::binary_detail::Reader& r, std::uint8_t wt, keyma::alloc_t a) { t.${idName} = keyma::decode_payload<${idTmpl}>(r, wt, a); }`,
+        );
+    }
+
+    lines.push(`};`, `}  // namespace keyma`);
+    return lines;
+}
+
+const BIN_NULL = "keyma::binary_detail::WIRE_NULL";
+
+/** Encode lines for one field (8-space indented, inside encode_record's body). */
+function binaryEncodeField(p: BinaryFieldPlan): string[] {
+    const I = "        ";
+    const m = `x.${p.name}`;
+    const writeNull = `keyma::binary_detail::write_key(out, ${p.tag}, ${BIN_NULL});`;
+
+    if (p.kind === "reference") {
+        const T = p.target!;
+        const enc = [
+            `${I}if (${m}) { keyma::binary_detail::write_key(out, ${p.tag}, keyma::binary_traits<${T}>::id_wiretype); keyma::binary_traits<${T}>::encode_id_payload(out, *${m}, a); }`,
+        ];
+        if (p.framing === "null") enc.push(`${I}else { ${writeNull} }`);
+        return enc;
+    }
+
+    // A writer producing the full "key + payload" for one present, non-null value lvalue.
+    // scalar covers embedded (core = target struct, whose binary_traits owns the length window)
+    // and arrays (core = vector type) uniformly; json special-cases its inner null.
+    const writeKV =
+        p.kind === "json"
+            ? (lv: string) =>
+                // json carries its null INSIDE the Value, so the writer decides WIRE_NULL vs payload.
+                `if ((${lv}).is_null()) { ${writeNull} } else { ` +
+                `keyma::binary_detail::write_key(out, ${p.tag}, keyma::binary_traits<keyma::Value>::wiretype); ` +
+                `keyma::encode_payload<keyma::Value>(out, ${lv}, a); }`
+            : (lv: string) =>
+                `keyma::binary_detail::write_key(out, ${p.tag}, keyma::binary_traits<${p.core}>::wiretype); ` +
+                `keyma::encode_payload<${p.core}>(out, ${lv}, a);`;
+
+    switch (p.framing) {
+        case "always":
+            return [`${I}${writeKV(m)}`];
+        case "omit":
+            return [`${I}if (${m}.has_value()) { ${writeKV(`*${m}`)} }`];
+        case "null":
+            return [`${I}if (${m}.has_value()) { ${writeKV(`*${m}`)} } else { ${writeNull} }`];
+        case "field":
+            return [
+                `${I}if (${m}.present) {`,
+                `${I}    if (${m}.value.has_value()) { ${writeKV(`*${m}.value`)} } else { ${writeNull} }`,
+                `${I}}`,
+            ];
+    }
+}
+
+/** The `case TAG:` decode line for one field (16-space indented, inside decode_record's switch). */
+function binaryDecodeCase(p: BinaryFieldPlan): string {
+    const I = "                ";
+    const m = `__o.${p.name}`;
+
+    if (p.kind === "reference") {
+        const T = p.target!;
+        return `${I}case ${p.tag}: if (wt == ${BIN_NULL}) ${m} = nullptr; else { auto __p = std::allocate_shared<${T}>(a); keyma::binary_traits<${T}>::decode_id_into(*__p, r, wt, a); ${m} = __p; } break;`;
+    }
+
+    // scalar (incl. embedded & arrays) & json decode identically: decode_payload<core> reads
+    // the length-windowed record (embedded), the count-prefixed body (array), or the leaf
+    // payload. json's core is keyma::Value; a default Value is null.
+    const read = `keyma::decode_payload<${p.core}>(r, wt, a)`;
+    switch (p.framing) {
+        case "always": return `${I}case ${p.tag}: if (wt == ${BIN_NULL}) {} else ${m} = ${read}; break;`;
+        case "omit":
+        case "null": return `${I}case ${p.tag}: if (wt == ${BIN_NULL}) ${m} = std::nullopt; else ${m} = ${read}; break;`;
+        case "field": return `${I}case ${p.tag}: ${m}.present = true; if (wt == ${BIN_NULL}) ${m}.value.reset(); else ${m}.value = ${read}; break;`;
+    }
 }
 
 // ─── Member construction helpers ──────────────────────────────────────────────

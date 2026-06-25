@@ -247,6 +247,14 @@ export type IRField = {
     form?: IRFormField;
     /** Deprecation marker — `true`, or a reason string (from `@Deprecated`). */
     deprecated?: boolean | string;
+    /**
+     * Stable binary-wire tag assigned by the compiler's `assignTags` pass from the
+     * committed manifest (`keyma.tags.json`). Present only when binary serialization is
+     * enabled for the project; absent ⇒ JSON-only pipelines and the runtime codec falls
+     * back to the field's 1-based declaration index. A positive integer, unique within
+     * the (post-flatten) schema. See `TagManifest`.
+     */
+    tag?: number;
     source: IRSourceLocation;
 };
 
@@ -351,6 +359,29 @@ export type IREnumDeclaration = {
     name: string;
     members: { name: string; value: string }[];
     source: IRSourceLocation;
+};
+
+/**
+ * The committed binary-tag manifest (`keyma.tags.json`) — the durable record of each
+ * field's stable wire identity, diffed on every compile so at-rest binary records survive
+ * schema evolution. Pure JSON. Keyed by canonical schema `name` (post-prefix). Owned and
+ * read/written exclusively by the CLI (the only real-fs writer); it threads through the
+ * compiler as data only. Per-schema tag spaces keep two devs editing different schemas
+ * conflict-free; `nextTag` is a monotonic high-water mark (allocation is always `nextTag++`,
+ * never gap-filling or reusing a tombstone). See the frontend's `assignTags` pass.
+ */
+export type TagManifestSchema = {
+    /** Monotonic high-water mark — the next tag to allocate. Only ever increases. */
+    nextTag: number;
+    /** Surviving field name → its committed stable tag. */
+    fields: Record<string, number>;
+    /** Tags of removed fields, retired so they are never reused (decode-skip safety). */
+    tombstones: number[];
+};
+
+export type TagManifest = {
+    manifestVersion: string;
+    schemas: Record<string, TagManifestSchema>;
 };
 
 export type KeymaIR = {

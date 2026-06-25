@@ -18,6 +18,7 @@ Usage:
 Options:
   --help, -h                Show this help
   --force                   Overwrite existing files (new, gen)
+  --accept-tags             Accept binary tag drift / rewrite keyma.tags.json (build)
 `;
 
 async function main(argv: readonly string[]): Promise<number> {
@@ -58,6 +59,7 @@ async function main(argv: readonly string[]): Promise<number> {
         case "build": {
             const opts: BuildOptions = {};
             if (flags.string.config !== undefined) opts.configPath = flags.string.config;
+            if (flags.boolean.acceptTags) opts.acceptTags = true;
             const result = await runBuild(opts);
             printDiagnostics(result.diagnostics);
             if (result.hasErrors) return 1;
@@ -100,7 +102,7 @@ async function main(argv: readonly string[]): Promise<number> {
 
 type ParsedFlags = {
     positional: string[];
-    boolean: { force?: boolean };
+    boolean: { force?: boolean; acceptTags?: boolean };
     string: { config?: string; out?: string };
 };
 
@@ -110,6 +112,8 @@ function parseFlags(argv: readonly string[]): ParsedFlags {
         const arg = argv[i]!;
         if (arg === "--force") {
             out.boolean.force = true;
+        } else if (arg === "--accept-tags") {
+            out.boolean.acceptTags = true;
         } else if (arg === "--config") {
             const v = argv[++i];
             if (v !== undefined) out.string.config = v;

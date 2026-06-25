@@ -30,6 +30,8 @@ export type {
     IREnumDeclaration,
     IRDiagnostic,
     IRSourceLocation,
+    TagManifest,
+    TagManifestSchema,
 } from "./types.js";
 
 export { validateIR } from "./validate.js";

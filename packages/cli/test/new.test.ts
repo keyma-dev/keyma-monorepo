@@ -34,6 +34,7 @@ describe("keyma new", () => {
             "tsconfig.json",
             "keyma.config.ts",
             "src/index.ts",
+            ".keyma/.gitkeep",
         ];
         for (const rel of expected) {
             assert.ok(existsSync(join(dir, rel)), `expected ${rel} to exist`);

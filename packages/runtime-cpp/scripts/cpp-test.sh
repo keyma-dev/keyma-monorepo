@@ -38,10 +38,17 @@ trap 'rm -rf "$WORK"' EXIT
 #    default Sync policy, a (blocking) std::future policy, and a genuinely-suspending C++23
 #    coroutine-task policy — proving the Async<> template is not coupled to Sync (bring your
 #    own scheduler) on both the eager and the deferred path.
-for t in server futures coroutine typed; do
+for t in server futures coroutine typed binary-typed; do
     "$CXX" -std=c++23 $COMPAT -Iinclude "test/$t.test.cpp" -o "$WORK/$t.test"
     "$WORK/$t.test"
 done
+
+# 2b) Cross-runtime binary parity: encode the SHARED fixtures the JS reference codec
+#     generated and assert byte-identical output (the cardinal invariant). The fixtures live
+#     in the sibling runtime-js package (single source of truth), passed in as an absolute path.
+FIXTURES="$(cd ../runtime-js/test && pwd)/binary-fixtures.json"
+"$CXX" -std=c++23 $COMPAT -Iinclude -DKEYMA_BINARY_FIXTURES="\"$FIXTURES\"" test/binary.test.cpp -o "$WORK/binary.test"
+"$WORK/binary.test"
 
 # 3) Negative-compile: a mistyped filter must be REJECTED by the typed query DSL. A
 #    non-zero exit from the compiler here is the PASS (the snippet is meant to fail).

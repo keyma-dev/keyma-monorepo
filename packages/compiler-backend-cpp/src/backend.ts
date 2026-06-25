@@ -28,7 +28,7 @@ type SharedDeps = Pick<
     "nsRoot" | "schemaModule" | "classNameByName" | "cppTypeByName" | "enumTypeByName" | "enumModuleByName"
     | "idFieldByName" | "validatorDecls" | "formatterDecls" | "functionNames"
     | "validatorsModuleRef" | "formattersModuleRef" | "functionsModuleRef"
-    | "runtimeInclude" | "referenceTargetNames"
+    | "runtimeInclude" | "referenceTargetNames" | "binary"
 >;
 
 type Decls = {
@@ -39,7 +39,7 @@ type Decls = {
     services: readonly IRService[];
 };
 
-export async function emitCpp(ir: KeymaIR, target: KeymaTargetConfig, _config: ResolvedConfig): Promise<EmitResult> {
+export async function emitCpp(ir: KeymaIR, target: KeymaTargetConfig, config: ResolvedConfig): Promise<EmitResult> {
     const cppTarget = resolveCppTarget(target as CppTargetConfig);
     const nsRoot = cppTarget.namespaceRoot;
     const files: EmitFile[] = [];
@@ -100,6 +100,9 @@ export async function emitCpp(ir: KeymaIR, target: KeymaTargetConfig, _config: R
         functionsModuleRef: FUNCTIONS_REF,
         runtimeInclude: cppTarget.runtimeInclude,
         referenceTargetNames,
+        // Typed binary codec emission is driven by the project-level `binary` config (the
+        // same flag that turns on the frontend's tag assignment), shared across all bundles.
+        binary: config.binary === true,
     };
 
     if (cppTarget.emitClient) {

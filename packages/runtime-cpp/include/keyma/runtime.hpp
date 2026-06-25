@@ -569,6 +569,15 @@ struct FieldMeta {
     std::string_view target{};
     std::span<const ValidatorFn> validators{};
     std::span<const PhasedFormatter> formatters{};
+    // Binary-wire type detail (see keyma/binary.hpp). Additive, trailing, and defaulted so
+    // existing generated FieldMeta designated-initializers keep compiling unchanged. The
+    // flat `type` tag alone cannot drive the binary codec's varint-vs-float / signed-vs-
+    // unsigned / bare-id-wire-kind choices, so these carry the missing nested-type detail.
+    std::uint32_t tag = 0;            // stable wire tag; 0 ⇒ fall back to 1-based declaration index
+    int bits = 64;                    // Number: 32 ⇒ float32 wire (for an array, the element's bits)
+    bool is_unsigned = false;         // Integer: plain LEB128 vs zigzag (for an array, the element's)
+    TypeTag id_type = TypeTag::Id;    // Reference: bare-id wire kind (Integer ⇒ varint, else length)
+    bool id_unsigned = false;         // Reference: unsigned integer id
 };
 
 struct SchemaMeta {

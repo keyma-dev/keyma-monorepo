@@ -152,6 +152,76 @@ export function refTargetType(field: IRField, cppTypeByName?: ReadonlyMap<string
     return "void";
 }
 
+/**
+ * A descriptor driving a field's typed-binary encode/decode emission (binary-typed.hpp's
+ * keyma::binary_traits<T>). Centralizes the per-field type/framing logic the emitter
+ * unrolls. `kind` selects the payload strategy; `framing` selects the presence/null framing
+ * (how absent vs null is written), derived from the IR `required`/`nullable` flags — which
+ * is the only way to distinguish optional-only (omit) from nullable (WIRE_NULL), since both
+ * lower to `std::optional<E>` and are indistinguishable at the C++ member-type level.
+ */
+export type BinaryFieldPlan = {
+    /** Struct member name. */
+    name: string;
+    /** Stable wire tag: `field.tag` when binary is enabled, else the 1-based declaration index. */
+    tag: number;
+    kind: "scalar" | "reference" | "json";
+    /**
+     * scalar: the inner (unwrapped) C++ value type for `binary_traits<core>` — this covers
+     * plain scalars, enums, arrays (the full vector type), AND embedded targets (the struct
+     * type, whose codegen'd binary_traits provides the length-windowed encode_payload). json:
+     * keyma::Value.
+     */
+    core: string;
+    /** reference: the fully-qualified target struct type. */
+    target?: string;
+    /**
+     * Presence/null framing. scalar/json: `always` (required & non-nullable), `omit`
+     * (optional-only), `null` (nullable), `field` (two-axis keyma::Field). reference: `omit`
+     * (non-nullable — null pointer ⇒ omit) or `null` (nullable — null pointer ⇒ WIRE_NULL).
+     */
+    framing: "always" | "omit" | "null" | "field";
+};
+
+/**
+ * Build the typed-binary plan for a field. `index` is the field's 0-based position among the
+ * (visible) fields, used for the 1-based tag fallback when `field.tag` is unset.
+ */
+export function binaryFieldPlan(
+    field: IRField,
+    index: number,
+    cppTypeByName?: ReadonlyMap<string, string>,
+    enumTypeByName?: ReadonlyMap<string, string>,
+): BinaryFieldPlan {
+    const tag = field.tag ?? index + 1;
+    const name = field.name;
+    const optional = !field.required;
+    const nullable = field.nullable === true;
+    const framing4: BinaryFieldPlan["framing"] =
+        optional && nullable ? "field" : optional ? "omit" : nullable ? "null" : "always";
+
+    if (field.type.kind === "reference") {
+        return {
+            name, tag, kind: "reference", core: "",
+            target: cppTypeByName?.get(field.type.schema) ?? field.type.schema,
+            framing: nullable ? "null" : "omit",
+        };
+    }
+    if (field.type.kind === "json") {
+        return { name, tag, kind: "json", core: "keyma::Value", framing: framing4 };
+    }
+    // scalar — covers plain scalars, enums, embedded (core = target struct, whose binary_traits
+    // provides the length-windowed payload), and arrays (core = the full vector type;
+    // binary_traits<vector<E>> / binary_traits<vector<optional<E>>> own the element framing,
+    // and the element E may itself be a struct or shared_ptr<Target> for arrays of embedded /
+    // references).
+    return {
+        name, tag, kind: "scalar",
+        core: irTypeToCpp(field.type, cppTypeByName, enumTypeByName),
+        framing: framing4,
+    };
+}
+
 /** The keyma::TypeTag enumerator for a type, for schema metadata. */
 export function typeTag(type: IRType): string {
     const map: Record<IRType["kind"], string> = {

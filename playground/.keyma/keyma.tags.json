@@ -1,0 +1,172 @@
+{
+  "manifestVersion": "1",
+  "schemas": {
+    "FOLLOWS": {
+      "nextTag": 5,
+      "fields": {
+        "follower": 3,
+        "following": 4,
+        "id": 1,
+        "since": 2
+      },
+      "tombstones": []
+    },
+    "RELATED": {
+      "nextTag": 4,
+      "fields": {
+        "id": 1,
+        "post": 2,
+        "tag": 3
+      },
+      "tombstones": []
+    },
+    "author": {
+      "nextTag": 16,
+      "fields": {
+        "avatar": 13,
+        "bio": 10,
+        "createdAt": 2,
+        "email": 4,
+        "firstName": 5,
+        "homepage": 14,
+        "id": 1,
+        "lastName": 6,
+        "phone": 9,
+        "role": 12,
+        "securityStamp": 15,
+        "theme": 11,
+        "updatedAt": 3,
+        "username": 7,
+        "website": 8
+      },
+      "tombstones": []
+    },
+    "comment": {
+      "nextTag": 10,
+      "fields": {
+        "author": 5,
+        "authorIp": 8,
+        "body": 4,
+        "countryCode": 7,
+        "createdAt": 2,
+        "id": 1,
+        "post": 6,
+        "score": 9,
+        "updatedAt": 3
+      },
+      "tombstones": []
+    },
+    "credentials": {
+      "nextTag": 6,
+      "fields": {
+        "author": 4,
+        "createdAt": 2,
+        "id": 1,
+        "passwordHash": 5,
+        "updatedAt": 3
+      },
+      "tombstones": []
+    },
+    "entity": {
+      "nextTag": 4,
+      "fields": {
+        "createdAt": 2,
+        "id": 1,
+        "updatedAt": 3
+      },
+      "tombstones": []
+    },
+    "inviteinput": {
+      "nextTag": 3,
+      "fields": {
+        "email": 1,
+        "message": 2
+      },
+      "tombstones": []
+    },
+    "inviteresult": {
+      "nextTag": 3,
+      "fields": {
+        "id": 1,
+        "token": 2
+      },
+      "tombstones": []
+    },
+    "post": {
+      "nextTag": 21,
+      "fields": {
+        "author": 10,
+        "body": 6,
+        "createdAt": 2,
+        "excerpt": 7,
+        "id": 1,
+        "metadata": 18,
+        "previewToken": 20,
+        "price": 14,
+        "publishedOn": 12,
+        "rating": 15,
+        "readingMinutes": 17,
+        "scheduledTime": 13,
+        "seo": 11,
+        "slug": 5,
+        "status": 8,
+        "subtitle": 19,
+        "tags": 9,
+        "title": 4,
+        "updatedAt": 3,
+        "views": 16
+      },
+      "tombstones": []
+    },
+    "seo": {
+      "nextTag": 3,
+      "fields": {
+        "metaDescription": 2,
+        "metaTitle": 1
+      },
+      "tombstones": []
+    },
+    "showcase": {
+      "nextTag": 9,
+      "fields": {
+        "adjustment": 4,
+        "apiPath": 7,
+        "balance": 5,
+        "createdAt": 2,
+        "id": 1,
+        "ipv6": 8,
+        "nationalId": 6,
+        "updatedAt": 3
+      },
+      "tombstones": []
+    },
+    "signupinput": {
+      "nextTag": 4,
+      "fields": {
+        "confirmPassword": 3,
+        "email": 1,
+        "password": 2
+      },
+      "tombstones": []
+    },
+    "signupresult": {
+      "nextTag": 3,
+      "fields": {
+        "id": 1,
+        "token": 2
+      },
+      "tombstones": []
+    },
+    "tag": {
+      "nextTag": 6,
+      "fields": {
+        "createdAt": 2,
+        "id": 1,
+        "label": 4,
+        "slug": 5,
+        "updatedAt": 3
+      },
+      "tombstones": []
+    }
+  }
+}

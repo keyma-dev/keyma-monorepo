@@ -24,7 +24,8 @@ export function projectFiles(projectName: string): ProjectFile[] {
         { relativePath: "package.json", content: packageJsonTemplate(projectName) },
         { relativePath: "tsconfig.json", content: TSCONFIG_TEMPLATE },
         { relativePath: "keyma.config.ts", content: KEYMA_CONFIG_TEMPLATE },
-        { relativePath: "src/index.ts", content: INDEX_TS_TEMPLATE }
+        { relativePath: "src/index.ts", content: INDEX_TS_TEMPLATE },
+        { relativePath: ".keyma/.gitkeep", content: "" }
     ];
 }
 

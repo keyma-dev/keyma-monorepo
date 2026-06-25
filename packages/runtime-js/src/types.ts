@@ -92,6 +92,9 @@ export type FieldMetadata = {
     form?: FormFieldMeta;
     /** Deprecation marker — `true`, or a reason string. */
     deprecated?: boolean | string;
+    /** Stable wire tag for binary serialization (from the committed tag manifest).
+     *  Absent ⇒ the binary codec falls back to the field's 1-based declaration index. */
+    tag?: number;
 };
 
 /** Edge metadata recorded by the compiler from `@Edge` + the `@From()`/`@To()`

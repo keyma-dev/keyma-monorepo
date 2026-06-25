@@ -1,6 +1,7 @@
 import { path, unwrapArray } from "@keyma/compiler-util";
 import ts from "typescript";
-import type { KeymaIR, IRDiagnostic, IRSchema } from "@keyma/ir";
+import type { KeymaIR, IRDiagnostic, IRSchema, TagManifest } from "@keyma/ir";
+import { assignTags, stripTagHints } from "./assign-tags.js";
 import { createProgram, DEFAULT_COMPILER_OPTIONS } from "./program.js";
 import { discoverSchemas } from "./discover.js";
 import { discoverEnums } from "./discover-enums.js";
@@ -51,11 +52,25 @@ export type FrontendConfig = {
      *  filesystem — this is the browser-capable path. The `files` must already exist
      *  in the system's map (use {@link compileVirtual} to inject them automatically). */
     system?: ts.System;
+    /** Enable binary serialization: run the `assignTags` pass (stable wire identity via
+     *  the committed manifest) and emit `IRField.tag`. When false/omitted, tags are
+     *  stripped and JSON-only IR is unaffected (no `irVersion` bump, no manifest). */
+    binaryTags?: boolean;
+    /** The previously-committed tag manifest (`keyma.tags.json`), read by the CLI. Seeds
+     *  the `assignTags` pass; absent ⇒ bootstrap a fresh manifest. Used only when
+     *  `binaryTags` is true. The compiler reads it as data and never touches the filesystem. */
+    tagManifest?: TagManifest;
+    /** Accept tag drift (the analogue of `UPDATE_SNAPSHOTS`): suppresses the KEYMA100
+     *  un-hinted-rename hard error so the manifest is rewritten. Used only with `binaryTags`. */
+    acceptTags?: boolean;
 };
 
 export type CompileResult = {
     ir: KeymaIR;
     diagnostics: IRDiagnostic[];
+    /** The updated tag manifest, present only when `binaryTags` is enabled. The CLI writes
+     *  it back to `keyma.tags.json` after a clean build. */
+    tagManifest?: TagManifest;
 };
 
 /** Compile TypeScript source files to Keyma IR. */
@@ -236,8 +251,20 @@ function compileProgram(program: ts.Program, config: FrontendConfig): CompileRes
     // above (which resolve by `sourceName`) see the un-rewritten IR.
     normalizeSchemaNames(schemas, services, config.schemaPrefix ?? "");
 
+    // Binary tag assignment — runs after flatten + normalize so it sees each schema's
+    // final, prefixed, self-contained field list. Gated behind binary being enabled so
+    // JSON-only users incur no manifest, no tags, and no `irVersion` bump.
+    let tagManifest: TagManifest | undefined;
+    if (config.binaryTags === true) {
+        const result = assignTags(config.tagManifest, schemas, { acceptTags: config.acceptTags ?? false });
+        diagnostics.push(...result.diagnostics);
+        tagManifest = result.manifest;
+    } else {
+        stripTagHints(schemas);
+    }
+
     const ir: KeymaIR = {
-        irVersion: config.irVersion ?? "7.1.0",
+        irVersion: config.irVersion ?? (config.binaryTags === true ? "8.0.0" : "7.1.0"),
         compilerVersion: config.compilerVersion ?? "0.1.0",
         ...(config.baseDir !== undefined ? { sourceRoot: config.baseDir } : {}),
         schemas,
@@ -253,7 +280,7 @@ function compileProgram(program: ts.Program, config: FrontendConfig): CompileRes
     if (functionDeclarations.length > 0) ir.functionDeclarations = functionDeclarations;
     if (services.length > 0) ir.services = services;
 
-    return { ir, diagnostics };
+    return { ir, diagnostics, ...(tagManifest !== undefined ? { tagManifest } : {}) };
 }
 
 /**

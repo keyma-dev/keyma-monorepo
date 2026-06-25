@@ -17,6 +17,11 @@ export function createTsFrontend(cwd: string): KeymaFrontend {
                 files,
                 ...(config.baseDir !== undefined ? { baseDir: config.baseDir } : {}),
                 schemaPrefix: config.schemaPrefix,
+                // Binary tag manifest: forwarded as data (the CLI did the file I/O). The pure
+                // compile() runs the assignTags pass and returns the updated manifest.
+                ...(config.binary === true ? { binaryTags: true } : {}),
+                ...(config.tagManifest !== undefined ? { tagManifest: config.tagManifest } : {}),
+                ...(config.acceptTags === true ? { acceptTags: true } : {}),
             });
         },
     };

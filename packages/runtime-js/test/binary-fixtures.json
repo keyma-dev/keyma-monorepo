@@ -1,0 +1,471 @@
+{
+  "format": "keyma-binary",
+  "version": "1",
+  "fixtures": [
+    {
+      "name": "scalars-server",
+      "target": "server",
+      "schema": {
+        "name": "scalars",
+        "sourceName": "Scalars",
+        "fields": [
+          {
+            "name": "id",
+            "type": {
+              "kind": "id"
+            }
+          },
+          {
+            "name": "title",
+            "type": {
+              "kind": "string"
+            }
+          },
+          {
+            "name": "count",
+            "type": {
+              "kind": "integer"
+            }
+          },
+          {
+            "name": "negative",
+            "type": {
+              "kind": "integer"
+            }
+          },
+          {
+            "name": "size",
+            "type": {
+              "kind": "integer",
+              "unsigned": true
+            }
+          },
+          {
+            "name": "active",
+            "type": {
+              "kind": "boolean"
+            }
+          },
+          {
+            "name": "inactive",
+            "type": {
+              "kind": "boolean"
+            }
+          },
+          {
+            "name": "ratio",
+            "type": {
+              "kind": "number"
+            }
+          },
+          {
+            "name": "single",
+            "type": {
+              "kind": "number",
+              "bits": 32
+            }
+          },
+          {
+            "name": "created",
+            "type": {
+              "kind": "dateTime"
+            }
+          },
+          {
+            "name": "blob",
+            "type": {
+              "kind": "bytes"
+            }
+          },
+          {
+            "name": "status",
+            "type": {
+              "kind": "enum",
+              "values": [
+                "active",
+                "inactive"
+              ]
+            }
+          },
+          {
+            "name": "price",
+            "type": {
+              "kind": "decimal"
+            }
+          },
+          {
+            "name": "day",
+            "type": {
+              "kind": "date"
+            }
+          },
+          {
+            "name": "moment",
+            "type": {
+              "kind": "time"
+            }
+          },
+          {
+            "name": "big",
+            "type": {
+              "kind": "bigint"
+            }
+          }
+        ]
+      },
+      "record": {
+        "id": "u1",
+        "title": "héllo",
+        "count": 300,
+        "negative": -7,
+        "size": 4096,
+        "active": true,
+        "inactive": false,
+        "ratio": 3.5,
+        "single": 1.5,
+        "created": {
+          "$date": 1704164645000
+        },
+        "blob": {
+          "$bytes": "000102fdfeff"
+        },
+        "status": "active",
+        "price": "19.99",
+        "day": "2024-06-25",
+        "moment": "13:45:00",
+        "big": {
+          "$bigint": "9007199254740993"
+        }
+      },
+      "hex": "0a027531120668c3a96c6c6f18d804200d28802030013800410000000000000c404c0000c03f5090e2868299635a06000102fdfeff62066163746976656a0531392e3939720a323032342d30362d32357a0831333a34353a303080018280808080808020"
+    },
+    {
+      "name": "integer-widths",
+      "target": "server",
+      "schema": {
+        "name": "widths",
+        "sourceName": "Widths",
+        "fields": [
+          {
+            "name": "i8",
+            "type": {
+              "kind": "integer",
+              "bits": 8
+            }
+          },
+          {
+            "name": "i16",
+            "type": {
+              "kind": "integer",
+              "bits": 16
+            }
+          },
+          {
+            "name": "i32",
+            "type": {
+              "kind": "integer",
+              "bits": 32
+            }
+          },
+          {
+            "name": "i64",
+            "type": {
+              "kind": "integer",
+              "bits": 64
+            }
+          },
+          {
+            "name": "u8",
+            "type": {
+              "kind": "integer",
+              "bits": 8,
+              "unsigned": true
+            }
+          },
+          {
+            "name": "u16",
+            "type": {
+              "kind": "integer",
+              "bits": 16,
+              "unsigned": true
+            }
+          },
+          {
+            "name": "u32",
+            "type": {
+              "kind": "integer",
+              "bits": 32,
+              "unsigned": true
+            }
+          },
+          {
+            "name": "u64",
+            "type": {
+              "kind": "integer",
+              "bits": 64,
+              "unsigned": true
+            }
+          }
+        ]
+      },
+      "record": {
+        "i8": 42,
+        "i16": 42,
+        "i32": 42,
+        "i64": 42,
+        "u8": 42,
+        "u16": 42,
+        "u32": 42,
+        "u64": 42
+      },
+      "hex": "0854105418542054282a302a382a402a"
+    },
+    {
+      "name": "nullable-and-absent",
+      "target": "server",
+      "schema": {
+        "name": "optionals",
+        "sourceName": "Optionals",
+        "fields": [
+          {
+            "name": "id",
+            "type": {
+              "kind": "id"
+            }
+          },
+          {
+            "name": "present",
+            "type": {
+              "kind": "string"
+            },
+            "nullable": true,
+            "required": false
+          },
+          {
+            "name": "explicitNull",
+            "type": {
+              "kind": "string"
+            },
+            "nullable": true,
+            "required": false
+          },
+          {
+            "name": "absent",
+            "type": {
+              "kind": "string"
+            },
+            "nullable": true,
+            "required": false
+          }
+        ]
+      },
+      "record": {
+        "id": "x",
+        "present": "here",
+        "explicitNull": null
+      },
+      "hex": "0a01781204686572651b"
+    },
+    {
+      "name": "arrays",
+      "target": "server",
+      "schema": {
+        "name": "lists",
+        "sourceName": "Lists",
+        "fields": [
+          {
+            "name": "tags",
+            "type": {
+              "kind": "array",
+              "of": {
+                "kind": "string"
+              }
+            }
+          },
+          {
+            "name": "nums",
+            "type": {
+              "kind": "array",
+              "of": {
+                "kind": "integer"
+              }
+            }
+          },
+          {
+            "name": "empty",
+            "type": {
+              "kind": "array",
+              "of": {
+                "kind": "string"
+              }
+            }
+          },
+          {
+            "name": "sparse",
+            "type": {
+              "kind": "array",
+              "of": {
+                "kind": "string"
+              },
+              "elementNullable": true
+            }
+          }
+        ]
+      },
+      "record": {
+        "tags": [
+          "a",
+          "bb",
+          "ccc"
+        ],
+        "nums": [
+          1,
+          -2,
+          300
+        ],
+        "empty": [],
+        "sparse": [
+          "x",
+          null,
+          "z"
+        ]
+      },
+      "hex": "0a0d030201610202626202036363631208030002000300d8041a01002208030201780302017a"
+    },
+    {
+      "name": "references",
+      "target": "server",
+      "schema": {
+        "name": "refs",
+        "sourceName": "Refs",
+        "fields": [
+          {
+            "name": "author",
+            "type": {
+              "kind": "reference",
+              "schema": "User",
+              "idType": {
+                "kind": "id"
+              }
+            }
+          },
+          {
+            "name": "owner",
+            "type": {
+              "kind": "reference",
+              "schema": "Account",
+              "idType": {
+                "kind": "integer"
+              }
+            }
+          },
+          {
+            "name": "wrapped",
+            "type": {
+              "kind": "reference",
+              "schema": "User",
+              "idType": {
+                "kind": "string"
+              }
+            }
+          }
+        ]
+      },
+      "record": {
+        "author": "author-1",
+        "owner": 1234,
+        "wrapped": {
+          "id": "author-2"
+        }
+      },
+      "hex": "0a08617574686f722d3110a4131a08617574686f722d32"
+    },
+    {
+      "name": "embedded",
+      "target": "server",
+      "schema": {
+        "name": "outer",
+        "sourceName": "Outer",
+        "fields": [
+          {
+            "name": "id",
+            "type": {
+              "kind": "id"
+            }
+          },
+          {
+            "name": "address",
+            "type": {
+              "kind": "embedded",
+              "schema": "Address"
+            }
+          }
+        ]
+      },
+      "schemas": {
+        "Address": {
+          "name": "Address",
+          "sourceName": "Address",
+          "fields": [
+            {
+              "name": "street",
+              "type": {
+                "kind": "string"
+              }
+            },
+            {
+              "name": "zip",
+              "type": {
+                "kind": "string"
+              }
+            }
+          ]
+        }
+      },
+      "record": {
+        "id": "o1",
+        "address": {
+          "street": "1 Main",
+          "zip": "00000"
+        }
+      },
+      "hex": "0a026f31120f0a0631204d61696e12053030303030"
+    },
+    {
+      "name": "visibility-client",
+      "target": "client",
+      "schema": {
+        "name": "user",
+        "sourceName": "User",
+        "fields": [
+          {
+            "name": "id",
+            "type": {
+              "kind": "id"
+            }
+          },
+          {
+            "name": "email",
+            "type": {
+              "kind": "string"
+            }
+          },
+          {
+            "name": "secret",
+            "type": {
+              "kind": "string"
+            },
+            "visibility": "private",
+            "required": false
+          }
+        ]
+      },
+      "record": {
+        "id": "u1",
+        "email": "a@b.com",
+        "secret": "x"
+      },
+      "hex": "0a02753112076140622e636f6d"
+    }
+  ]
+}

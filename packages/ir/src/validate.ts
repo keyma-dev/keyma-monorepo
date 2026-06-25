@@ -166,6 +166,20 @@ function checkSchema(schema: unknown, path: string): IRValidationError[] {
         errors.push(e(`${path}.fields`, "must be an array"));
     } else {
         schema["fields"].forEach((f, i) => errors.push(...checkField(f, `${path}.fields[${i}]`)));
+        // Binary wire tags must be unique within a schema (decode keys by tag).
+        const seenTags = new Map<number, number>();
+        schema["fields"].forEach((f, i) => {
+            if (!isObj(f)) return;
+            const t = f["tag"];
+            if (isNum(t) && Number.isInteger(t)) {
+                const prev = seenTags.get(t);
+                if (prev !== undefined) {
+                    errors.push(e(`${path}.fields[${i}].tag`, `duplicate tag ${t} (also on fields[${prev}])`));
+                } else {
+                    seenTags.set(t, i);
+                }
+            }
+        });
     }
 
     if (!isArr(schema["indexes"])) {
@@ -244,6 +258,14 @@ function checkField(field: unknown, path: string): IRValidationError[] {
     if ("deprecated" in field && field["deprecated"] !== undefined
         && !isBool(field["deprecated"]) && !isStr(field["deprecated"])) {
         errors.push(e(`${path}.deprecated`, "must be a boolean or string when present"));
+    }
+    // Binary wire tag — a positive integer when present (structural backstop to the
+    // frontend's semantic assignTags checks). Per-schema uniqueness is checked in checkSchema.
+    if ("tag" in field && field["tag"] !== undefined) {
+        const t = field["tag"];
+        if (!isNum(t) || !Number.isInteger(t) || t < 1) {
+            errors.push(e(`${path}.tag`, "must be a positive integer when present"));
+        }
     }
 
     errors.push(...checkSourceLocation(field["source"], `${path}.source`));

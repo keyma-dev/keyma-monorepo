@@ -21,8 +21,9 @@ export async function drive(
     backends: KeymaBackend[]
 ): Promise<DriveResult> {
     // Step 1: run the frontend
-    const { ir, diagnostics: frontendDiags } = await frontend.compile(config);
+    const { ir, diagnostics: frontendDiags, tagManifest } = await frontend.compile(config);
     const allDiagnostics: IRDiagnostic[] = [...frontendDiags];
+    const manifestOut = tagManifest !== undefined ? { tagManifest } : {};
 
     // Step 2: validate IR structure
     const validation = validateIR(ir);
@@ -34,7 +35,7 @@ export async function drive(
 
     // Step 3: halt if there are errors
     if (allDiagnostics.some((d) => d.severity === "error")) {
-        return { ir, emitted: [], diagnostics: allDiagnostics, hasErrors: true };
+        return { ir, emitted: [], diagnostics: allDiagnostics, hasErrors: true, ...manifestOut };
     }
 
     // Step 4: run backends for each configured target
@@ -53,5 +54,5 @@ export async function drive(
     }
 
     const hasErrors = allDiagnostics.some((d) => d.severity === "error");
-    return { ir, emitted, diagnostics: allDiagnostics, hasErrors };
+    return { ir, emitted, diagnostics: allDiagnostics, hasErrors, ...manifestOut };
 }

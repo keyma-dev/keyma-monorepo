@@ -4,6 +4,7 @@ import { drive } from "@keyma/compiler";
 import type { KeymaIR, IRDiagnostic } from "@keyma/ir";
 import { createTsFrontend } from "../frontend.js";
 import { loadResolvedConfig } from "./build.js";
+import { readTagManifest } from "../tag-manifest.js";
 
 export type InspectOptions = {
     /** Project root. Defaults to cwd. */
@@ -26,8 +27,16 @@ export async function runInspect(opts: InspectOptions = {}): Promise<InspectResu
     const cwd = resolve(opts.cwd ?? process.cwd());
     const { config } = await loadResolvedConfig(cwd, opts.configPath);
 
+    // Read the committed tag manifest (binary projects) so the inspected IR carries tags.
+    let driveConfig = { ...config, targets: [] };
+    if (config.binary === true && config.tagManifestFile !== undefined) {
+        const abs = isAbsolute(config.tagManifestFile) ? config.tagManifestFile : join(cwd, config.tagManifestFile);
+        const existing = readTagManifest(abs);
+        if (existing !== undefined) driveConfig = { ...driveConfig, tagManifest: existing };
+    }
+
     // Drive with no backends — frontend + IR validation only.
-    const result = await drive({ ...config, targets: [] }, createTsFrontend(cwd), []);
+    const result = await drive(driveConfig, createTsFrontend(cwd), []);
 
     let writtenOut: string | undefined;
     if (opts.outFile !== undefined) {

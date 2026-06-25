@@ -67,6 +67,9 @@ function buildFieldData(field: IRField, opts: SchemaDataOptions): object {
     if (indexes.length > 0) base["indexes"] = indexes;
     if (field.ephemeral) base["ephemeral"] = true;
     if (field.default !== undefined && field.default.kind === "literal") base["default"] = field.default;
+    // Stable binary wire tag (present only when binary serialization is enabled). The dict
+    // key stays camelCase — it is the cross-language metadata contract shared with the JS runtime.
+    if (field.tag !== undefined) base["tag"] = field.tag;
 
     return base;
 }

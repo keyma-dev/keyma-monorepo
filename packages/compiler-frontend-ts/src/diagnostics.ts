@@ -87,3 +87,9 @@ export const KEYMA097 = "KEYMA097"; // Duplicate service name, or service name c
 // Numeric width errors
 export const KEYMA099 = "KEYMA099"; // Invalid numeric width: Integer/Unsigned<Bits> must be 8|16|32|64; Float<Bits> must be 32|64
 
+// Binary tag manifest errors (assignTags pass — see binary serialization)
+export const KEYMA100 = "KEYMA100"; // Field tag drift (suspected un-hinted rename) — re-run with --accept-tags, or add @RenamedFrom/@Tag
+export const KEYMA101 = "KEYMA101"; // @RenamedFrom("old") names a field absent from the committed manifest
+export const KEYMA102 = "KEYMA102"; // @Tag(n) invalid (must be a positive integer literal in range 1..2147483647)
+export const KEYMA103 = "KEYMA103"; // Duplicate/reused tag within a schema (incl. reusing a tombstoned tag)
+

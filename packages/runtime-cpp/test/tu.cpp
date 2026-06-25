@@ -3,6 +3,7 @@
 // intrinsic helpers). Compiled with `-std=c++23 -Iinclude -fsyntax-only` by
 // scripts/cpp-test.sh. Catches header rot at the source, independent of the backend.
 #include <keyma/runtime.hpp>
+#include <keyma/binary-typed.hpp>  // syntax-check the typed binary codec header standalone
 
 #include <cassert>
 #include <memory>

@@ -194,6 +194,32 @@ export function To(): PropertyDecorator {
     return () => undefined;
 }
 
+/**
+ * Pins a field's **stable binary wire tag** explicitly, overriding the
+ * compiler-auto-assigned tag from the committed manifest (`keyma.tags.json`). The
+ * escape hatch for full manual control: `@Tag(7) name: string`. `n` must be a
+ * positive integer literal in range (1 .. 2^31-1). The tag allocator routes around
+ * pinned tags. Used only when binary serialization is enabled.
+ *
+ * No-op at runtime — the decorator implementation does nothing.
+ */
+export function Tag(_n: number): PropertyDecorator {
+    return () => undefined;
+}
+
+/**
+ * Carries a field's **stable binary wire tag across a rename**: `@RenamedFrom("oldName")
+ * newName: string` moves the tag committed to `oldName` in the manifest onto `newName`
+ * (no tombstone, no drift error). The primary, reviewable mechanism for evolving a
+ * schema whose records are stored durably in binary. `oldName` must exist in the
+ * committed manifest for this schema. Used only when binary serialization is enabled.
+ *
+ * No-op at runtime — the decorator implementation does nothing.
+ */
+export function RenamedFrom(_oldName: string): PropertyDecorator {
+    return () => undefined;
+}
+
 export type ServiceOptions = {
     /** Service name used on the wire and as the generated class name. Defaults to the class name. */
     name?: string;

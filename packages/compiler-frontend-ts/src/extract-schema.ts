@@ -2,8 +2,9 @@ import ts from "typescript";
 import type {
     IRSchema, IRField, IRType, IRValidator, IRFormatter, IRFieldIndex, IRIndex, IRDiagnostic, IREdge, IRDefault, IRFormField, IRMethod,
 } from "@keyma/ir";
-import { mkError, mkWarning, KEYMA017, KEYMA019, KEYMA040, KEYMA061, KEYMA065, KEYMA066, KEYMA098 } from "./diagnostics.js";
-import { getLocation, isFromModule, stringLiteralValue } from "./util.js";
+import { mkError, mkWarning, KEYMA017, KEYMA019, KEYMA040, KEYMA061, KEYMA065, KEYMA066, KEYMA098, KEYMA102 } from "./diagnostics.js";
+import { getLocation, isFromModule, stringLiteralValue, numericLiteralValue } from "./util.js";
+import type { RawTaggedField } from "./assign-tags.js";
 import { mapTypeNode } from "./map-type.js";
 import { lowerValidateArgs, lowerFormatArgs, lowerIndexedArgs, lowerInitializerDefault, lowerFormFieldArg } from "./lower-decorator.js";
 import { lowerGetterBody } from "./lower-expression.js";
@@ -359,6 +360,10 @@ function extractField(
     let defaultValue: IRDefault | undefined;
     let form: IRFormField | undefined;
     let deprecated: boolean | string | undefined;
+    // Binary tag hints (consumed by the assignTags pass when binary is enabled; otherwise
+    // stripped). `tagPin` is an explicit @Tag(n); `renamedFrom` carries a tag across a rename.
+    let tagPin: number | undefined;
+    let renamedFrom: string | undefined;
 
     const lowerCtx = {
         checker: ctx.checker,
@@ -396,6 +401,24 @@ function extractField(
         } else if (decoName === "Deprecated") {
             const reasonNode = expr.arguments[0];
             deprecated = reasonNode !== undefined ? (stringLiteralValue(reasonNode) ?? true) : true;
+        } else if (decoName === "Tag") {
+            const arg = expr.arguments[0];
+            const n = arg !== undefined ? numericLiteralValue(arg) : undefined;
+            if (n === undefined || !Number.isInteger(n) || n < 1 || n > 2147483647) {
+                ctx.diagnostics.push(
+                    mkError(
+                        KEYMA102,
+                        `@Tag on field "${fieldName}" must be a positive integer literal in range 1..2147483647`,
+                        getLocation(prop, sf),
+                    ),
+                );
+            } else {
+                tagPin = n;
+            }
+        } else if (decoName === "RenamedFrom") {
+            const arg = expr.arguments[0];
+            const old = arg !== undefined ? stringLiteralValue(arg) : undefined;
+            if (old !== undefined && old !== "") renamedFrom = old;
         } else if (decoName === "From" || decoName === "To") {
             isEndpoint = true;
             const bucket = decoName === "From" ? ctx.endpoints?.fromFields : ctx.endpoints?.toFields;
@@ -436,6 +459,11 @@ function extractField(
     if (defaultValue !== undefined) field.default = defaultValue;
     if (form !== undefined) field.form = form;
     if (deprecated !== undefined) field.deprecated = deprecated;
+    // Stash the binary tag hints. `tag` (the @Tag pin) is a real IRField property; the
+    // assignTags pass reinterprets a pre-existing `tag` as a manual pin. `renamedFrom` is a
+    // frontend-transient property the pass consumes and deletes (never reaches the IR / backends).
+    if (tagPin !== undefined) field.tag = tagPin;
+    if (renamedFrom !== undefined) (field as RawTaggedField).renamedFrom = renamedFrom;
 
     return field;
 }

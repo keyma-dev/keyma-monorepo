@@ -50,6 +50,7 @@ export function resolveConfig(user: KeymaUserConfig): ResolvedConfig {
             ? user.source
             : [user.source];
 
+    const binary = user.binary === true;
     return {
         source,
         ...(user.baseDir !== undefined ? { baseDir: resolve(user.baseDir) } : {}),
@@ -57,5 +58,9 @@ export function resolveConfig(user: KeymaUserConfig): ResolvedConfig {
         ...(user.irOutFile !== undefined ? { irOutFile: user.irOutFile } : {}),
         schemaPrefix: user.schemaPrefix ?? "",
         targets: user.targets ?? [],
+        binary,
+        // Manifest location stays relative (like outDir/irOutFile) — the CLI absolutizes it
+        // against cwd at read/write time. Only meaningful when binary is enabled.
+        ...(binary ? { tagManifestFile: user.tagManifestFile ?? ".keyma/keyma.tags.json" } : {}),
     };
 }

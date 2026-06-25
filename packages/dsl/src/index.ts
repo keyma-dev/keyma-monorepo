@@ -35,6 +35,8 @@ export {
     Phase,
     FormField,
     Deprecated,
+    Tag,
+    RenamedFrom,
     Edge,
     From,
     To,

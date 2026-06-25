@@ -19,9 +19,11 @@ export function emitEnumClass(decl: IREnumDeclaration): string {
 /**
  * The `keyma::to_string`/`keyma::from_string` full specializations for one enum.
  * `qualifiedType` is the enum's fully-qualified C++ type (e.g.
- * `app::models::catalog::Status`).
+ * `app::models::catalog::Status`). When `binary` is set, also emits the
+ * `keyma::binary_traits<E>` leaf (string wire form), so the enum participates in the typed
+ * binary codec — gated so JSON-only output is byte-for-byte unchanged.
  */
-export function emitEnumConversions(decl: IREnumDeclaration, qualifiedType: string): string {
+export function emitEnumConversions(decl: IREnumDeclaration, qualifiedType: string, binary = false): string {
     const E = qualifiedType;
     const toCases = decl.members
         .map((m) => `case ${E}::${cppSanitizer(m.name)}: return ${JSON.stringify(m.value)};`)
@@ -29,6 +31,15 @@ export function emitEnumConversions(decl: IREnumDeclaration, qualifiedType: stri
     const fromIfs = decl.members
         .map((m) => `    if (s == ${JSON.stringify(m.value)}) return ${E}::${cppSanitizer(m.name)};`)
         .join("\n");
+    const binaryTraits = binary ? [
+        // binary_traits<E>: enums serialize as their wire string (WIRE_LENGTH), reusing the
+        // to_string/from_string specializations above — byte-identical to the dynamic Enum branch.
+        `template <> struct binary_traits<${E}> {`,
+        `    static constexpr std::uint8_t wiretype = keyma::binary_detail::WIRE_LENGTH;`,
+        `    static void encode_payload(keyma::ByteBuf& out, ${E} e, keyma::alloc_t) { keyma::binary_detail::write_len_str(out, keyma::to_string(e)); }`,
+        `    static ${E} decode_payload(keyma::binary_detail::Reader& r, std::uint8_t, keyma::alloc_t) { return keyma::from_string<${E}>(keyma::binary_detail::read_len_str(r)); }`,
+        `};`,
+    ] : [];
     return [
         `namespace keyma {`,
         `template <> inline std::string_view to_string<${E}>(${E} v) {`,
@@ -47,6 +58,7 @@ export function emitEnumConversions(decl: IREnumDeclaration, qualifiedType: stri
         `    }`,
         `    static keyma::Value to_value(${E} e, keyma::alloc_t a) { return keyma::Value(keyma::to_string(e), a); }`,
         `};`,
+        ...binaryTraits,
         `}  // namespace keyma`,
         // std::format support, so the enum can be interpolated in template literals.
         `template <>`,

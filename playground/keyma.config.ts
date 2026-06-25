@@ -2,7 +2,7 @@ import type { KeymaUserConfig } from "@keyma/compiler";
 
 const config: KeymaUserConfig = {
     source: "src/**/*.ts",
-    //schemaPrefix: "pg:",
+    binary: true,
     targets: [
         { language: "js", outDir: "dist/js" },
         { language: "python", outDir: "dist/python" },

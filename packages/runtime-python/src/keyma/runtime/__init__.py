@@ -35,6 +35,7 @@ from .format import format
 from .defaults import apply_defaults
 from .serialize import serialize
 from .deserialize import deserialize
+from .binary import encode_binary, decode_binary
 
 # ── Errors ─────────────────────────────────────────────────────────────────────
 from .errors import (
@@ -110,6 +111,8 @@ __all__ = [
     "apply_defaults",
     "serialize",
     "deserialize",
+    "encode_binary",
+    "decode_binary",
     # metadata types
     "SchemaMetadata",
     "FieldMetadata",
