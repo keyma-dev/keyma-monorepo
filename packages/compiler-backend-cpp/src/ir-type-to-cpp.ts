@@ -26,8 +26,12 @@ export function irTypeToCpp(
                 ? enumTypeByName?.get(type.name) ?? "std::pmr::string"
                 : "std::pmr::string";
         case "number":
-            return "double";
-        case "integer":
+            return type.bits === 32 ? "float" : "double";
+        case "integer": {
+            const w = type.bits ?? 64;
+            const s = type.unsigned ? "std::uint" : "std::int";
+            return `${s}${w}_t`; // std::int8_t … std::uint64_t
+        }
         case "bigint":
             return "std::int64_t";
         case "boolean":

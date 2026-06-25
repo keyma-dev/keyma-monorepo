@@ -1034,6 +1034,14 @@ inline Value to_value(const char* s, alloc_t a = {}) { return Value(s, a); }
 inline Value to_value(bool b, alloc_t a = {}) { return Value(b, a); }
 inline Value to_value(std::int64_t i, alloc_t a = {}) { return Value(i, a); }
 inline Value to_value(int i, alloc_t a = {}) { return Value(static_cast<std::int64_t>(i), a); }
+// Unsigned wide ints (Unsigned<32>/<64> members): unsigned int/long/long long have no
+// integral-promotion target, so a deduced keyma::to_value(u, a) — as emitted per-field by
+// the C++ backend's struct serializer — would be ambiguous across the int/int64_t/double
+// overloads. These exact-match overloads disambiguate. (uint8/uint16 already promote to
+// int, and signed sized ints / float resolve via the int / double overloads.)
+inline Value to_value(unsigned i, alloc_t a = {}) { return Value(static_cast<std::int64_t>(i), a); }
+inline Value to_value(unsigned long i, alloc_t a = {}) { return Value(static_cast<std::int64_t>(i), a); }
+inline Value to_value(unsigned long long i, alloc_t a = {}) { return Value(static_cast<std::int64_t>(i), a); }
 inline Value to_value(double d, alloc_t a = {}) { return Value(d, a); }
 inline Value to_value(DateTime t, alloc_t a = {}) { return Value(date_get_time(t), a); }
 inline Value to_value(const Value& v, alloc_t a = {}) { return Value(v, a); }
@@ -1143,6 +1151,42 @@ template <> struct value_traits<std::int64_t> {
 template <> struct value_traits<double> {
     static double from_value(const Value& v, alloc_t) { return v.is_number() ? v.as_double() : 0.0; }
     static Value to_value(double d, alloc_t a) { return Value(d, a); }
+};
+// Sized integer leaves (Integer<8|16|32>, Unsigned<8|16|32|64>). The Value variant only
+// stores int64_t + double, so these read through as_int() / write through int64_t — width
+// is a C++ member-type concern, not a wire concern. An out-of-range value truncates by
+// static_cast (no runtime range check), mirroring the unchecked behaviour of int64_t.
+template <> struct value_traits<std::int8_t> {
+    static std::int8_t from_value(const Value& v, alloc_t) { return v.is_number() ? static_cast<std::int8_t>(v.as_int()) : std::int8_t{0}; }
+    static Value to_value(std::int8_t i, alloc_t a) { return Value(static_cast<std::int64_t>(i), a); }
+};
+template <> struct value_traits<std::int16_t> {
+    static std::int16_t from_value(const Value& v, alloc_t) { return v.is_number() ? static_cast<std::int16_t>(v.as_int()) : std::int16_t{0}; }
+    static Value to_value(std::int16_t i, alloc_t a) { return Value(static_cast<std::int64_t>(i), a); }
+};
+template <> struct value_traits<std::int32_t> {
+    static std::int32_t from_value(const Value& v, alloc_t) { return v.is_number() ? static_cast<std::int32_t>(v.as_int()) : std::int32_t{0}; }
+    static Value to_value(std::int32_t i, alloc_t a) { return Value(static_cast<std::int64_t>(i), a); }
+};
+template <> struct value_traits<std::uint8_t> {
+    static std::uint8_t from_value(const Value& v, alloc_t) { return v.is_number() ? static_cast<std::uint8_t>(v.as_int()) : std::uint8_t{0}; }
+    static Value to_value(std::uint8_t i, alloc_t a) { return Value(static_cast<std::int64_t>(i), a); }
+};
+template <> struct value_traits<std::uint16_t> {
+    static std::uint16_t from_value(const Value& v, alloc_t) { return v.is_number() ? static_cast<std::uint16_t>(v.as_int()) : std::uint16_t{0}; }
+    static Value to_value(std::uint16_t i, alloc_t a) { return Value(static_cast<std::int64_t>(i), a); }
+};
+template <> struct value_traits<std::uint32_t> {
+    static std::uint32_t from_value(const Value& v, alloc_t) { return v.is_number() ? static_cast<std::uint32_t>(v.as_int()) : std::uint32_t{0}; }
+    static Value to_value(std::uint32_t i, alloc_t a) { return Value(static_cast<std::int64_t>(i), a); }
+};
+template <> struct value_traits<std::uint64_t> {
+    static std::uint64_t from_value(const Value& v, alloc_t) { return v.is_number() ? static_cast<std::uint64_t>(v.as_int()) : std::uint64_t{0}; }
+    static Value to_value(std::uint64_t i, alloc_t a) { return Value(static_cast<std::int64_t>(i), a); }
+};
+template <> struct value_traits<float> {
+    static float from_value(const Value& v, alloc_t) { return v.is_number() ? static_cast<float>(v.as_double()) : 0.0f; }
+    static Value to_value(float f, alloc_t a) { return Value(static_cast<double>(f), a); }
 };
 template <> struct value_traits<DateTime> {
     // is_number (not is_int): an epoch-ms that arrived as a double still converts.

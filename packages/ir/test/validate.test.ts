@@ -117,6 +117,42 @@ describe("validateIR", () => {
         }
     });
 
+    it("accepts numeric kinds with valid bits/unsigned metadata", () => {
+        const validTypes = [
+            { kind: "integer", bits: 8, unsigned: true },
+            { kind: "integer", bits: 16 },
+            { kind: "integer", bits: 64 },
+            { kind: "integer", unsigned: true },
+            { kind: "number", bits: 32 },
+            { kind: "number", bits: 64 },
+        ];
+        for (const type of validTypes) {
+            const doc = {
+                ...goldenIR,
+                schemas: [{ ...minimalSchema, fields: [{ ...minimalField, type }] }],
+            };
+            const result = validateIR(doc);
+            assert.equal(result.valid, true, `Expected valid for ${JSON.stringify(type)}, got: ${JSON.stringify(result.errors)}`);
+        }
+    });
+
+    it("rejects numeric kinds with invalid bits/unsigned metadata", () => {
+        const invalidTypes = [
+            { kind: "integer", bits: 7 },
+            { kind: "integer", bits: 128 },
+            { kind: "number", bits: 8 },   // 8/16 are not valid float widths
+            { kind: "number", bits: 16 },
+            { kind: "integer", unsigned: "yes" },
+        ];
+        for (const type of invalidTypes) {
+            const doc = {
+                ...goldenIR,
+                schemas: [{ ...minimalSchema, fields: [{ ...minimalField, type }] }],
+            };
+            assert.equal(validateIR(doc).valid, false, `Expected invalid for ${JSON.stringify(type)}`);
+        }
+    });
+
     it("accepts enum type with values", () => {
         const doc = {
             ...goldenIR,

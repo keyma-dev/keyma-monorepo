@@ -2,8 +2,8 @@
 
 export type FieldType =
     | { kind: "string" }
-    | { kind: "number" }
-    | { kind: "integer" }
+    | { kind: "number"; bits?: 32 | 64 }
+    | { kind: "integer"; bits?: 8 | 16 | 32 | 64; unsigned?: boolean }
     | { kind: "bigint" }
     | { kind: "boolean" }
     | { kind: "decimal" }

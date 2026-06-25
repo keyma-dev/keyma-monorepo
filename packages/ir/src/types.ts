@@ -13,8 +13,10 @@ export type IRDiagnostic = {
 
 export type IRType =
     | { kind: "string" }
-    | { kind: "number" }
-    | { kind: "integer" }
+    /** Floating point. `bits` omitted => 64 (double); 32 => single (float). */
+    | { kind: "number"; bits?: 32 | 64 }
+    /** Integer. `bits` omitted => 64, `unsigned` omitted => signed. */
+    | { kind: "integer"; bits?: 8 | 16 | 32 | 64; unsigned?: boolean }
     | { kind: "bigint" }
     | { kind: "decimal" }
     | { kind: "boolean" }

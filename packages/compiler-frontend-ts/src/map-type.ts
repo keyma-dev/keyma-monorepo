@@ -1,6 +1,6 @@
 import ts from "typescript";
 import type { IRType, IRDiagnostic } from "@keyma/ir";
-import { mkError, KEYMA010, KEYMA024, KEYMA025, KEYMA050, KEYMA071 } from "./diagnostics.js";
+import { mkError, KEYMA010, KEYMA024, KEYMA025, KEYMA050, KEYMA071, KEYMA099 } from "./diagnostics.js";
 import { getLocation, isFromModule, entityNameText } from "./util.js";
 import type { EnumInfo } from "./discover-enums.js";
 
@@ -240,6 +240,27 @@ function mapTypeReference(node: ts.TypeReferenceNode, ctx: TypeMapContext): MapT
             return mapSchemaReference(arg, "embedded", ctx);
         }
 
+        // Width-templated numerics: Integer<Bits>/Unsigned<Bits> → integer,
+        // Float<Bits> → number. `bits` is omitted when it equals the default (64),
+        // keeping pre-width IR documents valid.
+        if (name === "Integer" || name === "Unsigned") {
+            const bits = readWidthArg(node, typeArgs, name, [8, 16, 32, 64] as const, 64, ctx);
+            if (typeof bits !== "number") return bits;
+            return {
+                type: {
+                    kind: "integer",
+                    ...(bits !== 64 ? { bits } : {}),
+                    ...(name === "Unsigned" ? { unsigned: true } : {}),
+                },
+            };
+        }
+
+        if (name === "Float") {
+            const bits = readWidthArg(node, typeArgs, name, [32, 64] as const, 64, ctx);
+            if (typeof bits !== "number") return bits;
+            return { type: { kind: "number", ...(bits !== 64 ? { bits } : {}) } };
+        }
+
         return fail(node, ctx, `unknown DSL type "${name}"`);
     }
 
@@ -293,6 +314,34 @@ function mapSchemaReference(
         );
     }
     return { type: { kind, schema: schemaName } };
+}
+
+/**
+ * Read a numeric-width type argument (`Integer<8>`, `Float<32>`, …). Returns the
+ * validated width as a literal, the default when no argument is supplied, or a
+ * `KEYMA099` diagnostic when the argument isn't one of the allowed widths.
+ */
+function readWidthArg<W extends number>(
+    node: ts.TypeReferenceNode,
+    typeArgs: ts.NodeArray<ts.TypeNode> | undefined,
+    name: string,
+    allowed: readonly W[],
+    dflt: W,
+    ctx: TypeMapContext,
+): W | { diag: IRDiagnostic } {
+    if (!typeArgs || typeArgs.length === 0) return dflt;
+    const arg = typeArgs[0];
+    if (arg && ts.isLiteralTypeNode(arg) && ts.isNumericLiteral(arg.literal)) {
+        const n = Number(arg.literal.text) as W;
+        if (allowed.includes(n)) return n;
+    }
+    return {
+        diag: mkError(
+            KEYMA099,
+            `${name}<Bits> width must be one of ${allowed.join(", ")}`,
+            getLocation(node, ctx.sourceFile),
+        ),
+    };
 }
 
 function fail(node: ts.Node, ctx: TypeMapContext, detail: string): { diag: IRDiagnostic } {

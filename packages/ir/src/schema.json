@@ -177,8 +177,8 @@
     "IRType": {
       "oneOf": [
         { "type": "object", "required": ["kind"], "properties": { "kind": { "const": "string" } }, "additionalProperties": false },
-        { "type": "object", "required": ["kind"], "properties": { "kind": { "const": "number" } }, "additionalProperties": false },
-        { "type": "object", "required": ["kind"], "properties": { "kind": { "const": "integer" } }, "additionalProperties": false },
+        { "type": "object", "required": ["kind"], "properties": { "kind": { "const": "number" }, "bits": { "enum": [32, 64] } }, "additionalProperties": false },
+        { "type": "object", "required": ["kind"], "properties": { "kind": { "const": "integer" }, "bits": { "enum": [8, 16, 32, 64] }, "unsigned": { "type": "boolean" } }, "additionalProperties": false },
         { "type": "object", "required": ["kind"], "properties": { "kind": { "const": "bigint" } }, "additionalProperties": false },
         { "type": "object", "required": ["kind"], "properties": { "kind": { "const": "decimal" } }, "additionalProperties": false },
         { "type": "object", "required": ["kind"], "properties": { "kind": { "const": "boolean" } }, "additionalProperties": false },

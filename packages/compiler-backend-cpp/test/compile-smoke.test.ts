@@ -6,6 +6,7 @@ import { tmpdir } from "node:os";
 import { join, dirname } from "node:path";
 import { fileURLToPath } from "node:url";
 import type { ResolvedConfig } from "@keyma/compiler";
+import type { KeymaIR, IRField, IRType } from "@keyma/ir";
 import { emitCpp } from "../src/backend.js";
 import { sampleIR } from "./fixtures.js";
 
@@ -176,6 +177,84 @@ describe("compile-smoke — generated C++ compiles under -std=c++23", () => {
         } catch (err) {
             const e = err as { stderr?: Buffer; message?: string };
             assert.fail(`vendored C++ failed to compile:\n${e.stderr?.toString() ?? e.message ?? err}`);
+        } finally {
+            rmSync(dir, { recursive: true, force: true });
+        }
+    });
+
+    // A schema with sized signed/unsigned ints + float proves the generated struct's
+    // per-field `keyma::to_value(member, a)` (deduced) and `from_value<MemberType>` resolve
+    // and run — including the wide-unsigned (uint32/uint64) path that has no integral
+    // promotion target and needs the runtime's unsigned to_value overloads to disambiguate.
+    it("sized/unsigned/float fields compile and round-trip through generated from_value/to_value", async (t) => {
+        if (cxx === null) {
+            t.skip("no C++23 compiler found (set KEYMA_CXX to enable)");
+            return;
+        }
+        const loc = { file: "/proj/src/metrics.ts", line: 1, column: 1 };
+        const f = (name: string, type: IRType): IRField => ({
+            name, type, visibility: "public", readonly: false, required: true,
+            validators: [], formatters: [], indexes: [], source: loc,
+        });
+        const ir: KeymaIR = {
+            irVersion: "7.1.0", compilerVersion: "0.1.0", sourceRoot: "/proj/src",
+            schemas: [{
+                id: "Metrics", name: "metrics", sourceName: "Metrics", visibility: "public",
+                fields: [
+                    f("id", { kind: "id" }),
+                    f("i8", { kind: "integer", bits: 8 }),
+                    f("i32", { kind: "integer", bits: 32 }),
+                    f("big", { kind: "integer" }),
+                    f("u32", { kind: "integer", bits: 32, unsigned: true }),
+                    f("u64", { kind: "integer", unsigned: true }),
+                    f("f32", { kind: "number", bits: 32 }),
+                    f("f64", { kind: "number" }),
+                ],
+                indexes: [], source: loc,
+            }],
+            validatorDeclarations: [], formatterDeclarations: [], functionDeclarations: [],
+            enums: [], diagnostics: [],
+        };
+        const consumer = `#include "index.hpp"
+#include <cassert>
+namespace m = app::models::metrics;
+int main() {
+    std::pmr::monotonic_buffer_resource pool;
+    keyma::Value::allocator_type a{&pool};
+    keyma::Value rec = keyma::Value::object(a);
+    rec.set("id", keyma::Value(std::string_view{"m-1"}, a));
+    rec.set("i8", keyma::Value(std::int64_t{-5}, a));
+    rec.set("i32", keyma::Value(std::int64_t{-2000000000}, a));
+    rec.set("big", keyma::Value(std::int64_t{9000000000}, a));
+    rec.set("u32", keyma::Value(std::int64_t{4000000000}, a));
+    rec.set("u64", keyma::Value(std::int64_t{9000000000}, a));
+    rec.set("f32", keyma::Value(double{0.5}, a));
+    rec.set("f64", keyma::Value(double{1.25}, a));
+    m::Metrics x = m::Metrics::from_value(rec, a);
+    assert(x.i8 == -5 && x.i32 == -2000000000 && x.big == 9000000000);
+    assert(x.u32 == 4000000000u && x.u64 == 9000000000ull);
+    assert(x.f32 == 0.5f && x.f64 == 1.25);
+    keyma::Value back = x.to_value(a);   // deduced keyma::to_value(member, a) per field
+    assert(back.at("u32").as_int() == 4000000000);
+    assert(back.at("u64").as_int() == 9000000000);
+    assert(back.at("f32").as_double() == 0.5);
+    return 0;
+}`;
+        const dir = mkdtempSync(join(tmpdir(), "keyma-cpp-nums-"));
+        try {
+            const { files } = await emitCpp(ir, { language: "cpp", outDir: "out", library: true }, {} as ResolvedConfig);
+            for (const file of files) {
+                const p = join(dir, file.path);
+                mkdirSync(dirname(p), { recursive: true });
+                writeFileSync(p, file.content);
+            }
+            const root = join(dir, "out");
+            const main = join(dir, "main.cpp");
+            writeFileSync(main, consumer);
+            execFileSync(cxx, ["-std=c++23", "-I", root, "-I", RUNTIME_INC, "-fsyntax-only", main], { stdio: ["ignore", "ignore", "pipe"] });
+        } catch (err) {
+            const e = err as { stderr?: Buffer; message?: string };
+            assert.fail(`generated sized-numeric C++ failed to compile:\n${e.stderr?.toString() ?? e.message ?? err}`);
         } finally {
             rmSync(dir, { recursive: true, force: true });
         }

@@ -391,7 +391,12 @@ describe("irTypeToTs", () => {
     const cases: [IRType, string][] = [
         [{ kind: "string" }, "string"],
         [{ kind: "number" }, "number"],
+        [{ kind: "number", bits: 32 }, "number"],          // width has no JS representation
+        [{ kind: "number", bits: 64 }, "number"],
         [{ kind: "integer" }, "number"],
+        [{ kind: "integer", bits: 8 }, "number"],
+        [{ kind: "integer", bits: 32, unsigned: true }, "number"],
+        [{ kind: "integer", unsigned: true }, "number"],
         [{ kind: "bigint" }, "bigint"],
         [{ kind: "boolean" }, "boolean"],
         [{ kind: "decimal" }, "string"],

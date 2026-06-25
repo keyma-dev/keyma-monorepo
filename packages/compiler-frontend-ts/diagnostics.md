@@ -533,3 +533,17 @@ the schema public, or the service/method private.
 
 Two services resolve to the same name, or a service name collides with a schema name.
 Service names double as generated class names and must be unique across the program.
+
+## Numeric width errors
+
+### KEYMA099 — invalid numeric width
+
+A width-templated numeric type was given a bit width outside its allowed set:
+`Integer<Bits>`/`Unsigned<Bits>` accept `8 | 16 | 32 | 64`, and `Float<Bits>` accepts
+`32 | 64`. The width argument must be a numeric literal in that set.
+
+```ts
+declare count: Unsigned<7>;   // KEYMA099 — 7 is not 8|16|32|64
+declare ratio: Float<16>;     // KEYMA099 — 16 is not 32|64
+declare ok: Integer<32>;      // fine
+```

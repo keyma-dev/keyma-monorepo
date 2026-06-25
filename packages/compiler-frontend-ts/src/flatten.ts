@@ -157,6 +157,16 @@ function typesCompatible(parent: IRType, child: IRType): boolean {
         if (!(parent.elementNullable ?? false) && (child.elementNullable ?? false)) return false;
         return typesCompatible(parent.of, child.of);
     }
+    if (parent.kind === "integer" && child.kind === "integer") {
+        // Signedness must match; the override may only narrow the width
+        // (a narrower int fits inside a wider one). Omitted bits => 64.
+        if ((parent.unsigned ?? false) !== (child.unsigned ?? false)) return false;
+        return (child.bits ?? 64) <= (parent.bits ?? 64);
+    }
+    if (parent.kind === "number" && child.kind === "number") {
+        // The override may only narrow the float width (Float<64> ⊇ Float<32>).
+        return (child.bits ?? 64) <= (parent.bits ?? 64);
+    }
     return true;
 }
 

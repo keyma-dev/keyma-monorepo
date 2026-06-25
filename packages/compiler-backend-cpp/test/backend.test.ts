@@ -1,6 +1,7 @@
 import { describe, it } from "node:test";
 import assert from "node:assert/strict";
 import type { ResolvedConfig } from "@keyma/compiler";
+import type { KeymaIR, IRField, IRType } from "@keyma/ir";
 import { emitCpp, cppBackend } from "../src/backend.js";
 import { emitSupportHpp } from "../src/emit-support.js";
 import { sampleIR, fileBySuffix } from "./fixtures.js";
@@ -254,6 +255,48 @@ describe("emitCpp — vendorRuntime (zero-dependency drop)", async () => {
         const u = fileBySuffix(files, "models/user.hpp");
         assert.ok(u.includes('#include "keyma_runtime.hpp"'));
         assert.ok(!u.includes("#include <keyma/runtime.hpp>"), "angle-bracket runtime include leaked in vendor mode");
+    });
+});
+
+describe("emitCpp — sized numeric member types", async () => {
+    const loc = { file: "/proj/src/nums.ts", line: 1, column: 1 };
+    const f = (name: string, type: IRType): IRField => ({
+        name, type, visibility: "public", readonly: false, required: true,
+        validators: [], formatters: [], indexes: [], source: loc,
+    });
+    const ir: KeymaIR = {
+        irVersion: "7.1.0", compilerVersion: "0.1.0", sourceRoot: "/proj/src",
+        schemas: [{
+            id: "Nums", name: "nums", sourceName: "Nums", visibility: "public",
+            fields: [
+                f("i8", { kind: "integer", bits: 8 }),
+                f("i16", { kind: "integer", bits: 16 }),
+                f("i32", { kind: "integer", bits: 32 }),
+                f("big", { kind: "integer" }),                              // 64 default
+                f("u8", { kind: "integer", bits: 8, unsigned: true }),
+                f("u32", { kind: "integer", bits: 32, unsigned: true }),
+                f("u64", { kind: "integer", unsigned: true }),             // 64 default
+                f("f32", { kind: "number", bits: 32 }),
+                f("f64", { kind: "number" }),                              // 64 default
+            ],
+            indexes: [], source: loc,
+        }],
+        validatorDeclarations: [], formatterDeclarations: [], functionDeclarations: [],
+        enums: [], diagnostics: [],
+    };
+    const { files } = await emitCpp(ir, { language: "cpp", outDir: "out", library: true }, CFG);
+
+    it("emits sized signed/unsigned ints and float/double struct members", () => {
+        const m = fileBySuffix(files, "models/nums.hpp");
+        assert.ok(m.includes("std::int8_t i8;"), m);
+        assert.ok(m.includes("std::int16_t i16;"));
+        assert.ok(m.includes("std::int32_t i32;"));
+        assert.ok(m.includes("std::int64_t big;"));
+        assert.ok(m.includes("std::uint8_t u8;"));
+        assert.ok(m.includes("std::uint32_t u32;"));
+        assert.ok(m.includes("std::uint64_t u64;"));
+        assert.ok(m.includes("float f32;"));
+        assert.ok(m.includes("double f64;"));
     });
 });
 

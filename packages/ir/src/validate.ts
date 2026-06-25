@@ -292,6 +292,21 @@ function checkType(type: unknown, path: string): IRValidationError[] {
 
     const kind = type["kind"];
 
+    // Numeric scalars carry optional width/sign metadata; validate it before the
+    // generic scalar short-circuit below. Omitted `bits` means 64; omitted
+    // `unsigned` means signed. `unsigned` applies to integers only.
+    if (kind === "number" || kind === "integer") {
+        const errors: IRValidationError[] = [];
+        const allowedBits = kind === "number" ? [32, 64] : [8, 16, 32, 64];
+        if ("bits" in type && type["bits"] !== undefined && !allowedBits.includes(type["bits"] as number)) {
+            errors.push(e(`${path}.bits`, `must be one of ${allowedBits.join(", ")} when present`));
+        }
+        if (kind === "integer" && "unsigned" in type && type["unsigned"] !== undefined && !isBool(type["unsigned"])) {
+            errors.push(e(`${path}.unsigned`, "must be a boolean when present"));
+        }
+        return errors;
+    }
+
     if (SCALAR_TYPE_KINDS.has(kind)) return [];
 
     switch (kind) {

@@ -77,6 +77,28 @@ export type TimeOfDay = Brand<string, "TimeOfDay">;
 export type Decimal = Brand<string, "Decimal">;
 
 /**
+ * Signed integer. `Bits` ∈ 8 | 16 | 32 | 64 (default 64).
+ * Maps to IR type `{ kind: "integer", bits }` (`bits` omitted when 64).
+ * Width is honored in C++ (`std::int8_t`…`int64_t`); JS sees `number`, Python `int`.
+ * A literal default (`q: Integer = 0`) needs `declare`/a cast, like other branded types.
+ */
+export type Integer<Bits extends 8 | 16 | 32 | 64 = 64> = Brand<number, `Integer${Bits}`>;
+
+/**
+ * Unsigned integer. `Bits` ∈ 8 | 16 | 32 | 64 (default 64).
+ * Maps to IR type `{ kind: "integer", bits, unsigned: true }` (`bits` omitted when 64).
+ * Width is honored in C++ (`std::uint8_t`…`uint64_t`); JS sees `number`, Python `int`.
+ */
+export type Unsigned<Bits extends 8 | 16 | 32 | 64 = 64> = Brand<number, `Unsigned${Bits}`>;
+
+/**
+ * Floating point. `Bits` ∈ 32 | 64 (default 64).
+ * Maps to IR type `{ kind: "number", bits }` (`bits` omitted when 64).
+ * Width is honored in C++ (`float` / `double`); JS sees `number`, Python `float`.
+ */
+export type Float<Bits extends 32 | 64 = 64> = Brand<number, `Float${Bits}`>;
+
+/**
  * Arbitrary JSON value (array, object, number, boolean, string).
  * Maps to IR type `{ kind: "json" }`.
  */

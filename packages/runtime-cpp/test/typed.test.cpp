@@ -443,11 +443,75 @@ static void test_bytes_roundtrip(alloc_t a) {
     assert(keyma::from_value<Bytes>(Value(std::string_view("AQ=="), a), a) == one);
 }
 
+// ─── sized numeric leaves: int8/16/32, uint8/16/32/64, float round-trip ───────────────
+// The Value variant only stores int64_t + double, so the sized value_traits specializations
+// must marshal each member type through that storage and back without loss (within range).
+static void test_sized_numeric_roundtrip(alloc_t a) {
+    // Signed sized integers round-trip through the int64_t storage.
+    {
+        std::int8_t i = -7;
+        assert(keyma::from_value<std::int8_t>(keyma::to_value(i, a), a) == i);
+        std::int16_t j = -30000;
+        assert(keyma::from_value<std::int16_t>(keyma::to_value(j, a), a) == j);
+        std::int32_t k = -2000000000;
+        assert(keyma::from_value<std::int32_t>(keyma::to_value(k, a), a) == k);
+    }
+    // Unsigned sized integers (incl. uint64 below INT64_MAX) round-trip likewise.
+    {
+        std::uint8_t i = 200;
+        assert(keyma::from_value<std::uint8_t>(keyma::to_value(i, a), a) == i);
+        std::uint16_t j = 60000;
+        assert(keyma::from_value<std::uint16_t>(keyma::to_value(j, a), a) == j);
+        std::uint32_t k = 4000000000u;
+        assert(keyma::from_value<std::uint32_t>(keyma::to_value(k, a), a) == k);
+        std::uint64_t big = 9000000000ull;  // > uint32 range, < INT64_MAX
+        assert(keyma::from_value<std::uint64_t>(keyma::to_value(big, a), a) == big);
+    }
+    // float goes through the double storage; 0.5/1.5 are exactly representable in both.
+    {
+        float f = 1.5f;
+        Value v = keyma::to_value(f, a);
+        assert(v.is_number());
+        assert(keyma::from_value<float>(v, a) == f);
+    }
+    // to_value writes through the int64/double slots of Value.
+    assert(keyma::to_value(std::uint16_t{42}, a).as_int() == 42);
+    assert(keyma::to_value(float{2.0f}, a).as_double() == 2.0);
+
+    // A struct with sized + float members round-trips field-by-field (mirrors emitStruct).
+    struct Sized {
+        std::int8_t i8;
+        std::uint32_t u32;
+        std::int64_t big;
+        float ratio;
+    };
+    Sized s{.i8 = -5, .u32 = 123456u, .big = 9000000000ll, .ratio = 0.5f};
+    Value obj = Value::object(a);
+    obj.set("i8", keyma::to_value(s.i8, a));
+    obj.set("u32", keyma::to_value(s.u32, a));
+    obj.set("big", keyma::to_value(s.big, a));
+    obj.set("ratio", keyma::to_value(s.ratio, a));
+    Sized r{
+        .i8 = keyma::from_value<std::int8_t>(obj.at("i8"), a),
+        .u32 = keyma::from_value<std::uint32_t>(obj.at("u32"), a),
+        .big = keyma::from_value<std::int64_t>(obj.at("big"), a),
+        .ratio = keyma::from_value<float>(obj.at("ratio"), a),
+    };
+    assert(r.i8 == s.i8 && r.u32 == s.u32 && r.big == s.big && r.ratio == s.ratio);
+
+    // Full JSON wire round-trip survives the sized leaves.
+    std::pmr::string json = json_stringify(obj, a);
+    Value parsed = json_parse(json, a);
+    assert(keyma::from_value<std::uint32_t>(parsed.at("u32"), a) == s.u32);
+    assert(keyma::from_value<float>(parsed.at("ratio"), a) == s.ratio);
+}
+
 int main() {
     std::pmr::monotonic_buffer_resource pool;
     alloc_t a{&pool};
     test_where_lowering(a);
     test_send(a);
     test_bytes_roundtrip(a);
+    test_sized_numeric_roundtrip(a);
     return 0;
 }

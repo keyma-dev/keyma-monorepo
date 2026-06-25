@@ -84,3 +84,6 @@ export const KEYMA095 = "KEYMA095"; // @Service combined with @Schema/@Edge on t
 export const KEYMA096 = "KEYMA096"; // Public service method exposes a private schema via a parameter/return type
 export const KEYMA097 = "KEYMA097"; // Duplicate service name, or service name collides with a schema name
 
+// Numeric width errors
+export const KEYMA099 = "KEYMA099"; // Invalid numeric width: Integer/Unsigned<Bits> must be 8|16|32|64; Float<Bits> must be 32|64
+

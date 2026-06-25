@@ -118,6 +118,9 @@ Key authoring rules:
 | `DateTime` | `{ kind: "dateTime" }` | Instant (wire: epoch-ms `int64`) |
 | `TimeOfDay` | `{ kind: "time" }` | Time of day (HH:MM:SS) |
 | `Decimal` | `{ kind: "decimal" }` | Arbitrary-precision decimal |
+| `Integer<Bits=64>` | `{ kind: "integer", bits }` | Signed integer; `Bits` ∈ 8 \| 16 \| 32 \| 64 |
+| `Unsigned<Bits=64>` | `{ kind: "integer", bits, unsigned: true }` | Unsigned integer; `Bits` ∈ 8 \| 16 \| 32 \| 64 |
+| `Float<Bits=64>` | `{ kind: "number", bits }` | Floating point; `Bits` ∈ 32 \| 64 |
 | `Json` | `{ kind: "json" }` | Arbitrary JSON value |
 | `Bytes` | `{ kind: "bytes" }` | Binary blob (wire: base64 string) |
 | `Nullable<T>` | field flag `nullable: true` | Value may be `null` (orthogonal to optionality) |
@@ -125,6 +128,8 @@ Key authoring rules:
 | `Embedded<T>` | `{ kind: "embedded", schema }` | Inline sub-document |
 
 > `Nullable<T>` is a field-level boolean in the IR, not a type wrapper, so a value may be both optional (`?`) and nullable. Bare `@Schema` class fields are rejected — always write `Reference<T>` or `Embedded<T>`.
+
+> **Numeric width** is honored only where the target language has sized numerics: C++ emits `std::int8_t`…`int64_t` / `std::uint8_t`…`uint64_t` / `float` / `double`. JS sees plain `number` and Python sees `int`/`float` regardless of width — there is no runtime range enforcement (an out-of-range value truncates in C++ and is unchecked elsewhere). `bits` is omitted from the IR when it equals the default, so `Integer` ≡ `Integer<64>` (signed) and `Float` ≡ `Float<64>`. Like other branded numeric aliases, a literal default needs `declare` or a cast: `declare count: Unsigned<32>;` or `count = 0 as unknown as Unsigned<32>`.
 
 ### Built-in validators & formatters
 

@@ -237,7 +237,7 @@ function compileProgram(program: ts.Program, config: FrontendConfig): CompileRes
     normalizeSchemaNames(schemas, services, config.schemaPrefix ?? "");
 
     const ir: KeymaIR = {
-        irVersion: config.irVersion ?? "7.0.0",
+        irVersion: config.irVersion ?? "7.1.0",
         compilerVersion: config.compilerVersion ?? "0.1.0",
         ...(config.baseDir !== undefined ? { sourceRoot: config.baseDir } : {}),
         schemas,

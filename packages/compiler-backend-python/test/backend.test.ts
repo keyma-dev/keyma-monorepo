@@ -222,6 +222,14 @@ describe("irTypeToPython", () => {
         assert.equal(irTypeToPython({ kind: "boolean" }), "bool");
     });
 
+    it("ignores numeric width/sign — Python int/float are width-agnostic", () => {
+        assert.equal(irTypeToPython({ kind: "integer", bits: 8 }), "int");
+        assert.equal(irTypeToPython({ kind: "integer", bits: 32, unsigned: true }), "int");
+        assert.equal(irTypeToPython({ kind: "integer", unsigned: true }), "int");
+        assert.equal(irTypeToPython({ kind: "number", bits: 32 }), "float");
+        assert.equal(irTypeToPython({ kind: "number", bits: 64 }), "float");
+    });
+
     it("maps reference to the schema name", () => {
         assert.equal(irTypeToPython({ kind: "reference", schema: "User" }), "User");
     });
