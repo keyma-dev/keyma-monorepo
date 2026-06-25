@@ -1,4 +1,5 @@
 import type { IRSchema, IRField, IRValidatorDeclaration, IRFormatterDeclaration } from "@keyma/ir";
+import { filterVisibleFields } from "@keyma/compiler-util";
 import { typeTag } from "./ir-type-to-cpp.js";
 import { buildFactoryCall } from "./emit-validators.js";
 
@@ -26,7 +27,7 @@ const PHASE: Record<string, string> = { change: "Change", blur: "Blur", submit: 
  * definition once all structs in the module are complete.
  */
 export function buildSchemaMeta(schema: IRSchema, opts: SchemaDataOptions): string {
-    const fields = visibleFields(schema, opts.includePrivate);
+    const fields = filterVisibleFields(schema, opts.includePrivate);
     const out: string[] = [];
     const I = "    ";
 
@@ -101,8 +102,4 @@ function buildFieldMeta(field: IRField, opts: SchemaDataOptions): string {
     const formatters = opts.formPhasesOnly ? field.formatters.filter((fm) => CLIENT_PHASES.has(fm.phase)) : field.formatters;
     if (formatters.length > 0) parts.push(`.formatters = std::span<const keyma::PhasedFormatter>{__f_${field.name}}`);
     return `keyma::FieldMeta{ ${parts.join(", ")} }`;
-}
-
-function visibleFields(schema: IRSchema, includePrivate: boolean): IRField[] {
-    return includePrivate ? schema.fields : schema.fields.filter((f) => f.visibility === "public");
 }

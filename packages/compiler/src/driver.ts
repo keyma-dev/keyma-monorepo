@@ -1,13 +1,10 @@
 import { validateIR } from "@keyma/ir";
 import type { IRDiagnostic } from "@keyma/ir";
+import { mkError } from "@keyma/compiler-util";
 import type { ResolvedConfig, KeymaFrontend, KeymaBackend, EmitFile, DriveResult } from "./types.js";
 
 const IR_VALIDATION_CODE = "KEYMA000";
 const NO_BACKEND_CODE = "KEYMA000";
-
-function mkError(code: string, message: string): IRDiagnostic {
-    return { code, severity: "error", message };
-}
 
 /**
  * Run the full compiler pipeline:

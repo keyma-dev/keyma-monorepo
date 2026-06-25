@@ -1,5 +1,6 @@
 import type { IRSchema, IRField, IRFieldIndex, IRIndex, IRValidatorDeclaration, IRFormatterDeclaration } from "@keyma/ir";
-import { raw } from "./emit-literal.js";
+import { filterVisibleFields } from "@keyma/compiler-util";
+import { mkRaw } from "./emit-literal.js";
 import { buildFactoryCall } from "./emit-validators.js";
 
 export type SchemaDataOptions = {
@@ -20,7 +21,7 @@ const CLIENT_PHASES = new Set(["change", "blur", "submit"]);
 
 /** Build the metadata object for a schema, ready to be emitted with `emitLiteral`. */
 export function buildSchemaData(schema: IRSchema, opts: SchemaDataOptions): Record<string, unknown> {
-    const fields = visibleFields(schema, opts.includePrivate).map((f) => buildFieldData(f, opts));
+    const fields = filterVisibleFields(schema, opts.includePrivate).map((f) => buildFieldData(f, opts));
     const indexes = opts.includeIndexes ? schema.indexes.map(buildIndexData) : [];
 
     const out: Record<string, unknown> = {
@@ -34,14 +35,10 @@ export function buildSchemaData(schema: IRSchema, opts: SchemaDataOptions): Reco
     if (schema.ephemeral) out["ephemeral"] = true;
     if (opts.refs.length > 0) {
         const entries = opts.refs.map((r) => `"${r.name}": ${r.className}`).join(", ");
-        out["refs"] = raw(`{${entries}}`);
+        out["refs"] = mkRaw(`{${entries}}`);
     }
-    if (opts.applyDefaultsRef !== undefined) out["applyDefaults"] = raw(opts.applyDefaultsRef);
+    if (opts.applyDefaultsRef !== undefined) out["applyDefaults"] = mkRaw(opts.applyDefaultsRef);
     return out;
-}
-
-function visibleFields(schema: IRSchema, includePrivate: boolean): IRField[] {
-    return includePrivate ? schema.fields : schema.fields.filter((f) => f.visibility === "public");
 }
 
 function buildFieldData(field: IRField, opts: SchemaDataOptions): object {
@@ -58,13 +55,13 @@ function buildFieldData(field: IRField, opts: SchemaDataOptions): object {
     if (field.nullable) base["nullable"] = true;
     if (field.validators.length > 0) {
         base["validators"] = field.validators.map((v) =>
-            raw(buildFactoryCall(v.name, v.params, opts.validatorDecls.get(v.name)?.factoryParams ?? [])),
+            mkRaw(buildFactoryCall(v.name, v.params, opts.validatorDecls.get(v.name)?.factoryParams ?? [])),
         );
     }
     if (formatters.length > 0) {
         base["formatters"] = formatters.map((fmt) => ({
             phase: fmt.phase,
-            fn: raw(buildFactoryCall(fmt.spec.name, fmt.spec.params, opts.formatterDecls.get(fmt.spec.name)?.factoryParams ?? [])),
+            fn: mkRaw(buildFactoryCall(fmt.spec.name, fmt.spec.params, opts.formatterDecls.get(fmt.spec.name)?.factoryParams ?? [])),
         }));
     }
     if (indexes.length > 0) base["indexes"] = indexes;

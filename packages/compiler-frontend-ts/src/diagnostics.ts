@@ -1,4 +1,6 @@
-import type { IRDiagnostic, IRSourceLocation } from "@keyma/ir";
+// Diagnostic constructors are shared across the compiler; re-exported here so call sites can keep
+// importing them alongside the KEYMA#### code constants from this module.
+export { mkError, mkWarning } from "@keyma/compiler-util";
 
 // Schema-level structural errors
 export const KEYMA001 = "KEYMA001"; // Duplicate schema name
@@ -82,22 +84,3 @@ export const KEYMA095 = "KEYMA095"; // @Service combined with @Schema/@Edge on t
 export const KEYMA096 = "KEYMA096"; // Public service method exposes a private schema via a parameter/return type
 export const KEYMA097 = "KEYMA097"; // Duplicate service name, or service name collides with a schema name
 
-export function mkError(
-    code: string,
-    message: string,
-    source?: IRSourceLocation
-): IRDiagnostic {
-    return source !== undefined
-        ? { code, severity: "error", message, source }
-        : { code, severity: "error", message };
-}
-
-export function mkWarning(
-    code: string,
-    message: string,
-    source?: IRSourceLocation
-): IRDiagnostic {
-    return source !== undefined
-        ? { code, severity: "warning", message, source }
-        : { code, severity: "warning", message };
-}

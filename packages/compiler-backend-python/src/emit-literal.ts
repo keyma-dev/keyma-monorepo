@@ -1,13 +1,8 @@
-/** A raw Python code fragment emitted verbatim inside a dict/list literal. */
-export type Raw = { readonly __raw: string };
+import { isRaw, mkRaw, type Raw } from "@keyma/compiler-util";
 
-export function raw(code: string): Raw {
-    return { __raw: code };
-}
-
-function isRaw(v: unknown): v is Raw {
-    return typeof v === "object" && v !== null && "__raw" in v && typeof (v as Raw).__raw === "string";
-}
+// Re-export the raw-fragment marker; schema-data.ts imports `raw` from this module as the
+// backend's literal-emission surface.
+export { mkRaw, type Raw };
 
 /**
  * Render a Python dict/list literal with support for {@link Raw} fragments (emitted

@@ -1,7 +1,8 @@
 import type {
-    IRSchema, IRField, IRType, IRMethod, IRExpression, IRStatement, IREnumDeclaration,
+    IRSchema, IRField, IRType, IRMethod, IREnumDeclaration,
     IRValidatorDeclaration, IRFormatterDeclaration,
 } from "@keyma/ir";
+import { collectRefTargets, collectFunctionRefs, unwrapArray, filterVisibleFields, filterVisibleMethods } from "@keyma/compiler-util";
 import { exprToCpp, type ExprOpts } from "./emit-expression.js";
 import { stmtToCpp, factoryIdent, type ReturnLowerer } from "./emit-validators.js";
 import { irTypeToCpp, memberType, traitsArg, whereValueType, fieldKind, refTargetType } from "./ir-type-to-cpp.js";
@@ -129,10 +130,10 @@ export function emitModuleCpp(
 // ─── Struct ───────────────────────────────────────────────────────────────────
 
 function emitStruct(schema: IRSchema, deps: ModuleEmitDeps): string[] {
-    const fields = visibleFields(schema, deps.includePrivate);
+    const fields = filterVisibleFields(schema, deps.includePrivate);
     const stored = fields;
     // Getter behaviors are member functions, so a reference to one is a call `this->n()`.
-    const getterNames = new Set(visibleMethods(schema, deps.includePrivate).filter((m) => m.kind === "getter").map((m) => m.name));
+    const getterNames = new Set(filterVisibleMethods(schema, deps.includePrivate).filter((m) => m.kind === "getter").map((m) => m.name));
     const refFieldNames = new Set(fields.filter((f) => f.type.kind === "reference").map((f) => f.name));
     const opts: ExprOpts = {
         fieldExpr: (n) => (getterNames.has(n) ? `this->${n}()` : `this->${n}`),
@@ -177,7 +178,7 @@ function emitStruct(schema: IRSchema, deps: ModuleEmitDeps): string[] {
     lines.push(`    keyma::Value to_value(const allocator_type& a) const;`);
 
     // Getters, setters, and methods — all behaviors re-emitted as member functions.
-    for (const m of visibleMethods(schema, deps.includePrivate)) lines.push(...emitMethod(m, opts, deps));
+    for (const m of filterVisibleMethods(schema, deps.includePrivate)) lines.push(...emitMethod(m, opts, deps));
 
     // Typed field descriptors (consumed by keyma/query.hpp's where/projection DSL).
     lines.push(...emitFieldDescriptors(C, stored, deps));
@@ -231,7 +232,7 @@ function emitMethod(method: IRMethod, opts: ExprOpts, deps: ModuleEmitDeps): str
 
 function emitSchemaAccessor(schema: IRSchema, deps: ModuleEmitDeps): string[] {
     const C = schema.sourceName;
-    const stored = visibleFields(schema, deps.includePrivate);
+    const stored = filterVisibleFields(schema, deps.includePrivate);
 
     // Thin forwarders to the value_traits<C> specialization (defined just above, in
     // namespace keyma). Keeping the members means consumer code keeps
@@ -281,7 +282,7 @@ function valueTraitsForwardDecls(ns: string, schemas: readonly IRSchema[], deps:
         const fqn = deps.cppTypeByName.get(s.name);
         if (fqn !== undefined) fqns.add(fqn);
     }
-    const fields = schemas.flatMap((s) => visibleFields(s, deps.includePrivate));
+    const fields = schemas.flatMap((s) => filterVisibleFields(s, deps.includePrivate));
     for (const target of collectTargetsByKind(fields, "reference")) {
         const fqn = deps.cppTypeByName.get(target);
         if (fqn !== undefined) fqns.add(fqn);
@@ -301,7 +302,7 @@ function valueTraitsForwardDecls(ns: string, schemas: readonly IRSchema[], deps:
  */
 function emitValueTraits(schema: IRSchema, deps: ModuleEmitDeps): string[] {
     const C = deps.cppTypeByName.get(schema.name) ?? schema.sourceName;
-    const stored = visibleFields(schema, deps.includePrivate);
+    const stored = filterVisibleFields(schema, deps.includePrivate);
 
     const fromBody: string[] = [];
     for (const f of stored) {
@@ -414,7 +415,7 @@ function schemaRefs(fields: IRField[], deps: ModuleEmitDeps): { name: string; cp
  *  targets are deliberately excluded here — see referenceIncludes. */
 function buildIncludes(moduleRef: string, schemas: readonly IRSchema[], deps: ModuleEmitDeps, hasFunctions: boolean): string[] {
     const refs = new Set<string>();
-    const allFields = schemas.flatMap((s) => visibleFields(s, deps.includePrivate));
+    const allFields = schemas.flatMap((s) => filterVisibleFields(s, deps.includePrivate));
 
     for (const target of collectTargetsByKind(allFields, "embedded")) {
         const className = deps.classNameByName.get(target);
@@ -443,7 +444,7 @@ function buildIncludes(moduleRef: string, schemas: readonly IRSchema[], deps: Mo
 
 /** Forward declarations (grouped by namespace) for every reference target. */
 function referenceForwardDecls(schemas: readonly IRSchema[], deps: ModuleEmitDeps): string[] {
-    const fields = schemas.flatMap((s) => visibleFields(s, deps.includePrivate));
+    const fields = schemas.flatMap((s) => filterVisibleFields(s, deps.includePrivate));
     const byNs = new Map<string, Set<string>>();
     for (const name of collectTargetsByKind(fields, "reference")) {
         const cls = deps.classNameByName.get(name);
@@ -461,7 +462,7 @@ function referenceForwardDecls(schemas: readonly IRSchema[], deps: ModuleEmitDep
 
 /** Cross-module reference-target headers, included after the struct definitions. */
 function referenceIncludes(moduleRef: string, schemas: readonly IRSchema[], deps: ModuleEmitDeps): string[] {
-    const fields = schemas.flatMap((s) => visibleFields(s, deps.includePrivate));
+    const fields = schemas.flatMap((s) => filterVisibleFields(s, deps.includePrivate));
     const incs = new Set<string>();
     for (const name of collectTargetsByKind(fields, "reference")) {
         const cls = deps.classNameByName.get(name);
@@ -473,16 +474,6 @@ function referenceIncludes(moduleRef: string, schemas: readonly IRSchema[], deps
 }
 
 /** Embedded + reference targets (for the refs metadata map). */
-function collectRefTargets(fields: IRField[]): Set<string> {
-    const out = new Set<string>();
-    const collect = (type: IRType): void => {
-        if (type.kind === "embedded" || type.kind === "reference") out.add(type.schema);
-        else if (type.kind === "array") collect(type.of);
-    };
-    for (const f of fields) collect(f.type);
-    return out;
-}
-
 /** Targets of one relation kind (recursing through arrays). */
 function collectTargetsByKind(fields: IRField[], kind: "embedded" | "reference"): Set<string> {
     const out = new Set<string>();
@@ -505,53 +496,6 @@ function collectEnumTargets(fields: IRField[]): Set<string> {
     return out;
 }
 
-function collectFunctionRefs(schemas: readonly IRSchema[], deps: ModuleEmitDeps): Set<string> {
-    const ids = new Set<string>();
-    for (const schema of schemas) {
-        for (const field of visibleFields(schema, deps.includePrivate)) {
-            if (deps.includeDefaults && field.default !== undefined && field.default.kind === "expression") {
-                collectIdentifiers(field.default.expression, ids);
-            }
-        }
-        for (const method of visibleMethods(schema, deps.includePrivate)) {
-            for (const stmt of method.statements) collectStatementIdentifiers(stmt, ids);
-        }
-    }
-    return new Set([...ids].filter((id) => deps.functionNames.has(id)));
-}
-
-function collectIdentifiers(expr: IRExpression, out: Set<string>): void {
-    switch (expr.kind) {
-        case "identifier": out.add(expr.name); break;
-        case "member": collectIdentifiers(expr.object, out); break;
-        case "call": collectIdentifiers(expr.callee, out); expr.args.forEach((a) => collectIdentifiers(a, out)); break;
-        case "new": collectIdentifiers(expr.callee, out); expr.args.forEach((a) => collectIdentifiers(a, out)); break;
-        case "typeof": collectIdentifiers(expr.operand, out); break;
-        case "unary": collectIdentifiers(expr.operand, out); break;
-        case "template": expr.parts.forEach((p) => collectIdentifiers(p, out)); break;
-        case "binary": collectIdentifiers(expr.left, out); collectIdentifiers(expr.right, out); break;
-        case "conditional":
-            collectIdentifiers(expr.condition, out); collectIdentifiers(expr.whenTrue, out); collectIdentifiers(expr.whenFalse, out); break;
-        case "object": expr.properties.forEach((p) => collectIdentifiers(p.value, out)); break;
-        case "arrow": collectIdentifiers(expr.body, out); break;
-        case "intrinsic": if (expr.receiver) collectIdentifiers(expr.receiver, out); expr.args.forEach((a) => collectIdentifiers(a, out)); break;
-    }
-}
-
-function collectStatementIdentifiers(stmt: IRStatement, out: Set<string>): void {
-    switch (stmt.kind) {
-        case "return": if (stmt.value) collectIdentifiers(stmt.value, out); break;
-        case "expression": collectIdentifiers(stmt.expr, out); break;
-        case "const": collectIdentifiers(stmt.init, out); break;
-        case "assign": collectIdentifiers(stmt.target, out); collectIdentifiers(stmt.value, out); break;
-        case "if":
-            collectIdentifiers(stmt.condition, out);
-            stmt.consequent.forEach((s) => collectStatementIdentifiers(s, out));
-            (stmt.alternate ?? []).forEach((s) => collectStatementIdentifiers(s, out));
-            break;
-    }
-}
-
 /** Order schemas so a same-module embedded target is defined before its user (by-value). */
 function topoSort(schemas: readonly IRSchema[], deps: ModuleEmitDeps): IRSchema[] {
     const inModule = new Map(schemas.map((s) => [s.sourceName, s]));
@@ -560,7 +504,7 @@ function topoSort(schemas: readonly IRSchema[], deps: ModuleEmitDeps): IRSchema[
     const visit = (s: IRSchema): void => {
         if (seen.has(s.sourceName)) return;
         seen.add(s.sourceName);
-        for (const f of visibleFields(s, deps.includePrivate)) {
+        for (const f of filterVisibleFields(s, deps.includePrivate)) {
             const inner = unwrapArray(f.type);
             if (inner.kind === "embedded") {
                 const targetClass = deps.classNameByName.get(inner.schema);
@@ -574,17 +518,3 @@ function topoSort(schemas: readonly IRSchema[], deps: ModuleEmitDeps): IRSchema[
     return result;
 }
 
-function unwrapArray(t: IRType): IRType {
-    return t.kind === "array" ? unwrapArray(t.of) : t;
-}
-
-// ─── Visibility helpers ───────────────────────────────────────────────────────
-
-function visibleFields(schema: IRSchema, includePrivate: boolean): IRField[] {
-    return includePrivate ? schema.fields : schema.fields.filter((f) => f.visibility === "public");
-}
-
-function visibleMethods(schema: IRSchema, includePrivate: boolean): IRMethod[] {
-    const methods = schema.methods ?? [];
-    return includePrivate ? methods : methods.filter((m) => m.visibility === "public");
-}

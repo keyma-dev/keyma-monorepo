@@ -1,4 +1,4 @@
-import { path } from "@keyma/compiler-util";
+import { path, unwrapArray } from "@keyma/compiler-util";
 import ts from "typescript";
 import type { KeymaIR, IRDiagnostic, IRSchema } from "@keyma/ir";
 import { createProgram, DEFAULT_COMPILER_OPTIONS } from "./program.js";
@@ -441,7 +441,7 @@ function checkEphemeralUsage(schemas: import("@keyma/ir").IRSchema[], diagnostic
         // Embedded<T> of an ephemeral schema is fine (the data is inlined).
         if (schema.ephemeral !== true) {
             for (const field of schema.fields) {
-                const inner = unwrap(field.type);
+                const inner = unwrapArray(field.type);
                 if (inner.kind === "reference" && ephemeralSchemas.has(inner.schema)) {
                     diagnostics.push(
                         mkError(
@@ -477,7 +477,7 @@ function checkEdgeSchemas(schemas: import("@keyma/ir").IRSchema[], diagnostics: 
     for (const schema of schemas) {
         if (schema.edge !== undefined) continue;  // checked separately below
         for (const field of schema.fields) {
-            const inner = unwrap(field.type);
+            const inner = unwrapArray(field.type);
             if ((inner.kind === "reference" || inner.kind === "embedded") && edgeSourceNames.has(inner.schema)) {
                 diagnostics.push(
                     mkError(
@@ -518,7 +518,7 @@ function checkReferenceTargetsHaveId(schemas: import("@keyma/ir").IRSchema[], di
 
     for (const schema of schemas) {
         for (const field of schema.fields) {
-            const inner = unwrap(field.type);
+            const inner = unwrapArray(field.type);
             if (inner.kind !== "reference") continue;
             const target = bySourceName.get(inner.schema);
             if (target === undefined) continue;
@@ -537,11 +537,6 @@ function checkReferenceTargetsHaveId(schemas: import("@keyma/ir").IRSchema[], di
             }
         }
     }
-}
-
-function unwrap(type: import("@keyma/ir").IRType): import("@keyma/ir").IRType {
-    if (type.kind === "array") return unwrap(type.of);
-    return type;
 }
 
 /** Collect the IREnumDeclarations for every named enum referenced by a field type. */
@@ -582,7 +577,7 @@ function analyzeEmbeddedCycles(schemas: IRSchema[], diagnostics: IRDiagnostic[])
     for (const schema of schemas) {
         const targets: string[] = [];
         for (const field of schema.fields) {
-            const inner = unwrap(field.type);
+            const inner = unwrapArray(field.type);
             if (inner.kind === "embedded" && known.has(inner.schema)) targets.push(inner.schema);
         }
         embedsOf.set(schema.sourceName, targets);

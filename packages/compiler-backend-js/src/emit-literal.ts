@@ -1,18 +1,8 @@
-/**
- * A marker wrapping a raw JS code fragment to be emitted verbatim (not JSON-encoded)
- * inside an object/array literal — e.g. a validator factory call `minLength(2)`, a
- * `new Map([...])`, or an `applyDefaults` arrow. Produced by the schema-data builder
- * and rendered by {@link emitLiteral}.
- */
-export type Raw = { readonly __raw: string };
+import { isRaw, mkRaw, type Raw } from "@keyma/compiler-util";
 
-export function raw(code: string): Raw {
-    return { __raw: code };
-}
-
-function isRaw(v: unknown): v is Raw {
-    return typeof v === "object" && v !== null && "__raw" in v && typeof (v as Raw).__raw === "string";
-}
+// Re-export the raw-fragment marker; schema-data.ts / emit-module.ts import `raw`/`Raw`
+// from this module as the backend's literal-emission surface.
+export { mkRaw, type Raw };
 
 /**
  * Render a JS object/array literal with support for {@link Raw} fragments, which are

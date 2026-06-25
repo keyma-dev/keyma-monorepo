@@ -1,7 +1,8 @@
 import type {
-    IRSchema, IRField, IRType, IRMethod, IRExpression, IRStatement,
+    IRSchema, IRField,
     IRValidatorDeclaration, IRFormatterDeclaration,
 } from "@keyma/ir";
+import { collectRefTargets, collectFunctionRefs, filterVisibleFields, filterVisibleMethods } from "@keyma/compiler-util";
 import { stmtToJs } from "./emit-expression.js";
 import { irTypeToTs } from "./ir-type-to-ts.js";
 import { buildSchemaData } from "./schema-data.js";
@@ -47,7 +48,7 @@ export function emitModuleJs(moduleRef: string, schemas: readonly IRSchema[], de
 }
 
 function emitSchemaClassJs(schema: IRSchema, deps: ModuleEmitDeps): string {
-    const fields = visibleFields(schema, deps.includePrivate);
+    const fields = filterVisibleFields(schema, deps.includePrivate);
     const lines: string[] = [];
 
     // Inheritance is fully flattened in the IR — a flat class, every field assigned once.
@@ -61,7 +62,7 @@ function emitSchemaClassJs(schema: IRSchema, deps: ModuleEmitDeps): string {
     lines.push(`    }`);
 
     // Getters, setters, and methods are all behaviors re-emitted as class members.
-    for (const method of visibleMethods(schema, deps.includePrivate)) {
+    for (const method of filterVisibleMethods(schema, deps.includePrivate)) {
         lines.push("");
         const params = method.params.map((p) => p.name).join(", ");
         const signature =
@@ -107,7 +108,7 @@ export function emitModuleDts(moduleRef: string, schemas: readonly IRSchema[], d
 }
 
 function emitSchemaClassDts(schema: IRSchema, deps: ModuleEmitDeps): string {
-    const fields = visibleFields(schema, deps.includePrivate);
+    const fields = filterVisibleFields(schema, deps.includePrivate);
     const lines: string[] = [];
 
     const isEdge = schema.edge !== undefined;
@@ -126,7 +127,7 @@ function emitSchemaClassDts(schema: IRSchema, deps: ModuleEmitDeps): string {
         lines.push(`    ${ro}${field.name}: ${irTypeToTs(field.type, deps.embeddedTypeNames)}${nul}${optional};`);
     }
 
-    for (const method of visibleMethods(schema, deps.includePrivate)) {
+    for (const method of filterVisibleMethods(schema, deps.includePrivate)) {
         const params = method.params
             .map((p) => `${p.name}: ${irTypeToTs(p.type, deps.embeddedTypeNames)}`)
             .join(", ");
@@ -177,7 +178,7 @@ function buildImports(moduleRef: string, schemas: readonly IRSchema[], deps: Mod
         bySpec.get(spec)!.add(binding);
     };
 
-    const allFields: IRField[] = schemas.flatMap((s) => visibleFields(s, deps.includePrivate));
+    const allFields: IRField[] = schemas.flatMap((s) => filterVisibleFields(s, deps.includePrivate));
 
     // Cross-module schema/embedded class refs. Targets are identities (`name`);
     // resolve to the emitted class symbol and its module.
@@ -230,16 +231,6 @@ function schemaRefs(
         .map((name) => ({ name, symbol: embeddedTypeNames.get(name)! }));
 }
 
-function collectRefTargets(fields: IRField[]): Set<string> {
-    const out = new Set<string>();
-    const collect = (type: IRType): void => {
-        if (type.kind === "embedded" || type.kind === "reference") out.add(type.schema);
-        else if (type.kind === "array") collect(type.of);
-    };
-    for (const f of fields) collect(f.type);
-    return out;
-}
-
 function collectFactoryNames(fields: IRField[], which: "validators" | "formatters", formPhasesOnly: boolean): Set<string> {
     const out = new Set<string>();
     for (const f of fields) {
@@ -255,70 +246,7 @@ function collectFactoryNames(fields: IRField[], which: "validators" | "formatter
     return out;
 }
 
-/** Utility-function names referenced by a module's getter/method/setter/default bodies. */
-function collectFunctionRefs(schemas: readonly IRSchema[], deps: ModuleEmitDeps): Set<string> {
-    const ids = new Set<string>();
-    for (const schema of schemas) {
-        for (const field of visibleFields(schema, deps.includePrivate)) {
-            if (deps.includeDefaults && field.default !== undefined && field.default.kind === "expression") {
-                collectIdentifiers(field.default.expression, ids);
-            }
-        }
-        for (const method of visibleMethods(schema, deps.includePrivate)) {
-            for (const stmt of method.statements) collectStatementIdentifiers(stmt, ids);
-        }
-    }
-    return new Set([...ids].filter((id) => deps.functionNames.has(id)));
-}
-
-function collectIdentifiers(expr: IRExpression, out: Set<string>): void {
-    switch (expr.kind) {
-        case "identifier": out.add(expr.name); break;
-        case "member": collectIdentifiers(expr.object, out); break;
-        case "call": collectIdentifiers(expr.callee, out); expr.args.forEach((a) => collectIdentifiers(a, out)); break;
-        case "new": collectIdentifiers(expr.callee, out); expr.args.forEach((a) => collectIdentifiers(a, out)); break;
-        case "typeof": collectIdentifiers(expr.operand, out); break;
-        case "unary": collectIdentifiers(expr.operand, out); break;
-        case "template": expr.parts.forEach((p) => collectIdentifiers(p, out)); break;
-        case "binary": collectIdentifiers(expr.left, out); collectIdentifiers(expr.right, out); break;
-        case "conditional":
-            collectIdentifiers(expr.condition, out);
-            collectIdentifiers(expr.whenTrue, out);
-            collectIdentifiers(expr.whenFalse, out);
-            break;
-        case "object": expr.properties.forEach((p) => collectIdentifiers(p.value, out)); break;
-        case "arrow": collectIdentifiers(expr.body, out); break;
-        case "intrinsic":
-            if (expr.receiver) collectIdentifiers(expr.receiver, out);
-            expr.args.forEach((a) => collectIdentifiers(a, out));
-            break;
-    }
-}
-
-function collectStatementIdentifiers(stmt: IRStatement, out: Set<string>): void {
-    switch (stmt.kind) {
-        case "return": if (stmt.value) collectIdentifiers(stmt.value, out); break;
-        case "expression": collectIdentifiers(stmt.expr, out); break;
-        case "const": collectIdentifiers(stmt.init, out); break;
-        case "assign": collectIdentifiers(stmt.target, out); collectIdentifiers(stmt.value, out); break;
-        case "if":
-            collectIdentifiers(stmt.condition, out);
-            stmt.consequent.forEach((s) => collectStatementIdentifiers(s, out));
-            (stmt.alternate ?? []).forEach((s) => collectStatementIdentifiers(s, out));
-            break;
-    }
-}
-
 // ─── Helpers ──────────────────────────────────────────────────────────────────
-
-function visibleFields(schema: IRSchema, includePrivate: boolean): IRField[] {
-    return includePrivate ? schema.fields : schema.fields.filter((f) => f.visibility === "public");
-}
-
-function visibleMethods(schema: IRSchema, includePrivate: boolean): IRMethod[] {
-    const methods = schema.methods ?? [];
-    return includePrivate ? methods : methods.filter((m) => m.visibility === "public");
-}
 
 function fieldJsDoc(field: IRField): string[] {
     const body: string[] = [];

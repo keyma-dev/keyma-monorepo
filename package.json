@@ -3,9 +3,9 @@
   "version": "0.0.0",
   "private": true,
   "workspaces": [
+    "packages/ir",
     "packages/compiler-util",
     "packages/dsl",
-    "packages/ir",
     "packages/runtime-cpp",
     "packages/runtime-python",
     "packages/runtime-js",

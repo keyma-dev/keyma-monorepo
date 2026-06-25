@@ -1,4 +1,5 @@
-import type { IRSchema, IRField, IRDefault, IRExpression } from "@keyma/ir";
+import type { IRSchema, IRDefault, IRExpression } from "@keyma/ir";
+import { filterVisibleFields } from "@keyma/compiler-util";
 import { exprToCpp, type ExprOpts } from "./emit-expression.js";
 import { factoryIdent } from "./emit-validators.js";
 
@@ -12,7 +13,7 @@ import { factoryIdent } from "./emit-validators.js";
 export function buildApplyDefaults(schema: IRSchema, includePrivate: boolean): { name: string; def: string } | null {
     const valueOpts: ExprOpts = { fieldExpr: (n: string) => `value.at(${JSON.stringify(n)})` };
     const body: string[] = [];
-    for (const f of visibleFields(schema, includePrivate)) {
+    for (const f of filterVisibleFields(schema, includePrivate)) {
         if (f.default === undefined) continue;
         const valExpr = defaultValueExpr(f.default, valueOpts);
         if (valExpr === null) continue;
@@ -40,8 +41,4 @@ function defaultValueExpr(def: IRDefault, valueOpts: ExprOpts): string | null {
     if (v === null || Array.isArray(v)) return null;
     const lit: IRExpression = { kind: "literal", value: v };
     return `keyma::to_value(${exprToCpp(lit, valueOpts)}, __a)`;
-}
-
-function visibleFields(schema: IRSchema, includePrivate: boolean): IRField[] {
-    return includePrivate ? schema.fields : schema.fields.filter((f) => f.visibility === "public");
 }

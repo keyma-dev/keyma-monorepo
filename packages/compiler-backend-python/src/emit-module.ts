@@ -1,4 +1,5 @@
-import type { IRSchema, IRField, IRType, IRMethod, IRExpression, IRStatement, IRValidatorDeclaration, IRFormatterDeclaration } from "@keyma/ir";
+import type { IRSchema, IRField, IRMethod, IRValidatorDeclaration, IRFormatterDeclaration } from "@keyma/ir";
+import { collectRefTargets, collectFunctionRefs, filterVisibleFields, filterVisibleMethods } from "@keyma/compiler-util";
 import { stmtToPython, factoryIdent } from "./emit-validators.js";
 import { irTypeToPython } from "./ir-type-to-python.js";
 import { buildSchemaData } from "./schema-data.js";
@@ -44,7 +45,7 @@ export function emitModulePython(moduleRef: string, schemas: readonly IRSchema[]
 }
 
 function emitSchemaClass(schema: IRSchema, deps: ModuleEmitDeps): string[] {
-    const fields = visibleFields(schema, deps.includePrivate);
+    const fields = filterVisibleFields(schema, deps.includePrivate);
     const lines: string[] = [];
 
     const extendsClause = schema.extends !== undefined ? `(${schema.extends})` : "";
@@ -61,7 +62,7 @@ function emitSchemaClass(schema: IRSchema, deps: ModuleEmitDeps): string[] {
 
     // Getters, setters, and methods are all behaviors re-emitted as class members.
     // Emit getters first so a paired `@name.setter` follows its `@property`.
-    const behaviors = visibleMethods(schema, deps.includePrivate);
+    const behaviors = filterVisibleMethods(schema, deps.includePrivate);
     const getterNames = new Set(behaviors.filter((m) => m.kind === "getter").map((m) => m.name));
     const ordered = [
         ...behaviors.filter((m) => m.kind === "getter"),
@@ -109,7 +110,7 @@ function buildImports(moduleRef: string, schemas: readonly IRSchema[], deps: Mod
         bySpec.get(spec)!.add(binding);
     };
 
-    const allFields: IRField[] = schemas.flatMap((s) => visibleFields(s, deps.includePrivate));
+    const allFields: IRField[] = schemas.flatMap((s) => filterVisibleFields(s, deps.includePrivate));
 
     for (const s of schemas) {
         if (s.extends !== undefined) {
@@ -144,16 +145,6 @@ function schemaRefs(
         .map((name) => ({ name, className: classNameByName.get(name)! }));
 }
 
-function collectRefTargets(fields: IRField[]): Set<string> {
-    const out = new Set<string>();
-    const collect = (type: IRType): void => {
-        if (type.kind === "embedded" || type.kind === "reference") out.add(type.schema);
-        else if (type.kind === "array") collect(type.of);
-    };
-    for (const f of fields) collect(f.type);
-    return out;
-}
-
 function collectFactoryNames(fields: IRField[], which: "validators" | "formatters", formPhasesOnly: boolean): Set<string> {
     const out = new Set<string>();
     for (const f of fields) {
@@ -161,64 +152,6 @@ function collectFactoryNames(fields: IRField[], which: "validators" | "formatter
         else for (const fmt of f.formatters) { if (formPhasesOnly && !CLIENT_PHASES.has(fmt.phase)) continue; out.add(fmt.spec.name); }
     }
     return out;
-}
-
-function collectFunctionRefs(schemas: readonly IRSchema[], deps: ModuleEmitDeps): Set<string> {
-    const ids = new Set<string>();
-    for (const schema of schemas) {
-        for (const field of visibleFields(schema, deps.includePrivate)) {
-            if (deps.includeDefaults && field.default !== undefined && field.default.kind === "expression") {
-                collectIdentifiers(field.default.expression, ids);
-            }
-        }
-        for (const method of visibleMethods(schema, deps.includePrivate)) {
-            for (const stmt of method.statements) collectStatementIdentifiers(stmt, ids);
-        }
-    }
-    return new Set([...ids].filter((id) => deps.functionNames.has(id)));
-}
-
-function collectIdentifiers(expr: IRExpression, out: Set<string>): void {
-    switch (expr.kind) {
-        case "identifier": out.add(expr.name); break;
-        case "member": collectIdentifiers(expr.object, out); break;
-        case "call": collectIdentifiers(expr.callee, out); expr.args.forEach((a) => collectIdentifiers(a, out)); break;
-        case "new": collectIdentifiers(expr.callee, out); expr.args.forEach((a) => collectIdentifiers(a, out)); break;
-        case "typeof": collectIdentifiers(expr.operand, out); break;
-        case "unary": collectIdentifiers(expr.operand, out); break;
-        case "template": expr.parts.forEach((p) => collectIdentifiers(p, out)); break;
-        case "binary": collectIdentifiers(expr.left, out); collectIdentifiers(expr.right, out); break;
-        case "conditional":
-            collectIdentifiers(expr.condition, out); collectIdentifiers(expr.whenTrue, out); collectIdentifiers(expr.whenFalse, out); break;
-        case "object": expr.properties.forEach((p) => collectIdentifiers(p.value, out)); break;
-        case "arrow": collectIdentifiers(expr.body, out); break;
-        case "intrinsic": if (expr.receiver) collectIdentifiers(expr.receiver, out); expr.args.forEach((a) => collectIdentifiers(a, out)); break;
-    }
-}
-
-function collectStatementIdentifiers(stmt: IRStatement, out: Set<string>): void {
-    switch (stmt.kind) {
-        case "return": if (stmt.value) collectIdentifiers(stmt.value, out); break;
-        case "expression": collectIdentifiers(stmt.expr, out); break;
-        case "const": collectIdentifiers(stmt.init, out); break;
-        case "assign": collectIdentifiers(stmt.target, out); collectIdentifiers(stmt.value, out); break;
-        case "if":
-            collectIdentifiers(stmt.condition, out);
-            stmt.consequent.forEach((s) => collectStatementIdentifiers(s, out));
-            (stmt.alternate ?? []).forEach((s) => collectStatementIdentifiers(s, out));
-            break;
-    }
-}
-
-// ─── Helpers ──────────────────────────────────────────────────────────────────
-
-function visibleFields(schema: IRSchema, includePrivate: boolean): IRField[] {
-    return includePrivate ? schema.fields : schema.fields.filter((f) => f.visibility === "public");
-}
-
-function visibleMethods(schema: IRSchema, includePrivate: boolean): IRMethod[] {
-    const methods = schema.methods ?? [];
-    return includePrivate ? methods : methods.filter((m) => m.visibility === "public");
 }
 
 function emitMethodPython(

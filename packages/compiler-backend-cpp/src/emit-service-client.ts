@@ -1,4 +1,5 @@
-import type { IRService, IRServiceMethod, IRType } from "@keyma/ir";
+import type { IRService, IRType } from "@keyma/ir";
+import { filterVisible } from "@keyma/compiler-util";
 import { irTypeToCpp } from "./ir-type-to-cpp.js";
 import { includePath } from "./module-path.js";
 
@@ -34,11 +35,11 @@ export type ServiceClientEmitDeps = {
  * stays self-contained.
  */
 export function emitServiceClientCpp(services: readonly IRService[], deps: ServiceClientEmitDeps): string {
-    const visible = visibleServices(services, deps.includePrivate);
+    const shown = filterVisible(services, deps.includePrivate);
     const lines: string[] = ["#pragma once", "#include <keyma/client.hpp>"];
-    for (const inc of buildIncludes(visible, deps)) lines.push(`#include "${inc}"`);
+    for (const inc of buildIncludes(shown, deps)) lines.push(`#include "${inc}"`);
     lines.push("", `namespace ${deps.nsRoot}::client {`, "");
-    for (const svc of visible) lines.push(...emitClientStub(svc, deps), "");
+    for (const svc of shown) lines.push(...emitClientStub(svc, deps), "");
     lines.push(`}  // namespace ${deps.nsRoot}::client`, "");
     return lines.join("\n");
 }
@@ -47,7 +48,7 @@ function emitClientStub(svc: IRService, deps: ServiceClientEmitDeps): string[] {
     const lines: string[] = [];
     if (svc.description !== undefined) lines.push(`// Typed client stub — ${svc.description}`);
     lines.push(`struct ${svc.sourceName} {`);
-    for (const m of visibleMethods(svc, deps.includePrivate)) {
+    for (const m of filterVisible(svc.methods, deps.includePrivate)) {
         const ret = returnLeafType(m.returnType, deps);
         const sig = [...m.params.map((p) => paramDecl(p.name, p.type, deps)), "keyma::alloc_t __alloc = {}"].join(", ");
         lines.push(`    static keyma::CallLeaf<${ret}> ${m.name}(${sig}) {`);
@@ -123,7 +124,7 @@ function passByRef(type: IRType): boolean {
 function buildIncludes(services: readonly IRService[], deps: ServiceClientEmitDeps): string[] {
     const incs = new Set<string>();
     for (const svc of services) {
-        for (const m of visibleMethods(svc, deps.includePrivate)) {
+        for (const m of filterVisible(svc.methods, deps.includePrivate)) {
             for (const p of m.params) addTypeIncludes(p.type, deps, incs);
             if (m.returnType !== undefined) addTypeIncludes(m.returnType, deps, incs);
         }
@@ -143,12 +144,3 @@ function addTypeIncludes(type: IRType, deps: ServiceClientEmitDeps, out: Set<str
     }
 }
 
-// ─── visibility ───────────────────────────────────────────────────────────────
-
-function visibleServices(services: readonly IRService[], includePrivate: boolean): IRService[] {
-    return includePrivate ? [...services] : services.filter((s) => s.visibility === "public");
-}
-
-function visibleMethods(svc: IRService, includePrivate: boolean): IRServiceMethod[] {
-    return includePrivate ? svc.methods : svc.methods.filter((m) => m.visibility === "public");
-}

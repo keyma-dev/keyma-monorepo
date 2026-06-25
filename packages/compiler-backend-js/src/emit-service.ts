@@ -1,6 +1,7 @@
 import type { IRService, IRServiceMethod, IRType } from "@keyma/ir";
+import { filterVisible } from "@keyma/compiler-util";
 import { irTypeToTs } from "./ir-type-to-ts.js";
-import { emitLiteral, raw } from "./emit-literal.js";
+import { emitLiteral, mkRaw } from "./emit-literal.js";
 import { relModuleSpecifier } from "./module-path.js";
 
 /** Bundle-relative module ref of the services file (sits at the bundle root). */
@@ -19,14 +20,6 @@ export type ServiceEmitDeps = {
 export type ServiceEmitFiles = { servicesJs: string; servicesDts: string };
 
 // ── shared helpers ───────────────────────────────────────────────────────────
-
-function visibleServices(services: readonly IRService[], includePrivate: boolean): IRService[] {
-    return includePrivate ? [...services] : services.filter((s) => s.visibility === "public");
-}
-
-function visibleMethods(svc: IRService, includePrivate: boolean): IRServiceMethod[] {
-    return includePrivate ? svc.methods : svc.methods.filter((m) => m.visibility === "public");
-}
 
 /** Core (array-unwrapped) reference/embedded target `name` of a type. */
 function refTargetName(t: IRType): string | undefined {
@@ -111,7 +104,7 @@ function methodMetadata(m: IRServiceMethod): Record<string, unknown> {
 }
 
 function emitServiceClassJs(svc: IRService, deps: ServiceEmitDeps): string {
-    const methods = visibleMethods(svc, deps.includePrivate);
+    const methods = filterVisible(svc.methods, deps.includePrivate);
     const meta: Record<string, unknown> = { name: svc.name };
     if (svc.visibility === "private") meta["visibility"] = "private";
     meta["methods"] = methods.map((m) => methodMetadata(m));
@@ -126,7 +119,7 @@ function emitServiceClassJs(svc: IRService, deps: ServiceEmitDeps): string {
                     return `[${JSON.stringify(name)}, ${cls}]`;
                 })
                 .join(", ");
-            meta["refs"] = raw(`new Map([${entries}])`);
+            meta["refs"] = mkRaw(`new Map([${entries}])`);
         }
     }
 
@@ -138,14 +131,14 @@ function emitServiceClassJs(svc: IRService, deps: ServiceEmitDeps): string {
 }
 
 export function emitServicesJs(services: readonly IRService[], deps: ServiceEmitDeps): string {
-    const visible = visibleServices(services, deps.includePrivate);
+    const shown = filterVisible(services, deps.includePrivate);
     // Value imports are only needed for the client `refs` Map (return schemas).
     const refSources = deps.includePrivate
         ? new Set<string>()
-        : new Set(visible.flatMap((s) => [...returnTargetNamesOf(visibleMethods(s, deps.includePrivate))]));
+        : new Set(shown.flatMap((s) => [...returnTargetNamesOf(filterVisible(s.methods, deps.includePrivate))]));
     const imports = buildModelImports(refSources, deps, false);
 
-    const blocks = visible.map((s) => emitServiceClassJs(s, deps));
+    const blocks = shown.map((s) => emitServiceClassJs(s, deps));
     return [...imports, ...(imports.length > 0 ? [""] : []), blocks.join("\n")].join("\n");
 }
 
@@ -164,7 +157,7 @@ function emitServiceClassDts(svc: IRService, deps: ServiceEmitDeps): string {
     const lines: string[] = [];
     lines.push(`export declare abstract class ${svc.sourceName} {`);
     lines.push(`    static readonly service: ServiceMetadata;`);
-    for (const m of visibleMethods(svc, deps.includePrivate)) {
+    for (const m of filterVisible(svc.methods, deps.includePrivate)) {
         const params = m.params.map((p) => `${p.name}: ${irTypeToTs(p.type, deps.embeddedTypeNames)}`);
         params.push("ctx: RequestContext");
         lines.push(`    abstract ${m.name}(${params.join(", ")}): ${methodReturnTs(m, deps)};`);
@@ -181,7 +174,7 @@ function emitServiceClassDts(svc: IRService, deps: ServiceEmitDeps): string {
  * `class` carrying `static service`.
  */
 function emitServiceClientDts(svc: IRService, deps: ServiceEmitDeps): string {
-    const methods = visibleMethods(svc, deps.includePrivate);
+    const methods = filterVisible(svc.methods, deps.includePrivate);
     const declName = `_${svc.sourceName}`;
     const lines: string[] = [];
 
@@ -206,8 +199,8 @@ function emitServiceClientDts(svc: IRService, deps: ServiceEmitDeps): string {
 }
 
 export function emitServicesDts(services: readonly IRService[], deps: ServiceEmitDeps): string {
-    const visible = visibleServices(services, deps.includePrivate);
-    const allMethods = visible.flatMap((s) => visibleMethods(s, deps.includePrivate));
+    const shown = filterVisible(services, deps.includePrivate);
+    const allMethods = shown.flatMap((s) => filterVisible(s.methods, deps.includePrivate));
     const modelImports = buildModelImports(refTargetNamesOf(allMethods), deps, true);
 
     const lines: string[] = [];
@@ -215,7 +208,7 @@ export function emitServicesDts(services: readonly IRService[], deps: ServiceEmi
         lines.push(`import type { ServiceMetadata, RequestContext } from "./types.js";`);
         lines.push(...modelImports);
         lines.push("");
-        for (const svc of visible) {
+        for (const svc of shown) {
             lines.push(emitServiceClassDts(svc, deps));
             lines.push("");
         }
@@ -223,7 +216,7 @@ export function emitServicesDts(services: readonly IRService[], deps: ServiceEmi
         lines.push(`import type { ServiceMetadata } from "./types.js";`);
         lines.push(...modelImports);
         lines.push("");
-        for (const svc of visible) {
+        for (const svc of shown) {
             lines.push(emitServiceClientDts(svc, deps));
             lines.push("");
         }
