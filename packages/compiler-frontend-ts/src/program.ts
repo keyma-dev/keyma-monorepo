@@ -1,6 +1,19 @@
 import ts from "typescript";
+import { createVirtualCompilerHost } from "@typescript/vfs";
 
 export type VirtualFiles = ReadonlyMap<string, string>;
+
+/** How `createProgram` obtains its files. At most one of these is set. */
+export type CreateProgramOptions = {
+    /** In-memory overlay served on top of the real Node filesystem (Node only). */
+    virtualFiles?: VirtualFiles;
+    /**
+     * A fully in-memory `ts.System` (e.g. from `@typescript/vfs createSystem`). When
+     * present, the program is built with a virtual compiler host that touches NO real
+     * filesystem — this is the browser-capable path. Takes precedence over `virtualFiles`.
+     */
+    system?: ts.System;
+};
 
 /** Default compiler options for compiling user schema files. */
 export const DEFAULT_COMPILER_OPTIONS: ts.CompilerOptions = {
@@ -15,20 +28,47 @@ export const DEFAULT_COMPILER_OPTIONS: ts.CompilerOptions = {
 
 /**
  * Creates a TypeScript Program from the given root file names.
- * When `virtualFiles` is provided, those paths are served from memory while all
- * other files (stdlib, node_modules) are read from the real file system.
+ *
+ * Three modes, selected by `opts`:
+ *  - `system`        → fully virtual, in-memory host (no real fs). Browser-capable.
+ *  - `virtualFiles`  → in-memory overlay on top of the real Node fs (Node only).
+ *  - neither         → the real Node compiler host reading from disk (Node only).
+ *
+ * The latter two require Node (`ts.createCompilerHost` uses `ts.sys`); reaching them
+ * in a non-Node environment throws a clear error rather than a cryptic `ts.sys` crash.
  */
 export function createProgram(
     rootFileNames: readonly string[],
     options: ts.CompilerOptions = DEFAULT_COMPILER_OPTIONS,
-    virtualFiles?: VirtualFiles
+    opts: CreateProgramOptions = {}
 ): ts.Program {
-    const defaultHost = ts.createCompilerHost(options);
-    if (!virtualFiles) {
-        return ts.createProgram([...rootFileNames], options, defaultHost);
+    // Mode 3 — fully virtual: no ts.sys, no ts.createCompilerHost. Browser-safe.
+    if (opts.system !== undefined) {
+        const { compilerHost } = createVirtualCompilerHost(opts.system, options, ts);
+        return ts.createProgram([...rootFileNames], options, compilerHost);
     }
-    const host = createInMemoryHost(virtualFiles, defaultHost);
-    return ts.createProgram([...rootFileNames], options, host);
+
+    // Modes 1 & 2 need a real Node host (disk access). Guard so browser misuse is legible.
+    if (!isNode()) {
+        throw new Error(
+            "createProgram requires an in-memory `system` (e.g. @typescript/vfs createSystem) " +
+                "when not running under Node — the real filesystem is unavailable."
+        );
+    }
+
+    const defaultHost = ts.createCompilerHost(options);
+    if (opts.virtualFiles !== undefined) {
+        // Mode 2 — in-memory overlay on the real fs.
+        const host = createInMemoryHost(opts.virtualFiles, defaultHost);
+        return ts.createProgram([...rootFileNames], options, host);
+    }
+    // Mode 1 — disk.
+    return ts.createProgram([...rootFileNames], options, defaultHost);
+}
+
+/** True when running under Node (where `ts.sys`/`ts.createCompilerHost` can touch disk). */
+function isNode(): boolean {
+    return typeof globalThis.process !== "undefined" && globalThis.process.versions?.node !== undefined;
 }
 
 function createInMemoryHost(

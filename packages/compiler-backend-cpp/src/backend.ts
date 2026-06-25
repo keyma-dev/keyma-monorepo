@@ -1,4 +1,4 @@
-import path from "node:path";
+import { path } from "@keyma/compiler-util";
 import type {
     KeymaIR, IRSchema, IREnumDeclaration, IRService, IRType,
     IRValidatorDeclaration, IRFormatterDeclaration, IRFunctionDeclaration,

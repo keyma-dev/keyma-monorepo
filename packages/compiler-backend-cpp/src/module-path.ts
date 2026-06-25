@@ -1,4 +1,6 @@
-import path from "node:path";
+import { moduleOf as moduleOfWith } from "@keyma/compiler-util";
+
+export { isLocal } from "@keyma/compiler-util";
 
 /** C++ keywords (and a few contextual ones) that must not be emitted as bare identifiers. */
 const CPP_KEYWORDS = new Set([
@@ -34,20 +36,7 @@ export function cppSanitizer(segment: string): string {
  * `user_credentials` and an `@Edge({ name: "KNOWS" })` in `user.ts` lands in `user`.
  */
 export function moduleOf(sourceFile: string, sourceRoot: string | undefined): string {
-    const stem = path.basename(sourceFile).replace(/\.[^.]+$/, "");
-    if (!sourceRoot) return cppSanitizer(stem);
-    const rel = path.relative(sourceRoot, sourceFile);
-    const dir = path.dirname(rel);
-    const segs = (dir === "." ? [] : dir.split(path.sep)).map(cppSanitizer);
-    segs.push(cppSanitizer(stem));
-    return segs.join(path.posix.sep);
-}
-
-/** Whether a source file lives inside `sourceRoot` (project-local, not a library import). */
-export function isLocal(sourceFile: string, sourceRoot: string | undefined): boolean {
-    if (!sourceRoot) return true;
-    const rel = path.relative(sourceRoot, sourceFile);
-    return !rel.startsWith("..") && !path.isAbsolute(rel);
+    return moduleOfWith(sourceFile, sourceRoot, cppSanitizer);
 }
 
 /**

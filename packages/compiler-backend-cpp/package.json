@@ -27,7 +27,8 @@
     },
     "dependencies": {
         "@keyma/ir": "^0.0.1",
-        "@keyma/compiler": "^0.0.1"
+        "@keyma/compiler": "^0.0.1",
+        "@keyma/compiler-util": "^0.0.1"
     },
     "devDependencies": {
         "@keyma/runtime-cpp": "*",

@@ -1,4 +1,4 @@
-import path from "node:path";
+import { path } from "@keyma/compiler-util";
 import type { KeymaIR, IRSchema, IRValidatorDeclaration, IRFormatterDeclaration, IRFunctionDeclaration } from "@keyma/ir";
 import type { KeymaBackend, KeymaTargetConfig, ResolvedConfig, EmitFile, EmitResult } from "@keyma/compiler";
 import { emitModulePython, type ModuleEmitDeps } from "./emit-module.js";

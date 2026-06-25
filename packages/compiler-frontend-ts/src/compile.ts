@@ -1,8 +1,7 @@
-import path from "node:path";
-import { fileURLToPath } from "node:url";
+import { path } from "@keyma/compiler-util";
 import ts from "typescript";
 import type { KeymaIR, IRDiagnostic, IRSchema } from "@keyma/ir";
-import { createProgram, DEFAULT_COMPILER_OPTIONS, type VirtualFiles } from "./program.js";
+import { createProgram, DEFAULT_COMPILER_OPTIONS } from "./program.js";
 import { discoverSchemas } from "./discover.js";
 import { discoverEnums } from "./discover-enums.js";
 import { createValidatorFormatterCollector } from "./discover-validators.js";
@@ -46,6 +45,12 @@ export type FrontendConfig = {
      *  resolve to them). Lets the same class names coexist across libraries by
      *  namespacing the canonical identity. Defaults to "" (no prefix). */
     schemaPrefix?: string;
+    /** A fully in-memory `ts.System` (e.g. from `@typescript/vfs createSystem`,
+     *  pre-loaded with the TS lib files and `@keyma/dsl`/validator/formatter sources).
+     *  When provided, compilation runs entirely in memory and touches NO real
+     *  filesystem — this is the browser-capable path. The `files` must already exist
+     *  in the system's map (use {@link compileVirtual} to inject them automatically). */
+    system?: ts.System;
 };
 
 export type CompileResult = {
@@ -56,7 +61,11 @@ export type CompileResult = {
 /** Compile TypeScript source files to Keyma IR. */
 export function compile(config: FrontendConfig): CompileResult {
     const options = { ...DEFAULT_COMPILER_OPTIONS, ...(config.compilerOptions ?? {}) };
-    const program = createProgram(config.files, options);
+    const program = createProgram(
+        config.files,
+        options,
+        config.system !== undefined ? { system: config.system } : {}
+    );
 
     const baseDir = config.baseDir ?? findCommonBase(config.files);
 
@@ -68,25 +77,45 @@ export function compile(config: FrontendConfig): CompileResult {
 
 /**
  * Compile virtual in-memory TypeScript sources to Keyma IR.
- * Virtual files are served from memory; module resolution (e.g. @keyma/dsl)
- * uses the real file system starting from `baseDir`.
+ *
+ * Two modes:
+ *  - With `config.system` (browser-capable): the sources are written into the system's
+ *    in-memory map and compiled through a virtual host — NO real filesystem is touched.
+ *    The caller's system must already contain the TS lib files and the
+ *    `@keyma/dsl`/validator/formatter sources for module resolution to succeed.
+ *  - Without `config.system` (Node): the sources are served from an in-memory overlay,
+ *    while module resolution (e.g. `@keyma/dsl`) uses the real filesystem from `baseDir`.
  */
 export function compileVirtual(
     virtualSources: Record<string, string>,
     config: Omit<FrontendConfig, "files"> & { baseDir?: string }
 ): CompileResult {
-    const baseDir = config.baseDir ?? defaultBaseDir();
-    const virtualFiles = new Map<string, string>();
+    const options = { ...DEFAULT_COMPILER_OPTIONS, ...(config.compilerOptions ?? {}) };
     const rootFileNames: string[] = [];
 
+    if (config.system !== undefined) {
+        // Browser path: write the user sources into the (mutable) vfs map and compile
+        // fully in memory. The host reads the map lazily, so writing after createSystem
+        // but before createProgram is safe.
+        const baseDir = config.baseDir ?? config.system.getCurrentDirectory();
+        for (const [relativeName, content] of Object.entries(virtualSources)) {
+            const absPath = path.resolve(baseDir, relativeName);
+            config.system.writeFile(absPath, content);
+            rootFileNames.push(absPath);
+        }
+        const program = createProgram(rootFileNames, options, { system: config.system });
+        return compileProgram(program, { ...config, baseDir, files: rootFileNames });
+    }
+
+    // Node path: in-memory overlay on top of the real filesystem.
+    const baseDir = config.baseDir ?? defaultBaseDir();
+    const virtualFiles = new Map<string, string>();
     for (const [relativeName, content] of Object.entries(virtualSources)) {
         const absPath = path.resolve(baseDir, relativeName);
         virtualFiles.set(absPath, content);
         rootFileNames.push(absPath);
     }
-
-    const options = { ...DEFAULT_COMPILER_OPTIONS, ...(config.compilerOptions ?? {}) };
-    const program = createProgram(rootFileNames, options, virtualFiles as VirtualFiles);
+    const program = createProgram(rootFileNames, options, { virtualFiles });
     return compileProgram(program, {
         ...config,
         ...(baseDir !== undefined ? { baseDir } : {}),
@@ -601,10 +630,14 @@ function analyzeEmbeddedCycles(schemas: IRSchema[], diagnostics: IRDiagnostic[])
     }
 }
 
-/** Get a stable base directory for virtual files (within the compiler-frontend-ts package src). */
+/**
+ * Default base directory for virtual files when none is given and no `system` is used.
+ * Uses the Node cwd (so NodeNext module resolution can find `@keyma/dsl` in node_modules)
+ * without a static `node:*` import; falls back to a virtual root with no process (browser),
+ * where callers should pass an explicit `system` instead.
+ */
 function defaultBaseDir(): string {
-    const thisFile = fileURLToPath(import.meta.url);
-    return path.dirname(thisFile);
+    return globalThis.process?.cwd?.() ?? "/";
 }
 
 function findCommonBase(files: readonly string[]): string | undefined {
