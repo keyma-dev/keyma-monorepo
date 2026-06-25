@@ -6,11 +6,12 @@
 // `refs`. `normalize_reference_ids` collapses reference-field values to bare ids on the
 // write/filter path.
 //
-// Deliberate divergence: a `dateTime` lives in keyma::Value as an epoch-ms int64
-// (value_traits<DateTime>), so serialize passes dates through unchanged — it does NOT emit
-// an ISO-8601 string the way the JS/Python runtimes do. A cross-runtime JSON transport that
-// must interop with an ISO-string peer should translate dates itself (keyma::to_iso8601 /
-// keyma::date_parse exist for that).
+// Wire scalars need no conversion here: a `dateTime` lives in keyma::Value as an epoch-ms
+// int64 and a `bytes` as a base64 string (value_traits<DateTime> / value_traits<vector<byte>>)
+// — both are the canonical cross-runtime wire format shared with the JS and Python runtimes,
+// so serialize passes them through unchanged. (keyma::to_iso8601 / keyma::date_parse are
+// application-logic helpers backing the `date.toISOString()` / `new Date("…")` body
+// intrinsics, not wire helpers.)
 
 #include <keyma/runtime.hpp>
 
@@ -39,8 +40,8 @@ inline Value serialize_element(const Value& v, TypeTag tag, std::string_view tar
         if (sub != nullptr) return serialize(*sub, v, target, a);
         return Value(v, a);
     }
-    // dateTime (epoch-ms int — the C++ wire dialect), reference (already an id/object),
-    // and scalars all pass through verbatim.
+    // dateTime (epoch-ms int64), bytes (base64 string), reference (already an id/object),
+    // and scalars all pass through verbatim — they are already in canonical wire form.
     return Value(v, a);
 }
 

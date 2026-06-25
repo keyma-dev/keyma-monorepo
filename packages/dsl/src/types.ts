@@ -57,7 +57,9 @@ export type ID = Brand<string, "ID">;
 export type DateOnly = Brand<string, "DateOnly">;
 
 /**
- * Instant with timezone (ISO 8601). Equivalent to the native `Date` type.
+ * An absolute instant (equivalent to the native `Date` type). On the wire it serializes as
+ * epoch-milliseconds (`int64`), the canonical cross-runtime format shared by the JS, Python,
+ * and C++ runtimes.
  * Maps to IR type `{ kind: "dateTime" }`.
  */
 export type DateTime = Date;
@@ -85,12 +87,6 @@ export type Json = unknown;
  * Maps to IR type `{ kind: "bytes" }`.
  */
 export type Bytes = Uint8Array;
-
-/**
- * Regular expression pattern.
- * Maps to IR type `{ kind: "regexp" }`.
- */
-export type Regexp = RegExp;
 
 /**
  * Makes a type nullable (T | null).

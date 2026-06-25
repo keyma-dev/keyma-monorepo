@@ -13,7 +13,6 @@ describe("irTypeToCpp — every IRType kind", () => {
         [{ kind: "string" }, "std::pmr::string"],
         [{ kind: "id" }, "std::pmr::string"],
         [{ kind: "decimal" }, "std::pmr::string"],
-        [{ kind: "regexp" }, "std::pmr::string"],
         [{ kind: "enum", values: ["a", "b"] }, "std::pmr::string"],
         [{ kind: "number" }, "double"],
         [{ kind: "integer" }, "std::int64_t"],

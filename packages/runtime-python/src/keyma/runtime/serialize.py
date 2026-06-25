@@ -1,16 +1,17 @@
 """Record serialization — port of ``@keyma/runtime-js`` ``serialize.ts``.
 
-Strips fields by visibility target, converts ``dateTime`` values to ISO strings,
-and recurses into embedded schemas via the metadata ``refs`` dict. Accepts either
-plain dicts or generated model instances (attribute access, so ``@property``
-getter accessors serialize too)."""
+Strips fields by visibility target, converts ``dateTime`` values to epoch-ms ints and
+``bytes`` to base64 strings (the canonical cross-runtime wire format), and recurses into
+embedded schemas via the metadata ``refs`` dict. Accepts either plain dicts or generated
+model instances (attribute access, so ``@property`` getter accessors serialize too)."""
 
 from __future__ import annotations
 
+import base64
 from datetime import datetime
 from typing import Any, Dict, Optional, Tuple
 
-from ._iso import to_iso
+from ._iso import to_epoch_ms
 from .types import FieldType, SchemaMetadata, SerializeTarget
 
 
@@ -45,7 +46,9 @@ def serialize(schema: SchemaMetadata, value: Any, *, target: SerializeTarget) ->
 def _serialize_value(value: Any, type_: FieldType, refs: Optional[Dict[str, Any]], target: SerializeTarget) -> Any:
     kind = type_["kind"]
     if kind == "dateTime" and isinstance(value, datetime):
-        return to_iso(value)
+        return to_epoch_ms(value)
+    if kind == "bytes" and isinstance(value, (bytes, bytearray)):
+        return base64.b64encode(value).decode("ascii")
     if kind == "embedded" and value is not None and _is_record(value):
         sub = (refs or {}).get(type_["schema"])
         if sub is not None:

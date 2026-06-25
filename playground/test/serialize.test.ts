@@ -64,14 +64,24 @@ describe("serialize — visibility, ephemeral, dates, immutability", () => {
         assert.equal(out.previewToken, "tok");
     });
 
-    it("Date -> ISO string on dateTime fields", () => {
+    it("Date -> epoch-ms on dateTime fields", () => {
         const out = serialize(
             Author.schema,
             { id: "a1", createdAt: new Date("2024-01-02T03:04:05.000Z") },
             { target: "client" },
         );
-        assert.equal(out.createdAt, "2024-01-02T03:04:05.000Z");
-        assert.equal(typeof out.createdAt, "string");
+        assert.equal(out.createdAt, 1704164645000);
+        assert.equal(typeof out.createdAt, "number");
+    });
+
+    it("Uint8Array -> base64 string on bytes fields", () => {
+        const out = serialize(
+            Author.schema,
+            { id: "a1", avatar: new Uint8Array([0, 1, 2, 253, 254, 255]) },
+            { target: "client" },
+        );
+        assert.equal(out.avatar, "AAEC/f7/");
+        assert.equal(typeof out.avatar, "string");
     });
 
     it("returns a NEW object and does not mutate the input", () => {
@@ -90,7 +100,7 @@ describe("serialize — visibility, ephemeral, dates, immutability", () => {
         assert.equal(input.createdAt.toISOString(), "2024-01-02T03:04:05.000Z");
         // Output is the coerced/stripped form.
         assert.equal("securityStamp" in out, false);
-        assert.equal(out.createdAt, "2024-01-02T03:04:05.000Z");
+        assert.equal(out.createdAt, 1704164645000);
     });
 
     it("only emits fields that are present in the value (no undefined filling)", () => {

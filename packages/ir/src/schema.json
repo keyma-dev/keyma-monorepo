@@ -188,7 +188,6 @@
         { "type": "object", "required": ["kind"], "properties": { "kind": { "const": "dateTime" } }, "additionalProperties": false },
         { "type": "object", "required": ["kind"], "properties": { "kind": { "const": "time" } }, "additionalProperties": false },
         { "type": "object", "required": ["kind"], "properties": { "kind": { "const": "id" } }, "additionalProperties": false },
-        { "type": "object", "required": ["kind"], "properties": { "kind": { "const": "regexp" } }, "additionalProperties": false },
         {
           "type": "object",
           "required": ["kind", "values"],

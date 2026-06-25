@@ -115,12 +115,11 @@ Key authoring rules:
 |---|---|---|
 | `ID` | `{ kind: "id" }` | Opaque database identifier |
 | `DateOnly` | `{ kind: "date" }` | Calendar date (YYYY-MM-DD) |
-| `DateTime` | `{ kind: "dateTime" }` | Instant with timezone (ISO 8601) |
+| `DateTime` | `{ kind: "dateTime" }` | Instant (wire: epoch-ms `int64`) |
 | `TimeOfDay` | `{ kind: "time" }` | Time of day (HH:MM:SS) |
 | `Decimal` | `{ kind: "decimal" }` | Arbitrary-precision decimal |
 | `Json` | `{ kind: "json" }` | Arbitrary JSON value |
-| `Bytes` | `{ kind: "bytes" }` | Binary blob |
-| `Regexp` | `{ kind: "regexp" }` | Regular expression |
+| `Bytes` | `{ kind: "bytes" }` | Binary blob (wire: base64 string) |
 | `Nullable<T>` | field flag `nullable: true` | Value may be `null` (orthogonal to optionality) |
 | `Reference<T>` | `{ kind: "reference", schema, idType }` | Foreign reference (stores the target's id) |
 | `Embedded<T>` | `{ kind: "embedded", schema }` | Inline sub-document |

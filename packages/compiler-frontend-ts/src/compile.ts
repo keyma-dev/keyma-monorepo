@@ -39,7 +39,7 @@ export type FrontendConfig = {
     dslModuleName?: string;
     /** Compiler version string embedded in the IR document. */
     compilerVersion?: string;
-    /** IR schema version string. Defaults to "4.0.0". */
+    /** IR schema version string. Defaults to "6.0.0". */
     irVersion?: string;
     /** Prefix prepended to every schema/service `name` (and reference targets that
      *  resolve to them). Lets the same class names coexist across libraries by
@@ -237,7 +237,7 @@ function compileProgram(program: ts.Program, config: FrontendConfig): CompileRes
     normalizeSchemaNames(schemas, services, config.schemaPrefix ?? "");
 
     const ir: KeymaIR = {
-        irVersion: config.irVersion ?? "5.0.0",
+        irVersion: config.irVersion ?? "6.0.0",
         compilerVersion: config.compilerVersion ?? "0.1.0",
         ...(config.baseDir !== undefined ? { sourceRoot: config.baseDir } : {}),
         schemas,

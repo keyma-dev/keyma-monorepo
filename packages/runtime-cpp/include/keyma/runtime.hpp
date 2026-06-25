@@ -505,7 +505,7 @@ struct Field {
 
 enum class TypeTag {
     String, Number, Integer, BigInt, Decimal, Boolean, Bytes, Json,
-    Date, DateTime, Time, Id, Regexp, Enum, Array, Reference, Embedded,
+    Date, DateTime, Time, Id, Enum, Array, Reference, Embedded,
 };
 
 enum class Visibility { Public, Private };
@@ -787,6 +787,63 @@ inline std::pmr::string to_iso8601(DateTime t, alloc_t a = {}) {
     return std::pmr::string(buf, a);
 }
 
+// ─── Base64 (RFC 4648, alphabet A-Za-z0-9+/, `=` padding) ─────────────────────
+// The canonical wire encoding for `bytes` fields, byte-compatible with the JS runtime's
+// base64.ts and the Python runtime's `base64` module. Defined here (not json.hpp) so the
+// value_traits<vector<byte>> specialization below can reach it; json.hpp reuses it on the
+// JSON write path.
+namespace detail {
+inline constexpr char kB64[] = "ABCDEFGHIJKLMNOPQRSTUVWXYZabcdefghijklmnopqrstuvwxyz0123456789+/";
+
+inline std::pmr::string base64_encode(std::span<const std::byte> data, alloc_t a) {
+    std::pmr::string out(a);
+    const std::size_t n = data.size();
+    out.reserve(((n + 2) / 3) * 4);
+    auto at = [&](std::size_t k) { return static_cast<unsigned>(std::to_integer<unsigned char>(data[k])); };
+    std::size_t i = 0;
+    for (; i + 3 <= n; i += 3) {
+        unsigned v = (at(i) << 16) | (at(i + 1) << 8) | at(i + 2);
+        out.push_back(kB64[(v >> 18) & 63]); out.push_back(kB64[(v >> 12) & 63]);
+        out.push_back(kB64[(v >> 6) & 63]);  out.push_back(kB64[v & 63]);
+    }
+    if (n - i == 1) {
+        unsigned v = at(i) << 16;
+        out.push_back(kB64[(v >> 18) & 63]); out.push_back(kB64[(v >> 12) & 63]); out += "==";
+    } else if (n - i == 2) {
+        unsigned v = (at(i) << 16) | (at(i + 1) << 8);
+        out.push_back(kB64[(v >> 18) & 63]); out.push_back(kB64[(v >> 12) & 63]);
+        out.push_back(kB64[(v >> 6) & 63]);  out += "=";
+    }
+    return out;
+}
+
+// Decode a base64 string into raw bytes. Padding ('='), whitespace, and any stray
+// non-alphabet character are skipped; trailing sub-byte bits are discarded (best-effort,
+// matching the JS/Python decoders' leniency).
+inline std::pmr::vector<std::byte> base64_decode(std::string_view s, alloc_t a) {
+    std::pmr::vector<std::byte> out(a);
+    out.reserve((s.size() / 4) * 3);
+    unsigned acc = 0;
+    int bits = 0;
+    for (char c : s) {
+        int d;
+        if (c >= 'A' && c <= 'Z') d = c - 'A';
+        else if (c >= 'a' && c <= 'z') d = c - 'a' + 26;
+        else if (c >= '0' && c <= '9') d = c - '0' + 52;
+        else if (c == '+') d = 62;
+        else if (c == '/') d = 63;
+        else continue;  // '=', whitespace, or stray char
+        acc = (acc << 6) | static_cast<unsigned>(d);
+        bits += 6;
+        if (bits >= 8) {
+            bits -= 8;
+            out.push_back(static_cast<std::byte>((acc >> bits) & 0xFFu));
+        }
+    }
+    return out;
+}
+}  // namespace detail
+
 // ─── Type inspection (operate on a Value) ─────────────────────────────────────
 inline bool type_is(const Value& v, std::string_view name) {
     if (name == "string") return v.is_string();
@@ -930,14 +987,21 @@ template <> struct value_traits<Value> {
     static Value to_value(const Value& v, alloc_t a) { return Value(v, a); }
 };
 // bytes leaf (a `bytes` field lowers to std::pmr::vector<std::byte>; the full
-// specialization wins over the generic vector<E> below). from_value round-trips Value
-// bytes; to_value is a documented gap — Value has no public bytes ctor and no schema
-// serializes bytes today, so it yields null.
+// specialization wins over the generic vector<E> below). The canonical wire form is a
+// base64 string (shared with the JS/Python runtimes), so to_value emits base64 and
+// from_value decodes it. An in-process Value carrying the native Bytes variant is also
+// accepted on the read side.
 template <> struct value_traits<std::pmr::vector<std::byte>> {
     static std::pmr::vector<std::byte> from_value(const Value& v, alloc_t a) {
-        return v.is_bytes() ? std::pmr::vector<std::byte>(v.as_bytes(), a) : std::pmr::vector<std::byte>(a);
+        if (v.is_string()) return detail::base64_decode(std::string_view(v.as_string()), a);
+        if (v.is_bytes()) return std::pmr::vector<std::byte>(v.as_bytes(), a);
+        return std::pmr::vector<std::byte>(a);
     }
-    static Value to_value(const std::pmr::vector<std::byte>&, alloc_t a) { return Value(nullptr, a); }
+    static Value to_value(const std::pmr::vector<std::byte>& b, alloc_t a) {
+        return Value(std::string_view(detail::base64_encode(
+                         std::span<const std::byte>(b.data(), b.size()), a)),
+                     a);
+    }
 };
 
 // ── Composite specializations (recurse, threading the allocator) ──

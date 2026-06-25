@@ -1,4 +1,5 @@
 import type { SchemaMetadata, FieldType, SchemaClass } from "./types.js";
+import { base64ToBytes } from "./base64.js";
 
 export function deserialize(
     schema: SchemaMetadata,
@@ -18,8 +19,13 @@ function deserializeValue(
     type: FieldType,
     refs: ReadonlyMap<string, SchemaClass> | undefined,
 ): unknown {
-    if (type.kind === "dateTime" && (typeof value === "string")) {
+    if (type.kind === "dateTime" && typeof value === "number") {
+        // epoch-ms int64 on the wire → Date.
         return new Date(value);
+    }
+    if (type.kind === "bytes" && typeof value === "string") {
+        // base64 string on the wire → Uint8Array.
+        return base64ToBytes(value);
     }
 
     if (type.kind === "embedded") {

@@ -217,7 +217,7 @@ function literalMatchesType(value: unknown, type: IRType): boolean {
     switch (type.kind) {
         case "json":
             return true; // any JSON value
-        case "string": case "id": case "decimal": case "date": case "dateTime": case "time": case "regexp":
+        case "string": case "id": case "decimal": case "date": case "dateTime": case "time":
             return typeof value === "string";
         case "number": case "integer":
             return typeof value === "number";

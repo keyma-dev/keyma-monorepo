@@ -1,14 +1,15 @@
 """Record deserialization / hydration — port of ``@keyma/runtime-js`` ``deserialize.ts``.
 
-Converts ISO ``dateTime`` strings to :class:`datetime`, instantiates embedded
-subobjects via the metadata ``refs`` dict, and constructs reference stubs (bare id)
-or fully-populated reference instances."""
+Converts epoch-ms ``dateTime`` ints to :class:`datetime` and base64 ``bytes`` strings to
+:class:`bytes`, instantiates embedded subobjects via the metadata ``refs`` dict, and
+constructs reference stubs (bare id) or fully-populated reference instances."""
 
 from __future__ import annotations
 
+import base64
 from typing import Any, Dict, Optional
 
-from ._iso import from_iso
+from ._iso import from_epoch_ms
 from .types import FieldType, SchemaMetadata
 
 
@@ -25,8 +26,11 @@ def deserialize(schema: SchemaMetadata, value: Dict[str, Any]) -> Dict[str, Any]
 def _deserialize_value(value: Any, type_: FieldType, refs: Optional[Dict[str, Any]]) -> Any:
     kind = type_["kind"]
 
-    if kind == "dateTime" and isinstance(value, str):
-        return from_iso(value)
+    if kind == "dateTime" and isinstance(value, (int, float)) and not isinstance(value, bool):
+        return from_epoch_ms(value)
+
+    if kind == "bytes" and isinstance(value, str):
+        return base64.b64decode(value)
 
     if kind == "embedded":
         if value is None or not isinstance(value, dict):

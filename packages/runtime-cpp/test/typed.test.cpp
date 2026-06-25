@@ -414,10 +414,40 @@ static void test_send(alloc_t a) {
     assert(sync_get(send(tx, Keyma::count<app::User>(Value{}, a), {}, a)) == 0);
 }
 
+// ─── bytes round-trip: base64 string is the canonical cross-runtime wire form ──────────
+static void test_bytes_roundtrip(alloc_t a) {
+    using Bytes = std::pmr::vector<std::byte>;
+    Bytes data(a);
+    for (int x : {0, 1, 2, 253, 254, 255}) data.push_back(static_cast<std::byte>(x));
+
+    // to_value emits a base64 string (matching the JS/Python runtimes byte-for-byte).
+    Value v = keyma::to_value(data, a);
+    assert(v.is_string());
+    assert(v.as_string() == std::string_view("AAEC/f7/"));
+
+    // from_value decodes the base64 string back to the original bytes.
+    assert(keyma::from_value<Bytes>(v, a) == data);
+
+    // Full JSON wire round-trip: the field is a quoted base64 string.
+    Value obj = Value::object(a);
+    obj.set("blob", keyma::to_value(data, a));
+    std::pmr::string json = json_stringify(obj, a);
+    assert(json == std::string_view("{\"blob\":\"AAEC/f7/\"}"));
+    Value parsed = json_parse(json, a);
+    assert(keyma::from_value<Bytes>(parsed.at("blob"), a) == data);
+
+    // Edge cases: empty string → empty bytes; padded single byte.
+    assert(keyma::from_value<Bytes>(Value(std::string_view(""), a), a).empty());
+    Bytes one(a);
+    one.push_back(static_cast<std::byte>(1));
+    assert(keyma::from_value<Bytes>(Value(std::string_view("AQ=="), a), a) == one);
+}
+
 int main() {
     std::pmr::monotonic_buffer_resource pool;
     alloc_t a{&pool};
     test_where_lowering(a);
     test_send(a);
+    test_bytes_roundtrip(a);
     return 0;
 }

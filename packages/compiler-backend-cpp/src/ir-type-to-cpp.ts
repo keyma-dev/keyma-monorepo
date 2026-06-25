@@ -20,7 +20,6 @@ export function irTypeToCpp(
         case "date":
         case "time":
         case "decimal":
-        case "regexp":
             return "std::pmr::string";
         case "enum":
             return type.name !== undefined
@@ -128,7 +127,7 @@ export function fieldKind(field: IRField): string {
     let k: string;
     switch (core.kind) {
         case "string": case "id": case "date": case "time": case "decimal":
-        case "regexp": case "number": case "integer": case "bigint": case "dateTime":
+        case "number": case "integer": case "bigint": case "dateTime":
             k = "Ordered"; break;
         case "enum":
             k = core.name !== undefined ? "Enum" : "Ordered"; break;  // named enum vs inline string-union
@@ -154,7 +153,7 @@ export function typeTag(type: IRType): string {
     const map: Record<IRType["kind"], string> = {
         string: "String", number: "Number", integer: "Integer", bigint: "BigInt",
         decimal: "Decimal", boolean: "Boolean", bytes: "Bytes", json: "Json",
-        date: "Date", dateTime: "DateTime", time: "Time", id: "Id", regexp: "Regexp",
+        date: "Date", dateTime: "DateTime", time: "Time", id: "Id",
         enum: "Enum", array: "Array", reference: "Reference", embedded: "Embedded",
     };
     return `keyma::TypeTag::${map[type.kind]}`;
@@ -174,7 +173,6 @@ export function valueBinding(type: IRType, rawVar: string): { cppType: string; i
         case "date":
         case "time":
         case "decimal":
-        case "regexp":
         case "enum":
             return { cppType: "const std::pmr::string&", init: `${rawVar}.as_string()` };
         case "number":
@@ -208,7 +206,6 @@ export function irTypeGuard(type: IRType, value: string): string | null {
         case "date":
         case "time":
         case "decimal":
-        case "regexp":
         case "enum":
             return `${value}.is_string()`;
         case "number":

@@ -80,29 +80,8 @@ inline void write_double(std::pmr::string& out, double d) {
         out += ".0";
 }
 
-inline constexpr char kB64[] = "ABCDEFGHIJKLMNOPQRSTUVWXYZabcdefghijklmnopqrstuvwxyz0123456789+/";
-
-inline std::pmr::string base64_encode(std::span<const std::byte> data, alloc_t a) {
-    std::pmr::string out(a);
-    const std::size_t n = data.size();
-    out.reserve(((n + 2) / 3) * 4);
-    auto at = [&](std::size_t k) { return static_cast<unsigned>(std::to_integer<unsigned char>(data[k])); };
-    std::size_t i = 0;
-    for (; i + 3 <= n; i += 3) {
-        unsigned v = (at(i) << 16) | (at(i + 1) << 8) | at(i + 2);
-        out.push_back(kB64[(v >> 18) & 63]); out.push_back(kB64[(v >> 12) & 63]);
-        out.push_back(kB64[(v >> 6) & 63]);  out.push_back(kB64[v & 63]);
-    }
-    if (n - i == 1) {
-        unsigned v = at(i) << 16;
-        out.push_back(kB64[(v >> 18) & 63]); out.push_back(kB64[(v >> 12) & 63]); out += "==";
-    } else if (n - i == 2) {
-        unsigned v = (at(i) << 16) | (at(i + 1) << 8);
-        out.push_back(kB64[(v >> 18) & 63]); out.push_back(kB64[(v >> 12) & 63]);
-        out.push_back(kB64[(v >> 6) & 63]);  out += "=";
-    }
-    return out;
-}
+// base64_encode lives in keyma::detail (runtime.hpp) so value_traits<vector<byte>> can
+// reach it; the JSON writer below reuses it for the Bytes variant.
 
 // ── Writer ──
 struct Writer {
@@ -154,7 +133,7 @@ struct Writer {
                 newline_indent(depth); out.push_back('}');
             } else if constexpr (std::is_same_v<T, Value::Bytes>) {
                 out.push_back('"');
-                out += base64_encode(std::span<const std::byte>(x.data(), x.size()), a);
+                out += keyma::detail::base64_encode(std::span<const std::byte>(x.data(), x.size()), a);
                 out.push_back('"');
             }
         }, v.storage());

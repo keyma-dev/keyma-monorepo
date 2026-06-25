@@ -75,12 +75,12 @@ function withRefs(fields: SchemaMetadata["fields"]): SchemaMetadata {
 // ─── Tests ───────────────────────────────────────────────────────────────────
 
 describe("deserialize", () => {
-    it("converts dateTime ISO strings to Date", () => {
+    it("converts dateTime epoch-ms numbers to Date", () => {
         const schema = withRefs([{ name: "when", type: { kind: "dateTime" } }]);
-        const iso = "2024-01-02T03:04:05.000Z";
-        const out = deserialize(schema, { when: iso });
+        const epochMs = 1704164645000; // 2024-01-02T03:04:05.000Z
+        const out = deserialize(schema, { when: epochMs });
         assert.ok(out["when"] instanceof Date);
-        assert.equal((out["when"] as Date).toISOString(), iso);
+        assert.equal((out["when"] as Date).getTime(), epochMs);
     });
 
     it("passes null/undefined through a nullable dateTime", () => {
@@ -101,11 +101,23 @@ describe("deserialize", () => {
             { name: "stamps", type: { kind: "array", of: { kind: "dateTime" } } },
         ]);
         const out = deserialize(schema, {
-            stamps: ["2024-01-01T00:00:00.000Z", "2024-02-02T00:00:00.000Z"],
+            stamps: [1704067200000, 1706832000000], // 2024-01-01 / 2024-02-02 UTC
         });
         const stamps = out["stamps"] as unknown[];
         assert.ok(stamps[0] instanceof Date);
         assert.ok(stamps[1] instanceof Date);
+    });
+
+    it("converts base64 strings to Uint8Array on bytes fields", () => {
+        const schema = withRefs([
+            { name: "blob", type: { kind: "bytes" } },
+            { name: "blobs", type: { kind: "array", of: { kind: "bytes" } } },
+        ]);
+        const out = deserialize(schema, { blob: "AAEC/f7/", blobs: ["", "AQ=="] });
+        assert.deepEqual(out["blob"], new Uint8Array([0, 1, 2, 253, 254, 255]));
+        const blobs = out["blobs"] as unknown[];
+        assert.deepEqual(blobs[0], new Uint8Array([]));
+        assert.deepEqual(blobs[1], new Uint8Array([1]));
     });
 
     it("instantiates embedded subobjects via refs and recurses into them", () => {
@@ -113,7 +125,7 @@ describe("deserialize", () => {
             { name: "inner", type: { kind: "embedded", schema: "inner" } },
         ]);
         const out = deserialize(schema, {
-            inner: { label: "hi", when: "2024-01-02T03:04:05.000Z" },
+            inner: { label: "hi", when: 1704164645000 },
         });
         assert.ok(out["inner"] instanceof Inner);
         const inner = out["inner"] as InnerRecord;

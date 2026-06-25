@@ -13,7 +13,6 @@ export type FieldType =
     | { kind: "dateTime" }
     | { kind: "time" }
     | { kind: "id" }
-    | { kind: "regexp" }
     | { kind: "enum"; values: string[] }
     | { kind: "array"; of: FieldType; elementNullable?: boolean }
     | { kind: "reference"; schema: string; idType?: FieldType }

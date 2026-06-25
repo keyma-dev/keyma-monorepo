@@ -51,10 +51,11 @@ Beyond the model substrate, the package ships the C++ counterpart of the
 Adapters and plugins are **interfaces only** — concrete database adapters and plugins are
 separate `@keyma/adapter-*-cpp` / `@keyma/plugin-*-cpp` packages.
 
-> Note on dates: a `dateTime` lives in `keyma::Value` as an epoch-ms `int64`, so `serialize`
-> passes dates through unchanged rather than emitting an ISO-8601 string the way the JS/
-> Python runtimes do. A transport that must interop with an ISO-string peer should translate
-> dates itself (`keyma::to_iso8601` / `keyma::date_parse`).
+> Note on wire format: a `dateTime` is an epoch-ms `int64` and a `bytes` is a base64 string
+> on the wire — the canonical cross-runtime format the JS, Python, and C++ runtimes all share,
+> so `serialize` passes both through unchanged with no conversion. (`keyma::to_iso8601` /
+> `keyma::date_parse` are application-logic helpers backing the `date.toISOString()` /
+> `new Date("…")` body intrinsics, not wire helpers.)
 
 ## Async policy — bring your own scheduler
 

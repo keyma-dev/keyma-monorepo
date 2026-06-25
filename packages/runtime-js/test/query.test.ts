@@ -173,7 +173,7 @@ describe("Keyma.query / Keyma.mutation — request substitution", () => {
     });
 
     it("hydrates nested embedded, reference, and dateTime fields when schema.refs is populated", async () => {
-        const iso = "2024-05-16T10:00:00.000Z";
+        const epochMs = 1715853600000; // 2024-05-16T10:00:00.000Z
         const transport = async () => ({
             results: {
                 bareRef: {
@@ -184,7 +184,7 @@ describe("Keyma.query / Keyma.mutation — request substitution", () => {
                         name: "Alice",
                         organization: "o1",
                         address: { line1: "1 Main", city: "Springfield", postalCode: "12345" },
-                        createdAt: iso,
+                        createdAt: epochMs,
                     },
                 },
                 populatedRef: {
@@ -195,7 +195,7 @@ describe("Keyma.query / Keyma.mutation — request substitution", () => {
                         name: "Bob",
                         organization: { id: "o1", name: "Acme", tier: "pro" },
                         address: { line1: "2 Oak", city: "Shelbyville", postalCode: "67890" },
-                        createdAt: iso,
+                        createdAt: epochMs,
                     },
                 },
                 listed: {
@@ -207,7 +207,7 @@ describe("Keyma.query / Keyma.mutation — request substitution", () => {
                             name: "Carol",
                             organization: "o1",
                             address: { line1: "3 Pine", city: "Capital City", postalCode: "11111" },
-                            createdAt: iso,
+                            createdAt: epochMs,
                         },
                     ],
                 },
@@ -235,7 +235,7 @@ describe("Keyma.query / Keyma.mutation — request substitution", () => {
             assert.ok(u.address instanceof Address);
             assert.equal(u.address.city, "Springfield");
             assert.ok(u.createdAt instanceof Date);
-            assert.equal(u.createdAt.toISOString(), iso);
+            assert.equal(u.createdAt.getTime(), epochMs);
         }
 
         assert.equal(resp.results.populatedRef.ok, true);

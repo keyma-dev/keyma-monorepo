@@ -24,7 +24,6 @@ export type IRType =
     | { kind: "dateTime" }
     | { kind: "time" }
     | { kind: "id" }
-    | { kind: "regexp" }
     /** A string enum. `name` is set when it resolves to a named (reusable) enum
      *  declaration; absent for an inline string-literal union. */
     | { kind: "enum"; values: string[]; name?: string }

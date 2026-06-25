@@ -148,7 +148,6 @@ describe("metadata — Post field/index metadata", () => {
         assert.equal(field(Post.schema, "price").type.kind, "decimal");
         assert.equal(field(Post.schema, "publishedOn").type.kind, "date");
         assert.equal(field(Post.schema, "scheduledTime").type.kind, "time");
-        assert.equal(field(Post.schema, "permalink").type.kind, "regexp");
     });
 
     it("subtitle is nullable, previewToken is ephemeral, summary is a getter (not a field)", () => {

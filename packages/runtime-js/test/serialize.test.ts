@@ -46,4 +46,26 @@ describe("serialize", () => {
         const out = serialize(SCHEMA, { id: "u1" }, { target: "client" });
         assert.deepEqual(out, { id: "u1" });
     });
+
+    it("encodes dateTime as epoch-ms and bytes as base64 on the wire", () => {
+        const schema: SchemaMetadata = {
+            name: "wire",
+            sourceName: "Wire",
+            fields: [
+                { name: "when", type: { kind: "dateTime" } },
+                { name: "blob", type: { kind: "bytes" } },
+            ],
+        };
+        const out = serialize(
+            schema,
+            {
+                when: new Date("2024-01-02T03:04:05.000Z"),
+                blob: new Uint8Array([0, 1, 2, 253, 254, 255]),
+            },
+            { target: "server" },
+        );
+        assert.equal(out["when"], 1704164645000);
+        assert.equal(typeof out["when"], "number");
+        assert.equal(out["blob"], "AAEC/f7/");
+    });
 });

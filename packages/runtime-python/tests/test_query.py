@@ -7,12 +7,11 @@ Covers two describe groups:
 
 from __future__ import annotations
 
-from datetime import datetime
+from datetime import datetime, timezone
 
 import pytest
 
 from keyma.runtime import Keyma, Input
-from keyma.runtime._iso import to_iso
 
 from fixtures import User, Organization, Address, UserWithRefs
 
@@ -186,7 +185,7 @@ async def test_returns_the_typed_results_object_hydrated_into_class_instances():
 
 
 async def test_hydrates_nested_embedded_reference_and_datetime_fields_when_refs_populated():
-    iso = "2024-05-16T10:00:00.000Z"
+    epoch_ms = 1715853600000  # 2024-05-16T10:00:00.000Z
 
     async def transport(req):
         return {
@@ -199,7 +198,7 @@ async def test_hydrates_nested_embedded_reference_and_datetime_fields_when_refs_
                         "name": "Alice",
                         "organization": "o1",
                         "address": {"line1": "1 Main", "city": "Springfield", "postalCode": "12345"},
-                        "createdAt": iso,
+                        "createdAt": epoch_ms,
                     },
                 },
                 "populatedRef": {
@@ -210,7 +209,7 @@ async def test_hydrates_nested_embedded_reference_and_datetime_fields_when_refs_
                         "name": "Bob",
                         "organization": {"id": "o1", "name": "Acme", "tier": "pro"},
                         "address": {"line1": "2 Oak", "city": "Shelbyville", "postalCode": "67890"},
-                        "createdAt": iso,
+                        "createdAt": epoch_ms,
                     },
                 },
                 "listed": {
@@ -222,7 +221,7 @@ async def test_hydrates_nested_embedded_reference_and_datetime_fields_when_refs_
                             "name": "Carol",
                             "organization": "o1",
                             "address": {"line1": "3 Pine", "city": "Capital City", "postalCode": "11111"},
-                            "createdAt": iso,
+                            "createdAt": epoch_ms,
                         }
                     ],
                 },
@@ -253,7 +252,7 @@ async def test_hydrates_nested_embedded_reference_and_datetime_fields_when_refs_
         assert isinstance(u.address, Address)
         assert u.address.city == "Springfield"
         assert isinstance(u.createdAt, datetime)
-        assert to_iso(u.createdAt) == iso
+        assert u.createdAt == datetime(2024, 5, 16, 10, 0, 0, tzinfo=timezone.utc)
 
     assert resp["results"]["populatedRef"]["ok"] is True
     if resp["results"]["populatedRef"]["ok"] and resp["results"]["populatedRef"]["data"] is not None:

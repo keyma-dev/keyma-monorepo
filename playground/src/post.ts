@@ -14,7 +14,6 @@ import type {
     TimeOfDay,
     Decimal,
     Json,
-    Regexp,
     Nullable,
 } from "@keyma/dsl";
 import {
@@ -114,8 +113,6 @@ export class Post extends Entity {
     readingMinutes: number = 1;
 
     declare metadata?: Json;
-
-    declare permalink?: Regexp;
 
     declare subtitle?: Nullable<string>;
 

@@ -41,8 +41,6 @@ function toGremlin(value: unknown, type: FieldType): unknown {
             return value instanceof Date ? value.toISOString() : value;
         case "json":
             return JSON.stringify(value);
-        case "regexp":
-            return value instanceof RegExp ? value.source : value;
         default:
             // string / number / integer / boolean / enum / id / reference
             return value;

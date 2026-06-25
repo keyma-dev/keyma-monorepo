@@ -6,11 +6,10 @@ branded via ``brand_schema`` rather than the shared fixtures.
 
 from __future__ import annotations
 
-from datetime import datetime
+from datetime import datetime, timezone
 from typing import Any, Dict, List, Optional
 
 from keyma.runtime import deserialize
-from keyma.runtime._iso import to_iso
 from keyma.runtime.testing import brand_schema
 
 
@@ -67,12 +66,12 @@ def with_refs(fields: List[Dict[str, Any]]) -> Dict[str, Any]:
 # ─── Tests ───────────────────────────────────────────────────────────────────
 
 
-def test_converts_date_time_iso_strings_to_date():
+def test_converts_date_time_epoch_ms_to_datetime():
     schema = with_refs([{"name": "when", "type": {"kind": "dateTime"}}])
-    iso = "2024-01-02T03:04:05.000Z"
-    out = deserialize(schema, {"when": iso})
+    epoch_ms = 1704164645000  # 2024-01-02T03:04:05.000Z
+    out = deserialize(schema, {"when": epoch_ms})
     assert isinstance(out["when"], datetime)
-    assert to_iso(out["when"]) == iso
+    assert out["when"] == datetime(2024, 1, 2, 3, 4, 5, tzinfo=timezone.utc)
 
 
 def test_passes_null_undefined_through_a_nullable_date_time():
@@ -97,11 +96,23 @@ def test_converts_every_element_in_an_array_of_date_time():
     )
     out = deserialize(
         schema,
-        {"stamps": ["2024-01-01T00:00:00.000Z", "2024-02-02T00:00:00.000Z"]},
+        {"stamps": [1704067200000, 1706832000000]},  # 2024-01-01 / 2024-02-02 UTC
     )
     stamps = out["stamps"]
     assert isinstance(stamps[0], datetime)
     assert isinstance(stamps[1], datetime)
+
+
+def test_converts_base64_strings_to_bytes_on_bytes_fields():
+    schema = with_refs(
+        [
+            {"name": "blob", "type": {"kind": "bytes"}},
+            {"name": "blobs", "type": {"kind": "array", "of": {"kind": "bytes"}}},
+        ]
+    )
+    out = deserialize(schema, {"blob": "AAEC/f7/", "blobs": ["", "AQ=="]})
+    assert out["blob"] == bytes([0, 1, 2, 253, 254, 255])
+    assert out["blobs"] == [b"", bytes([1])]
 
 
 def test_instantiates_embedded_subobjects_via_refs_and_recurses_into_them():
@@ -110,7 +121,7 @@ def test_instantiates_embedded_subobjects_via_refs_and_recurses_into_them():
     )
     out = deserialize(
         schema,
-        {"inner": {"label": "hi", "when": "2024-01-02T03:04:05.000Z"}},
+        {"inner": {"label": "hi", "when": 1704164645000}},
     )
     assert isinstance(out["inner"], Inner)
     inner = out["inner"]

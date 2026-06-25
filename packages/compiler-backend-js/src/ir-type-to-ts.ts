@@ -26,7 +26,6 @@ export function irTypeToTs(
         case "time":     return "string";
         case "id":       return "string";
         case "json":     return "unknown";
-        case "regexp":   return "RegExp";
 
         case "enum":
             return type.values.map((v) => JSON.stringify(v)).join(" | ");
@@ -57,8 +56,6 @@ export function jsTypeGuard(type: IRType, value: string): string | null {
         case "time":
         case "decimal":
             return `typeof ${value} === "string"`;
-        case "regexp":
-            return `${value} instanceof RegExp`;
         case "number":
             return `typeof ${value} === "number"`;
         case "integer":

@@ -370,7 +370,7 @@ function fieldAllocAware(field: IRField): boolean {
 function scalarAllocAware(t: IRType): boolean {
     switch (t.kind) {
         case "string": case "id": case "date": case "time": case "decimal":
-        case "regexp": case "json": case "array": case "bytes":
+        case "json": case "array": case "bytes":
             return true;
         case "enum":
             // A named enum lowers to a plain `enum class`; an inline union to a pmr string.

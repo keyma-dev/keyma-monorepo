@@ -1,4 +1,5 @@
 import type { SchemaMetadata, FieldType, SchemaClass } from "./types.js";
+import { bytesToBase64 } from "./base64.js";
 
 export type SerializeTarget = "client" | "server" | "database";
 
@@ -25,7 +26,12 @@ function serializeValue(
     opts: { target: SerializeTarget },
 ): unknown {
     if (type.kind === "dateTime" && value instanceof Date) {
-        return value.toISOString();
+        // epoch-ms int64 — the canonical cross-runtime wire format (shared with Python/C++).
+        return value.getTime();
+    }
+    if (type.kind === "bytes" && value instanceof Uint8Array) {
+        // base64 string — the canonical cross-runtime wire format for `bytes`.
+        return bytesToBase64(value);
     }
     if (
         type.kind === "embedded" &&

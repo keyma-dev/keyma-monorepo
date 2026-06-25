@@ -22,7 +22,6 @@ export function irTypeToPython(
         case "time":     return "str";
         case "id":       return "str";
         case "json":     return "Any"; // Requires from typing import Any
-        case "regexp":   return "str";
 
         case "enum":
             return `Literal[${type.values.map((v) => JSON.stringify(v)).join(", ")}]`; // Requires from typing import Literal
@@ -55,7 +54,6 @@ export function irTypeGuard(type: IRType, value: string): string | null {
         case "date":
         case "time":
         case "decimal":
-        case "regexp":
             return `isinstance(${value}, str)`;
         case "number":
             return `isinstance(${value}, (int, float)) and not isinstance(${value}, bool)`;

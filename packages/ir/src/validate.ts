@@ -283,7 +283,7 @@ function checkFormField(form: unknown, path: string): IRValidationError[] {
 
 const SCALAR_TYPE_KINDS = new Set([
     "string", "number", "integer", "bigint", "decimal", "boolean",
-    "bytes", "json", "date", "dateTime", "time", "id", "regexp"
+    "bytes", "json", "date", "dateTime", "time", "id"
 ]);
 
 function checkType(type: unknown, path: string): IRValidationError[] {

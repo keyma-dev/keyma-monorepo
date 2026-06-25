@@ -61,7 +61,7 @@ function paramDecl(name: string, type: IRType, deps: ServiceEmitDeps): string {
 
 function passByRef(type: IRType): boolean {
     switch (type.kind) {
-        case "string": case "id": case "date": case "time": case "decimal": case "regexp":
+        case "string": case "id": case "date": case "time": case "decimal":
         case "bytes": case "json": case "array": case "embedded":
             return true;
         case "enum":

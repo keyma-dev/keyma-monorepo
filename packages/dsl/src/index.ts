@@ -7,7 +7,6 @@ export type {
     Decimal,
     Json,
     Bytes,
-    Regexp,
     Nullable,
     Reference,
     Embedded,

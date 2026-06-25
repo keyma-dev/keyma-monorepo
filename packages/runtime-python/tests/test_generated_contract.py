@@ -265,7 +265,7 @@ def test_serialize_recurses_embedded_via_dict_refs_and_converts_datetime():
         target="server",
     )
     assert out["address"] == {"line1": "1 St", "city": "Town"}
-    assert out["createdAt"] == "2024-01-02T03:04:05.000Z"
+    assert out["createdAt"] == 1704164645000
 
 
 def test_serialize_omits_getter_accessor():
@@ -280,7 +280,7 @@ def test_serialize_omits_getter_accessor():
 def test_deserialize_instantiates_embedded_and_parses_datetime():
     out = deserialize(
         User.schema,
-        {"id": "u1", "address": {"line1": "1 St", "city": "Town"}, "createdAt": "2024-01-02T03:04:05.000Z"},
+        {"id": "u1", "address": {"line1": "1 St", "city": "Town"}, "createdAt": 1704164645000},
     )
     assert isinstance(out["address"], Address)
     assert out["address"].city == "Town"
