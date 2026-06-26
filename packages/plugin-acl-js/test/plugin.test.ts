@@ -1,7 +1,7 @@
 import { describe, it } from "node:test";
 import assert from "node:assert/strict";
-import { KeymaServer } from "@keyma/runtime-js";
-import { InMemoryAdapter } from "@keyma/runtime-js/testing";
+import { KeymaServer } from "@keyma/runtime/schema";
+import { InMemoryAdapter } from "@keyma/runtime/schema/testing";
 import type {
     KeymaLeafFailure,
     KeymaLeafSuccess,
@@ -9,7 +9,7 @@ import type {
     PluginServerHandle,
     RequestContext,
     SchemaMetadata,
-} from "@keyma/runtime-js";
+} from "@keyma/runtime/schema";
 import {
     KeymaAclAdmin,
     KeymaAclRoleInUse,

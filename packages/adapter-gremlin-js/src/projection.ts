@@ -1,4 +1,4 @@
-import type { AdapterFieldSpec, AdapterProjection } from "@keyma/runtime-js";
+import type { AdapterFieldSpec, AdapterProjection } from "@keyma/runtime/schema";
 
 /** Prune a fully-materialized record down to a projection's `fields` selection,
  *  preserving any keys produced by `populate` (resolved references). When

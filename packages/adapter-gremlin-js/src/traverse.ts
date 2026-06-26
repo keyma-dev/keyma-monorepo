@@ -3,7 +3,7 @@ import type {
     AdapterTraversalResult,
     TraversalSpec,
     TraversalStep,
-} from "@keyma/runtime-js";
+} from "@keyma/runtime/schema";
 import type { GraphTraversalSource } from "./gremlin.js";
 import type { SchemaMap } from "./props.js";
 import { runSteps, type LabelFns, type PathRow } from "./traverse-steps.js";

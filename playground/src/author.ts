@@ -6,8 +6,8 @@ import {
     Indexed,
     Deprecated,
     Phase,
-} from "@keyma/dsl";
-import type { Bytes, Nullable } from "@keyma/dsl";
+} from "@keyma/schema/dsl";
+import type { Bytes, Nullable } from "@keyma/schema/dsl";
 import {
     minLength,
     maxLength,
@@ -16,7 +16,7 @@ import {
     isPhoneNumber,
     pattern,
     oneOf,
-} from "@keyma/validators";
+} from "@keyma/schema/validators";
 import {
     trim,
     lowercase,
@@ -26,7 +26,7 @@ import {
     normalizeUrl,
     normalizePhone,
     normalizeWhitespace,
-} from "@keyma/formatters";
+} from "@keyma/schema/formatters";
 import { Entity } from "./base.js";
 import { notReserved } from "./lib/validators.js";
 

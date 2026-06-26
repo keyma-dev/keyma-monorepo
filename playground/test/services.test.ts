@@ -5,7 +5,7 @@
  */
 import { describe, it } from "node:test";
 import assert from "node:assert/strict";
-import { Keyma } from "@keyma/runtime-js";
+import { Keyma } from "@keyma/runtime/schema";
 import {
     makeHarness,
     validSignupInput,

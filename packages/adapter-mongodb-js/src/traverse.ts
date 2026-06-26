@@ -5,7 +5,7 @@ import type {
     AdapterTraversalResult,
     SchemaMetadata,
     TraversalSpec,
-} from "@keyma/runtime-js";
+} from "@keyma/runtime/schema";
 import { toRecord, type SchemaMap } from "./record.js";
 import { type CollectionNameFn } from "./projection.js";
 import { buildStepsPipeline } from "./traverse-steps.js";

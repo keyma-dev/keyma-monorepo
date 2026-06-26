@@ -1,4 +1,4 @@
-import type { FieldType, SchemaMetadata } from "@keyma/runtime-js";
+import type { FieldType, SchemaMetadata } from "@keyma/runtime/schema";
 import { valueToBson, type SchemaMap } from "./record.js";
 import { MongoAdapterInvalidQuery } from "./errors.js";
 

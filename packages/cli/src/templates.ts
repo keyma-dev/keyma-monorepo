@@ -39,8 +39,8 @@ export function schemaTemplate(name: string): { relativePath: string; content: s
     const fileName = kebabCase(lastPart) || lastPart.toLowerCase();
     const relativePath = ["src", ...parts, `${fileName}.ts`].join("/");
 
-    const content = `import { ID, Schema, Validate, Indexed } from "@keyma/dsl";
-import { required } from "@keyma/validators";
+    const content = `import { ID, Schema, Validate, Indexed } from "@keyma/schema/dsl";
+import { required } from "@keyma/schema/validators";
 
 @Schema({ name: "${schemaName}" })
 export class ${className} {
@@ -67,9 +67,7 @@ function packageJsonTemplate(projectName: string): string {
         },
         devDependencies: {
             "@keyma/cli": "*",
-            "@keyma/dsl": "*",
-            "@keyma/validators": "*",
-            "@keyma/formatters": "*",
+            "@keyma/schema": "*",
             typescript: "^6.0.3",
         },
     };

@@ -1,0 +1,44 @@
+{
+  "name": "@keyma/core",
+  "version": "0.0.1",
+  "description": "Keyma core — domain-neutral authoring DSL, language-neutral IR, and browser-safe compiler utilities",
+  "type": "module",
+  "exports": {
+    "./dsl": {
+      "import": "./dist/dsl/src/index.js",
+      "types": "./dist/dsl/src/index.d.ts"
+    },
+    "./ir": {
+      "import": "./dist/ir/src/index.js",
+      "types": "./dist/ir/src/index.d.ts"
+    },
+    "./ir/schema.json": "./ir/src/schema.json",
+    "./util": {
+      "import": "./dist/util/src/index.js",
+      "types": "./dist/util/src/index.d.ts"
+    }
+  },
+  "files": [
+    "dist/dsl/src",
+    "dist/ir/src",
+    "dist/util/src",
+    "ir/src/schema.json"
+  ],
+  "repository": {
+    "type": "git",
+    "url": "git+https://github.com/keyma-dev/keyma-monorepo.git",
+    "directory": "packages/core"
+  },
+  "publishConfig": {
+    "access": "public"
+  },
+  "scripts": {
+    "build": "tsc",
+    "test": "tsc && node --test dist/util/test/*.test.js"
+  },
+  "devDependencies": {
+    "@types/node": "*",
+    "typescript": "*"
+  },
+  "license": "MIT"
+}

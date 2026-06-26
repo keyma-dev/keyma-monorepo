@@ -4,7 +4,7 @@ import type {
     FieldType,
     PopulateSpec,
     SchemaMetadata,
-} from "@keyma/runtime-js";
+} from "@keyma/runtime/schema";
 import type { SchemaMap } from "./record.js";
 
 export type CollectionNameFn = (schema: SchemaMetadata) => string;

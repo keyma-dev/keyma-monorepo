@@ -1,5 +1,5 @@
 import type { IndexDescription } from "mongodb";
-import type { SchemaMetadata } from "@keyma/runtime-js";
+import type { SchemaMetadata } from "@keyma/runtime/schema";
 
 /** Build a `createIndexes` spec from a schema's `indexes` (compound) and per-
  *  field `indexes` (single-field) metadata. `id` field names are mapped to

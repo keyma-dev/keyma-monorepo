@@ -1,4 +1,4 @@
-import type { FieldType, SchemaMetadata } from "@keyma/runtime-js";
+import type { FieldType, SchemaMetadata } from "@keyma/runtime/schema";
 import { P, __, order as gorder, t } from "./gremlin.js";
 import type { GraphTraversal } from "./gremlin.js";
 import { findFieldType, valueToGremlin } from "./props.js";

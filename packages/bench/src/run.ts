@@ -1,4 +1,4 @@
-import type { KeymaDatabaseAdapter } from "@keyma/runtime-js";
+import type { KeymaDatabaseAdapter } from "@keyma/runtime/schema";
 import {
     DEFAULT_ITERATIONS,
     DEFAULT_WARMUP,

@@ -1,4 +1,4 @@
-import type { ListOptions } from "@keyma/runtime-js";
+import type { ListOptions } from "@keyma/runtime/schema";
 import { translateSort } from "./filter.js";
 
 /** Append $sort / $skip / $limit stages to `stages` based on `options`.

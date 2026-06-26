@@ -1,34 +1,66 @@
 {
-    "name": "@keyma/compiler",
-    "version": "0.0.1",
-    "description": "Compiler driver and plugin interfaces for Keyma — runs a frontend, validates IR, and drives backend emit",
-    "type": "module",
-    "main": "./dist/src/index.js",
-    "exports": {
-        ".": "./dist/src/index.js"
+  "name": "@keyma/compiler",
+  "version": "0.0.1",
+  "description": "Keyma compiler — driver, TypeScript frontend, and JS/Python/C++ backends (one publishable package, subpath exports)",
+  "type": "module",
+  "exports": {
+    ".": {
+      "import": "./dist/driver/src/index.js",
+      "types": "./dist/driver/src/index.d.ts"
     },
-    "files": [
-        "dist/src"
-    ],
-    "repository": {
-        "type": "git",
-        "url": "git+https://github.com/keyma-dev/keyma-monorepo.git",
-        "directory": "packages/compiler"
+    "./frontend-ts": {
+      "import": "./dist/frontend-ts/src/index.js",
+      "types": "./dist/frontend-ts/src/index.d.ts"
     },
-    "publishConfig": {
-        "access": "public"
+    "./frontend-ts/node": {
+      "import": "./dist/frontend-ts/src/node-system.js",
+      "types": "./dist/frontend-ts/src/node-system.d.ts"
     },
-    "scripts": {
-        "build": "tsc",
-        "test": "tsc && node --test dist/test/*.test.js"
+    "./backend-js": {
+      "import": "./dist/backend-js/src/index.js",
+      "types": "./dist/backend-js/src/index.d.ts"
     },
-    "dependencies": {
-        "@keyma/compiler-util": "^0.0.1",
-        "@keyma/ir": "^0.0.1"
+    "./backend-python": {
+      "import": "./dist/backend-python/src/index.js",
+      "types": "./dist/backend-python/src/index.d.ts"
     },
-    "devDependencies": {
-        "@types/node": "*",
-        "typescript": "*"
-    },
-    "license": "MIT"
+    "./backend-cpp": {
+      "import": "./dist/backend-cpp/src/index.js",
+      "types": "./dist/backend-cpp/src/index.d.ts"
+    }
+  },
+  "files": [
+    "dist/driver/src",
+    "dist/frontend-ts/src",
+    "dist/backend-js/src",
+    "dist/backend-python/src",
+    "dist/backend-cpp/src"
+  ],
+  "repository": {
+    "type": "git",
+    "url": "git+https://github.com/keyma-dev/keyma-monorepo.git",
+    "directory": "packages/compiler"
+  },
+  "publishConfig": {
+    "access": "public"
+  },
+  "scripts": {
+    "gen-types": "node backend-js/scripts/gen-emitted-types.mjs",
+    "gen-runtime-header": "node backend-cpp/scripts/gen-runtime-header.mjs",
+    "prebuild": "node backend-js/scripts/gen-emitted-types.mjs && node backend-cpp/scripts/gen-runtime-header.mjs",
+    "build": "tsc",
+    "pretest": "node backend-js/scripts/gen-emitted-types.mjs && node backend-cpp/scripts/gen-runtime-header.mjs",
+    "test": "tsc && node --test dist/driver/test/*.test.js"
+  },
+  "dependencies": {
+    "@keyma/core": "^0.0.1",
+    "@typescript/vfs": "^1.6.0",
+    "typescript": "*"
+  },
+  "devDependencies": {
+    "@keyma/runtime-cpp": "*",
+    "@types/node": "*",
+    "typescript": "*"
+  },
+  "license": "MIT"
 }

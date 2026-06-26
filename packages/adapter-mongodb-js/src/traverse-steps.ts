@@ -5,7 +5,7 @@ import type {
     TraversalDirection,
     TraversalSpec,
     TraversalStep,
-} from "@keyma/runtime-js";
+} from "@keyma/runtime/schema";
 import { translateWhere } from "./filter.js";
 import {
     buildAggregationProjection,

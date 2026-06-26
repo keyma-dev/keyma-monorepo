@@ -1,4 +1,4 @@
-import type { IRDiagnostic } from "@keyma/ir";
+import type { IRDiagnostic } from "@keyma/core/ir";
 
 /** Format a diagnostic for terminal output. */
 export function formatDiagnostic(d: IRDiagnostic): string {

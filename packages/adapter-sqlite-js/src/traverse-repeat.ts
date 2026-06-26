@@ -5,7 +5,7 @@ import type {
     AdapterTraversalResult,
     SchemaMetadata,
     TraversalSpec,
-} from "@keyma/runtime-js";
+} from "@keyma/runtime/schema";
 import type { AnyDb, SchemaMap } from "./kysely.js";
 import type { TableNameFn } from "./adapter.js";
 import { SqliteAdapterInvalidQuery } from "./errors.js";

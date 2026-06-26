@@ -1,4 +1,4 @@
-import type { KeymaDatabaseAdapter } from "@keyma/runtime-js";
+import type { KeymaDatabaseAdapter } from "@keyma/runtime/schema";
 import {
     ACL_ROLE_ASSIGNMENT_SCHEMA,
     ACL_ROLE_SCHEMA,

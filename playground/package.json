@@ -11,10 +11,9 @@
     "test": "node --test \"test/**/*.test.ts\""
   },
   "dependencies": {
-    "@keyma/dsl": "*",
-    "@keyma/runtime-js": "*",
-    "@keyma/validators": "*",
-    "@keyma/formatters": "*"
+    "@keyma/core": "*",
+    "@keyma/runtime": "*",
+    "@keyma/schema": "*"
   },
   "devDependencies": {
     "@keyma/cli": "*",

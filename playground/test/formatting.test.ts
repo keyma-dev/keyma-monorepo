@@ -6,7 +6,7 @@
  */
 import { describe, it } from "node:test";
 import assert from "node:assert/strict";
-import { Keyma, format } from "@keyma/runtime-js";
+import { Keyma, format } from "@keyma/runtime/schema";
 import {
     makeHarness,
     validAuthor,

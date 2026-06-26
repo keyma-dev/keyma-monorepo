@@ -1,5 +1,5 @@
 import { Binary, Decimal128, Long, ObjectId } from "mongodb";
-import type { FieldType, SchemaMetadata } from "@keyma/runtime-js";
+import type { FieldType, SchemaMetadata } from "@keyma/runtime/schema";
 
 export type SchemaMap = ReadonlyMap<string, SchemaMetadata>;
 

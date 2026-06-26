@@ -3,7 +3,7 @@ import type {
     KeymaDatabaseAdapter,
     RequestContext,
     SchemaMetadata,
-} from "@keyma/runtime-js";
+} from "@keyma/runtime/schema";
 import type { AclAction, AclRule, AclSubject } from "./types.js";
 import { ACL_ROLE_ASSIGNMENT_SCHEMA, ACL_RULE_SCHEMA } from "./schemas.js";
 

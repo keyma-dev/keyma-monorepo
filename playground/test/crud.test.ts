@@ -4,7 +4,7 @@
  */
 import { describe, it } from "node:test";
 import assert from "node:assert/strict";
-import { Keyma } from "@keyma/runtime-js";
+import { Keyma } from "@keyma/runtime/schema";
 import { makeHarness, seed, validAuthor, Author, Post } from "./setup.ts";
 
 describe("crud — query builder + server + in-memory adapter", () => {

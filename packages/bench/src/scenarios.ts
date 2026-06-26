@@ -2,7 +2,7 @@ import type {
     KeymaDatabaseAdapter,
     SchemaMetadata,
     TraversalSpec,
-} from "@keyma/runtime-js";
+} from "@keyma/runtime/schema";
 import {
     ALL_SCHEMAS,
     AUTHORSHIP_SCHEMA,
@@ -305,7 +305,7 @@ function traverseCtx(
     terminal: SchemaMetadata,
     edges: SchemaMetadata[],
     extraNodes: SchemaMetadata[] = [],
-): import("@keyma/runtime-js").AdapterTraversalContext {
+): import("@keyma/runtime/schema").AdapterTraversalContext {
     const nodes = new Map<string, SchemaMetadata>();
     nodes.set(start.name, start);
     nodes.set(terminal.name, terminal);

@@ -8,7 +8,7 @@ import type {
     ListQuery,
     SchemaMetadata,
     TraversalSpec,
-} from "@keyma/runtime-js";
+} from "@keyma/runtime/schema";
 import { __, AnonymousTraversalSource, cardinality, P, t } from "./gremlin.js";
 import type {
     DriverRemoteConnectionInstance,

@@ -1,4 +1,4 @@
-import type { SchemaMetadata } from "@keyma/runtime-js";
+import type { SchemaMetadata } from "@keyma/runtime/schema";
 
 export const ORG_SCHEMA: SchemaMetadata = {
     name: "benchOrg",

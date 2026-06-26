@@ -1,4 +1,4 @@
-import type { RequestContext } from "@keyma/runtime-js";
+import type { RequestContext } from "@keyma/runtime/schema";
 
 // ── Placeholder substitution ─────────────────────────────────────────────────
 //

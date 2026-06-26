@@ -1,4 +1,4 @@
-import type { SchemaMetadata, ListQuery } from "@keyma/runtime-js";
+import type { SchemaMetadata, ListQuery } from "@keyma/runtime/schema";
 
 // eslint-disable-next-line @typescript-eslint/no-explicit-any
 type AnyQB = any;

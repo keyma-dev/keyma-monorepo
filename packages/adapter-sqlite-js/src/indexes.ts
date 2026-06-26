@@ -1,4 +1,4 @@
-import type { FieldIndex, SchemaIndex, SchemaMetadata } from "@keyma/runtime-js";
+import type { FieldIndex, SchemaIndex, SchemaMetadata } from "@keyma/runtime/schema";
 
 /** Emit `CREATE INDEX` statements for a schema's field-level and
  *  schema-level indexes. SQLite auto-creates the index for `PRIMARY KEY`,

@@ -1,5 +1,5 @@
-import { Edge, From, To } from "@keyma/dsl";
-import type { ID, DateTime, Reference } from "@keyma/dsl";
+import { Edge, From, To } from "@keyma/schema/dsl";
+import type { ID, DateTime, Reference } from "@keyma/schema/dsl";
 import { Author } from "./author.js";
 import { Post } from "./post.js";
 import { Tag } from "./tag.js";

@@ -2,15 +2,11 @@ import { mkdirSync, writeFileSync } from "node:fs";
 import { dirname, isAbsolute, join, resolve } from "node:path";
 import { drive, resolveConfig } from "@keyma/compiler";
 import type { EmitFile, KeymaBackend, ResolvedConfig } from "@keyma/compiler";
-import { jsBackend } from "@keyma/compiler-backend-js";
-import { pythonBackend } from "@keyma/compiler-backend-python";
-import { cppBackend } from "@keyma/compiler-backend-cpp";
-import type { KeymaIR, IRDiagnostic } from "@keyma/ir";
+import type { KeymaIR, IRDiagnostic } from "@keyma/core/ir";
 import { findConfig, loadProjectConfig } from "../config.js";
 import { createTsFrontend } from "../frontend.js";
+import { prepareDomains } from "../domains.js";
 import { readTagManifest, writeTagManifestIfChanged } from "../tag-manifest.js";
-
-const DEFAULT_BACKENDS: KeymaBackend[] = [jsBackend, pythonBackend, cppBackend];
 
 export type BuildOptions = {
     /** Project root. Defaults to cwd. */
@@ -52,8 +48,12 @@ export async function runBuild(opts: BuildOptions = {}): Promise<BuildResult> {
         };
     }
 
-    const frontend = createTsFrontend(cwd);
-    const backends = opts.backends ?? DEFAULT_BACKENDS;
+    // Resolve the domains for this project (explicit `config.domains`, else auto-detect),
+    // registering their IR validators and assembling the per-language backends. The CLI is
+    // the only place that names domain packages; `@keyma/compiler` stays domain-neutral.
+    const setup = await prepareDomains(config.domains);
+    const frontend = createTsFrontend(cwd, setup.frontendDomains);
+    const backends = opts.backends ?? setup.backends;
     const driveResult = await drive(config, frontend, backends);
 
     const written: string[] = [];

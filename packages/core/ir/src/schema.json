@@ -1,0 +1,370 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "$id": "https://keyma.dev/schemas/ir/v2/ir.schema.json",
+  "title": "KeymaIR",
+  "description": "Keyma language-neutral intermediate representation document",
+  "type": "object",
+  "required": ["irVersion", "compilerVersion", "schemas", "diagnostics"],
+  "additionalProperties": false,
+  "properties": {
+    "irVersion": { "type": "string" },
+    "compilerVersion": { "type": "string" },
+    "schemas": {
+      "type": "array",
+      "items": { "$ref": "#/$defs/IRSchema" }
+    },
+    "enums": {
+      "type": "array",
+      "items": { "$ref": "#/$defs/IREnumDeclaration" }
+    },
+    "validatorDeclarations": {
+      "type": "array",
+      "items": { "$ref": "#/$defs/IRValidatorDeclaration" }
+    },
+    "formatterDeclarations": {
+      "type": "array",
+      "items": { "$ref": "#/$defs/IRFormatterDeclaration" }
+    },
+    "functionDeclarations": {
+      "type": "array",
+      "items": { "$ref": "#/$defs/IRFunctionDeclaration" }
+    },
+    "services": {
+      "type": "array",
+      "items": { "$ref": "#/$defs/IRService" }
+    },
+    "extensions": {
+      "type": "object",
+      "description": "Document-level, domain-namespaced extension data keyed by domain id (e.g. 'ui'). Absent unless a domain contributes one."
+    },
+    "diagnostics": {
+      "type": "array",
+      "items": { "$ref": "#/$defs/IRDiagnostic" }
+    }
+  },
+  "$defs": {
+    "IREnumDeclaration": {
+      "type": "object",
+      "required": ["name", "members", "source"],
+      "additionalProperties": false,
+      "properties": {
+        "name": { "type": "string", "minLength": 1 },
+        "members": {
+          "type": "array",
+          "items": {
+            "type": "object",
+            "required": ["name", "value"],
+            "additionalProperties": false,
+            "properties": { "name": { "type": "string", "minLength": 1 }, "value": { "type": "string" } }
+          }
+        },
+        "source": { "$ref": "#/$defs/IRSourceLocation" }
+      }
+    },
+    "IRSourceLocation": {
+      "type": "object",
+      "required": ["file", "line", "column"],
+      "additionalProperties": false,
+      "properties": {
+        "file": { "type": "string", "minLength": 1 },
+        "line": { "type": "integer", "minimum": 0 },
+        "column": { "type": "integer", "minimum": 0 }
+      }
+    },
+    "IRDiagnostic": {
+      "type": "object",
+      "required": ["code", "severity", "message"],
+      "additionalProperties": false,
+      "properties": {
+        "code": { "type": "string", "minLength": 1 },
+        "severity": { "type": "string", "enum": ["error", "warning", "info"] },
+        "message": { "type": "string" },
+        "source": { "$ref": "#/$defs/IRSourceLocation" }
+      }
+    },
+    "IRSchema": {
+      "type": "object",
+      "required": ["id", "name", "sourceName", "visibility", "fields", "source"],
+      "additionalProperties": false,
+      "properties": {
+        "id": { "type": "string", "minLength": 1 },
+        "name": { "type": "string", "minLength": 1 },
+        "sourceName": { "type": "string", "minLength": 1 },
+        "visibility": { "type": "string", "enum": ["public", "private"] },
+        "description": { "type": "string" },
+        "fields": {
+          "type": "array",
+          "items": { "$ref": "#/$defs/IRField" }
+        },
+        "methods": {
+          "type": "array",
+          "items": { "$ref": "#/$defs/IRMethod" }
+        },
+        "extends": { "type": "string" },
+        "extendsSource": { "type": "string" },
+        "extensions": { "type": "object" },
+        "source": { "$ref": "#/$defs/IRSourceLocation" }
+      }
+    },
+    "IRMethod": {
+      "type": "object",
+      "required": ["name", "kind", "params", "statements", "visibility", "source"],
+      "additionalProperties": false,
+      "properties": {
+        "name": { "type": "string", "minLength": 1 },
+        "kind": { "type": "string", "enum": ["method", "setter", "getter"] },
+        "params": {
+          "type": "array",
+          "items": { "$ref": "#/$defs/IRFunctionParam" }
+        },
+        "returnType": { "$ref": "#/$defs/IRType" },
+        "statements": {
+          "type": "array",
+          "items": { "type": "object", "required": ["kind"], "properties": { "kind": { "type": "string" } } }
+        },
+        "visibility": { "type": "string", "enum": ["public", "private"] },
+        "source": { "$ref": "#/$defs/IRSourceLocation" }
+      }
+    },
+    "IRField": {
+      "type": "object",
+      "required": ["name", "type", "visibility", "readonly", "required", "validators", "formatters", "source"],
+      "additionalProperties": false,
+      "properties": {
+        "name": { "type": "string", "minLength": 1 },
+        "type": { "$ref": "#/$defs/IRType" },
+        "visibility": { "type": "string", "enum": ["public", "private"] },
+        "readonly": { "type": "boolean" },
+        "required": { "type": "boolean" },
+        "nullable": { "type": "boolean" },
+        "validators": {
+          "type": "array",
+          "items": { "$ref": "#/$defs/IRValidator" }
+        },
+        "formatters": {
+          "type": "array",
+          "items": { "$ref": "#/$defs/IRFormatter" }
+        },
+        "default": { "$ref": "#/$defs/IRDefault" },
+        "form": { "$ref": "#/$defs/IRFormField" },
+        "deprecated": { "type": ["boolean", "string"] },
+        "tag": { "type": "integer", "minimum": 1, "maximum": 2147483647 },
+        "extensions": { "type": "object" },
+        "source": { "$ref": "#/$defs/IRSourceLocation" }
+      }
+    },
+    "IRDefault": {
+      "oneOf": [
+        { "type": "object", "required": ["kind", "value"], "properties": { "kind": { "const": "literal" }, "value": {} } },
+        { "type": "object", "required": ["kind", "expression"], "additionalProperties": false, "properties": { "kind": { "const": "expression" }, "expression": { "$ref": "#/$defs/IRExpression" } } }
+      ]
+    },
+    "IRFormField": {
+      "type": "object",
+      "additionalProperties": false,
+      "properties": {
+        "title": { "type": "string" },
+        "hint": { "type": "string" },
+        "placeholder": { "type": "string" },
+        "group": { "type": "string" },
+        "order": { "type": "number" }
+      }
+    },
+    "IRType": {
+      "oneOf": [
+        { "type": "object", "required": ["kind"], "properties": { "kind": { "const": "string" } }, "additionalProperties": false },
+        { "type": "object", "required": ["kind"], "properties": { "kind": { "const": "number" }, "bits": { "enum": [32, 64] } }, "additionalProperties": false },
+        { "type": "object", "required": ["kind"], "properties": { "kind": { "const": "integer" }, "bits": { "enum": [8, 16, 32, 64] }, "unsigned": { "type": "boolean" } }, "additionalProperties": false },
+        { "type": "object", "required": ["kind"], "properties": { "kind": { "const": "bigint" } }, "additionalProperties": false },
+        { "type": "object", "required": ["kind"], "properties": { "kind": { "const": "decimal" } }, "additionalProperties": false },
+        { "type": "object", "required": ["kind"], "properties": { "kind": { "const": "boolean" } }, "additionalProperties": false },
+        { "type": "object", "required": ["kind"], "properties": { "kind": { "const": "bytes" } }, "additionalProperties": false },
+        { "type": "object", "required": ["kind"], "properties": { "kind": { "const": "json" } }, "additionalProperties": false },
+        { "type": "object", "required": ["kind"], "properties": { "kind": { "const": "date" } }, "additionalProperties": false },
+        { "type": "object", "required": ["kind"], "properties": { "kind": { "const": "dateTime" } }, "additionalProperties": false },
+        { "type": "object", "required": ["kind"], "properties": { "kind": { "const": "time" } }, "additionalProperties": false },
+        { "type": "object", "required": ["kind"], "properties": { "kind": { "const": "id" } }, "additionalProperties": false },
+        {
+          "type": "object",
+          "required": ["kind", "values"],
+          "additionalProperties": false,
+          "properties": {
+            "kind": { "const": "enum" },
+            "values": { "type": "array", "items": { "type": "string" }, "minItems": 1 },
+            "name": { "type": "string" }
+          }
+        },
+        {
+          "type": "object",
+          "required": ["kind", "of"],
+          "additionalProperties": false,
+          "properties": { "kind": { "const": "array" }, "of": { "$ref": "#/$defs/IRType" }, "elementNullable": { "type": "boolean" } }
+        },
+        {
+          "type": "object",
+          "required": ["kind", "schema"],
+          "additionalProperties": false,
+          "properties": { "kind": { "const": "reference" }, "schema": { "type": "string", "minLength": 1 }, "idType": { "$ref": "#/$defs/IRType" } }
+        },
+        {
+          "type": "object",
+          "required": ["kind", "schema"],
+          "additionalProperties": false,
+          "properties": { "kind": { "const": "embedded" }, "schema": { "type": "string", "minLength": 1 } }
+        }
+      ]
+    },
+    "IRValidator": {
+      "type": "object",
+      "required": ["name"],
+      "properties": {
+        "name": { "type": "string", "minLength": 1 },
+        "params": { "type": "object" }
+      }
+    },
+    "IRFormatter": {
+      "type": "object",
+      "required": ["phase", "spec"],
+      "additionalProperties": false,
+      "properties": {
+        "phase": { "type": "string", "enum": ["change", "blur", "submit", "save"] },
+        "spec": { "$ref": "#/$defs/IRFormatterSpec" }
+      }
+    },
+    "IRFormatterSpec": {
+      "type": "object",
+      "required": ["name"],
+      "properties": {
+        "name": { "type": "string", "minLength": 1 },
+        "params": { "type": "object" }
+      }
+    },
+    "IRExpression": {
+      "type": "object",
+      "required": ["kind"],
+      "properties": { "kind": { "type": "string" } }
+    },
+    "IRParam": {
+      "type": "object",
+      "required": ["name", "role"],
+      "additionalProperties": false,
+      "properties": {
+        "name": { "type": "string", "minLength": 1 },
+        "role": { "type": "string", "enum": ["value", "field", "spec", "context"] }
+      }
+    },
+    "IRFunctionBody": {
+      "type": "object",
+      "required": ["params", "statements"],
+      "additionalProperties": false,
+      "properties": {
+        "params": {
+          "type": "array",
+          "items": { "$ref": "#/$defs/IRParam" }
+        },
+        "statements": {
+          "type": "array",
+          "items": { "type": "object", "required": ["kind"], "properties": { "kind": { "type": "string" } } }
+        }
+      }
+    },
+    "IRFactoryParam": {
+      "type": "object",
+      "required": ["name"],
+      "additionalProperties": false,
+      "properties": {
+        "name": { "type": "string", "minLength": 1 },
+        "optional": { "type": "boolean" }
+      }
+    },
+    "IRValidatorDeclaration": {
+      "type": "object",
+      "required": ["name", "factoryParams", "inputType", "body", "source"],
+      "additionalProperties": false,
+      "properties": {
+        "name": { "type": "string", "minLength": 1 },
+        "factoryParams": {
+          "type": "array",
+          "items": { "$ref": "#/$defs/IRFactoryParam" }
+        },
+        "inputType": { "$ref": "#/$defs/IRType" },
+        "body": { "$ref": "#/$defs/IRFunctionBody" },
+        "source": { "$ref": "#/$defs/IRSourceLocation" }
+      }
+    },
+    "IRFormatterDeclaration": {
+      "type": "object",
+      "required": ["name", "factoryParams", "inputType", "body", "source"],
+      "additionalProperties": false,
+      "properties": {
+        "name": { "type": "string", "minLength": 1 },
+        "factoryParams": {
+          "type": "array",
+          "items": { "$ref": "#/$defs/IRFactoryParam" }
+        },
+        "inputType": { "$ref": "#/$defs/IRType" },
+        "body": { "$ref": "#/$defs/IRFunctionBody" },
+        "source": { "$ref": "#/$defs/IRSourceLocation" }
+      }
+    },
+    "IRFunctionParam": {
+      "type": "object",
+      "required": ["name", "type"],
+      "additionalProperties": false,
+      "properties": {
+        "name": { "type": "string", "minLength": 1 },
+        "type": { "$ref": "#/$defs/IRType" }
+      }
+    },
+    "IRFunctionDeclaration": {
+      "type": "object",
+      "required": ["name", "params", "returnType", "statements", "source"],
+      "additionalProperties": false,
+      "properties": {
+        "name": { "type": "string", "minLength": 1 },
+        "params": {
+          "type": "array",
+          "items": { "$ref": "#/$defs/IRFunctionParam" }
+        },
+        "returnType": { "$ref": "#/$defs/IRType" },
+        "statements": {
+          "type": "array",
+          "items": { "type": "object", "required": ["kind"], "properties": { "kind": { "type": "string" } } }
+        },
+        "source": { "$ref": "#/$defs/IRSourceLocation" }
+      }
+    },
+    "IRServiceMethod": {
+      "type": "object",
+      "required": ["name", "params", "visibility", "source"],
+      "additionalProperties": false,
+      "properties": {
+        "name": { "type": "string", "minLength": 1 },
+        "params": {
+          "type": "array",
+          "items": { "$ref": "#/$defs/IRFunctionParam" }
+        },
+        "returnType": { "$ref": "#/$defs/IRType" },
+        "visibility": { "type": "string", "enum": ["public", "private"] },
+        "source": { "$ref": "#/$defs/IRSourceLocation" }
+      }
+    },
+    "IRService": {
+      "type": "object",
+      "required": ["id", "name", "sourceName", "visibility", "methods", "source"],
+      "additionalProperties": false,
+      "properties": {
+        "id": { "type": "string", "minLength": 1 },
+        "name": { "type": "string", "minLength": 1 },
+        "sourceName": { "type": "string", "minLength": 1 },
+        "visibility": { "type": "string", "enum": ["public", "private"] },
+        "description": { "type": "string" },
+        "methods": {
+          "type": "array",
+          "items": { "$ref": "#/$defs/IRServiceMethod" }
+        },
+        "source": { "$ref": "#/$defs/IRSourceLocation" }
+      }
+    }
+  }
+}

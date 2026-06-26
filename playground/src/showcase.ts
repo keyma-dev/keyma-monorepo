@@ -1,6 +1,6 @@
-import { Schema, Validate, Format, Phase } from "@keyma/dsl";
-import { isNegative, isNonPositive, isIpAddress, pattern } from "@keyma/validators";
-import { stripNonDigits } from "@keyma/formatters";
+import { Schema, Validate, Format, Phase } from "@keyma/schema/dsl";
+import { isNegative, isNonPositive, isIpAddress, pattern } from "@keyma/schema/validators";
+import { stripNonDigits } from "@keyma/schema/formatters";
 import { Entity } from "./base.js";
 import { ensureLeadingSlash } from "./lib/formatters.js";
 

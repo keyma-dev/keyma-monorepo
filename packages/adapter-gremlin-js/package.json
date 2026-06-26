@@ -12,11 +12,11 @@
         "gremlin:stop": "docker stop keyma-gremlin-test"
     },
     "peerDependencies": {
-        "@keyma/runtime-js": "*",
+        "@keyma/runtime": "*",
         "gremlin": "^3.8.1"
     },
     "devDependencies": {
-        "@keyma/runtime-js": "*",
+        "@keyma/runtime": "*",
         "@types/gremlin": "^3.6.0",
         "@types/node": "*",
         "gremlin": "^3.8.0",

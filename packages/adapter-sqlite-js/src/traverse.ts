@@ -3,7 +3,7 @@ import type {
     AdapterTraversalContext,
     AdapterTraversalResult,
     TraversalSpec,
-} from "@keyma/runtime-js";
+} from "@keyma/runtime/schema";
 import type { AnyDb, SchemaMap } from "./kysely.js";
 import type { TableNameFn } from "./adapter.js";
 import { runStepsTraversal } from "./traverse-steps.js";

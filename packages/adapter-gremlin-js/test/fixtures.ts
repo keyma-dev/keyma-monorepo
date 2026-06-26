@@ -1,4 +1,4 @@
-import type { SchemaMetadata } from "@keyma/runtime-js";
+import type { SchemaMetadata } from "@keyma/runtime/schema";
 
 /** Plain string ids — Gremlin stores them as the element's `T.id`. */
 export const IDS = {

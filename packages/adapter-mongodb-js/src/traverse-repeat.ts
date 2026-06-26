@@ -3,7 +3,7 @@ import type {
     AdapterTraversalContext,
     SchemaMetadata,
     TraversalSpec,
-} from "@keyma/runtime-js";
+} from "@keyma/runtime/schema";
 import { translateWhere } from "./filter.js";
 import {
     buildAggregationProjection,

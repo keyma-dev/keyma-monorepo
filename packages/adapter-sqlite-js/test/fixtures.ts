@@ -1,4 +1,4 @@
-import type { SchemaMetadata } from "@keyma/runtime-js";
+import type { SchemaMetadata } from "@keyma/runtime/schema";
 
 /** Deterministic 24-char hex id from a small integer (matches the Mongo
  *  adapter fixtures' shape so cross-adapter comparisons stay readable). */

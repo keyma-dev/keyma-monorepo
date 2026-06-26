@@ -1,6 +1,6 @@
-import { Schema, Service, Validate } from "@keyma/dsl";
-import type { ID, Json } from "@keyma/dsl";
-import { isEmail, minLength } from "@keyma/validators";
+import { Schema, Service, Validate } from "@keyma/schema/dsl";
+import type { ID, Json } from "@keyma/schema/dsl";
+import { isEmail, minLength } from "@keyma/schema/validators";
 import { matchesPassword } from "./lib/validators.js";
 
 // ── Ephemeral wire payloads (never persisted) ────────────────────────────────

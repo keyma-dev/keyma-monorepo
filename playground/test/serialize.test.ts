@@ -5,7 +5,7 @@
  */
 import { describe, it } from "node:test";
 import assert from "node:assert/strict";
-import { serialize } from "@keyma/runtime-js";
+import { serialize } from "@keyma/runtime/schema";
 import { Author, Post } from "./setup.ts";
 
 describe("serialize — visibility, ephemeral, dates, immutability", () => {

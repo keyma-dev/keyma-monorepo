@@ -6,7 +6,7 @@ import {
     Indexed,
     Ephemeral,
     Phase,
-} from "@keyma/dsl";
+} from "@keyma/schema/dsl";
 import type {
     Reference,
     Embedded,
@@ -15,7 +15,7 @@ import type {
     Decimal,
     Json,
     Nullable,
-} from "@keyma/dsl";
+} from "@keyma/schema/dsl";
 import {
     minLength,
     maxLength,
@@ -31,8 +31,8 @@ import {
     isNonNegative,
     isPositive,
     pattern,
-} from "@keyma/validators";
-import { trim, titleCase, slugify, truncate } from "@keyma/formatters";
+} from "@keyma/schema/validators";
+import { trim, titleCase, slugify, truncate } from "@keyma/schema/formatters";
 import { Entity } from "./base.js";
 import { Author } from "./author.js";
 

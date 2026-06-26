@@ -1,4 +1,4 @@
-import type { FormatterFn } from "@keyma/dsl";
+import type { FormatterFn } from "@keyma/core/dsl";
 
 /**
  * Ensure a path-like string has exactly one leading slash. Uses only

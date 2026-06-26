@@ -12,7 +12,7 @@
  */
 import { describe, it } from "node:test";
 import assert from "node:assert/strict";
-import { Keyma, validate, applyDefaults } from "@keyma/runtime-js";
+import { Keyma, validate, applyDefaults } from "@keyma/runtime/schema";
 import {
     makeHarness,
     validAuthor,

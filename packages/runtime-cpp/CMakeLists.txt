@@ -91,7 +91,7 @@ if(KEYMA_RUNTIME_CPP_BUILD_TESTS)
     add_executable(keyma-runtime-cpp-binary-test test/binary.test.cpp)
     target_link_libraries(keyma-runtime-cpp-binary-test PRIVATE keyma::runtime)
     target_compile_definitions(keyma-runtime-cpp-binary-test PRIVATE
-        "KEYMA_BINARY_FIXTURES=\"${CMAKE_CURRENT_SOURCE_DIR}/../runtime-js/test/binary-fixtures.json\"")
+        "KEYMA_BINARY_FIXTURES=\"${CMAKE_CURRENT_SOURCE_DIR}/../runtime/test/binary-fixtures.json\"")
     add_test(NAME binary-test COMMAND keyma-runtime-cpp-binary-test)
 endif()
 

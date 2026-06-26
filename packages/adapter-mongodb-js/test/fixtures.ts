@@ -1,4 +1,4 @@
-import type { SchemaMetadata } from "@keyma/runtime-js";
+import type { SchemaMetadata } from "@keyma/runtime/schema";
 
 /** Generate a valid 24-char ObjectId hex string from a small integer. */
 function mkoid(n: number): string {

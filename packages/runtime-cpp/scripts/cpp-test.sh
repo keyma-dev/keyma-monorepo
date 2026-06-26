@@ -45,8 +45,8 @@ done
 
 # 2b) Cross-runtime binary parity: encode the SHARED fixtures the JS reference codec
 #     generated and assert byte-identical output (the cardinal invariant). The fixtures live
-#     in the sibling runtime-js package (single source of truth), passed in as an absolute path.
-FIXTURES="$(cd ../runtime-js/test && pwd)/binary-fixtures.json"
+#     in the sibling runtime package (single source of truth), passed in as an absolute path.
+FIXTURES="$(cd ../runtime/test && pwd)/binary-fixtures.json"
 "$CXX" -std=c++23 $COMPAT -Iinclude -DKEYMA_BINARY_FIXTURES="\"$FIXTURES\"" test/binary.test.cpp -o "$WORK/binary.test"
 "$WORK/binary.test"
 

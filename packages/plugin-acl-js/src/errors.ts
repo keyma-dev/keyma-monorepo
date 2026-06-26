@@ -1,4 +1,4 @@
-import { KeymaPluginError } from "@keyma/runtime-js";
+import { KeymaPluginError } from "@keyma/runtime/schema";
 
 export const ACL_PLUGIN_NAME = "@keyma/plugin-acl-js";
 

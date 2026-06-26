@@ -1,4 +1,4 @@
-import { KeymaAdapterError } from "@keyma/runtime-js";
+import { KeymaAdapterError } from "@keyma/runtime/schema";
 
 export const MONGO_ADAPTER_NAME = "@keyma/adapter-mongodb-js";
 

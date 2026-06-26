@@ -1,5 +1,5 @@
-import { Schema, Indexed } from "@keyma/dsl";
-import type { ID, DateTime } from "@keyma/dsl";
+import { Schema, Indexed } from "@keyma/schema/dsl";
+import type { ID, DateTime } from "@keyma/schema/dsl";
 
 /**
  * Wall-clock "now". A plain factory function — the compiler re-emits its body

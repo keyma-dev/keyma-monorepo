@@ -1,0 +1,61 @@
+{
+  "name": "@keyma/ui",
+  "version": "0.0.1",
+  "private": true,
+  "description": "Keyma UI domain (smoke) — proves a second domain plugs into the same four seams (DSL recognition, frontend extraction, IR extensions, JS/Python/C++ emitter packs) without editing @keyma/compiler",
+  "type": "module",
+  "exports": {
+    ".": {
+      "import": "./dist/src/index.js",
+      "types": "./dist/src/index.d.ts"
+    },
+    "./dsl": {
+      "import": "./dist/dsl/src/index.js",
+      "types": "./dist/dsl/src/index.d.ts"
+    },
+    "./frontend-ts": {
+      "import": "./dist/frontend-ts/src/index.js",
+      "types": "./dist/frontend-ts/src/index.d.ts"
+    },
+    "./backend-js": {
+      "import": "./dist/backend-js/src/index.js",
+      "types": "./dist/backend-js/src/index.d.ts"
+    },
+    "./backend-python": {
+      "import": "./dist/backend-python/src/index.js",
+      "types": "./dist/backend-python/src/index.d.ts"
+    },
+    "./backend-cpp": {
+      "import": "./dist/backend-cpp/src/index.js",
+      "types": "./dist/backend-cpp/src/index.d.ts"
+    }
+  },
+  "files": [
+    "dist/src",
+    "dist/dsl/src",
+    "dist/frontend-ts/src",
+    "dist/backend-js/src",
+    "dist/backend-python/src",
+    "dist/backend-cpp/src"
+  ],
+  "repository": {
+    "type": "git",
+    "url": "git+https://github.com/keyma-dev/keyma-monorepo.git",
+    "directory": "packages/ui"
+  },
+  "scripts": {
+    "build": "tsc",
+    "test": "tsc && node --test dist/dsl/test/*.test.js dist/frontend-ts/test/*.test.js dist/backend-js/test/*.test.js dist/test/*.test.js"
+  },
+  "dependencies": {
+    "@keyma/core": "^0.0.1",
+    "@keyma/compiler": "^0.0.1",
+    "typescript": "*"
+  },
+  "devDependencies": {
+    "@keyma/schema": "*",
+    "@types/node": "*",
+    "typescript": "*"
+  },
+  "license": "MIT"
+}

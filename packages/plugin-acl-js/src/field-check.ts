@@ -1,4 +1,4 @@
-import type { AdapterProjection, SchemaMetadata } from "@keyma/runtime-js";
+import type { AdapterProjection, SchemaMetadata } from "@keyma/runtime/schema";
 import type { AclRule } from "./types.js";
 
 /** Compute the set of allowed read fields for a (schema, rules) pair.

@@ -8,7 +8,7 @@ import type {
     TraversalDirection,
     TraversalSpec,
     TraversalStep,
-} from "@keyma/runtime-js";
+} from "@keyma/runtime/schema";
 import type { AnyDb, SchemaMap } from "./kysely.js";
 import type { TableNameFn } from "./adapter.js";
 import { buildExpression } from "./filter.js";

@@ -4,6 +4,7 @@ import { runGen, type GenOptions } from "./commands/gen.js";
 import { runBuild, type BuildOptions } from "./commands/build.js";
 import { runInspect, type InspectOptions } from "./commands/inspect.js";
 import { runWatch, type WatchOptions } from "./commands/watch.js";
+import { runDiagnose, formatDiagnoseReport, type DiagnoseOptions } from "./commands/diagnose.js";
 import { printDiagnostics } from "./diagnostics.js";
 
 const USAGE = `keyma — declarative schema compiler
@@ -14,6 +15,7 @@ Usage:
   keyma build               Run the compiler pipeline
   keyma watch               Watch sources and rebuild on change
   keyma inspect [--out F]   Print (or write) the IR for the current project
+  keyma diagnose            List detected domains and what each contributes
 
 Options:
   --help, -h                Show this help
@@ -92,6 +94,15 @@ async function main(argv: readonly string[]): Promise<number> {
                 process.stdout.write(JSON.stringify(result.ir, null, 2) + "\n");
             }
             return 0;
+        }
+        case "diagnose": {
+            const opts: DiagnoseOptions = {};
+            if (flags.string.config !== undefined) opts.configPath = flags.string.config;
+            const report = await runDiagnose(opts);
+            process.stdout.write(formatDiagnoseReport(report));
+            // Surface real misconfigurations (missing configured domains / broken packages)
+            // as a non-zero exit so `keyma diagnose` is CI-usable.
+            return report.missing.length > 0 || report.problems.length > 0 ? 1 : 0;
         }
         default: {
             process.stderr.write(`Unknown command "${command}".\n\n${USAGE}`);

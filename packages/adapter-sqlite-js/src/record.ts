@@ -1,4 +1,4 @@
-import type { FieldType, SchemaMetadata } from "@keyma/runtime-js";
+import type { FieldType, SchemaMetadata } from "@keyma/runtime/schema";
 import type { SchemaMap } from "./kysely.js";
 
 /** Convert a Keyma value to its SQLite-bindable form for the given IR type.

@@ -1,4 +1,4 @@
-import { KeymaAdapterError } from "@keyma/runtime-js";
+import { KeymaAdapterError } from "@keyma/runtime/schema";
 
 export const SQLITE_ADAPTER_NAME = "@keyma/adapter-sqlite-js";
 

@@ -9,10 +9,10 @@
         "build": "tsc"
     },
     "peerDependencies": {
-        "@keyma/runtime-js": "*"
+        "@keyma/runtime": "*"
     },
     "devDependencies": {
-        "@keyma/runtime-js": "*",
+        "@keyma/runtime": "*",
         "@types/node": "*",
         "typescript": "*"
     },

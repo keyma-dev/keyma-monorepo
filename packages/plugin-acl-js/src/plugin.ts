@@ -6,7 +6,7 @@ import {
 	type PluginServerHandle,
 	type RequestContext,
 	type SchemaMetadata, KeymaOperation, type KeymaWriteAction
-} from "@keyma/runtime-js";
+} from "@keyma/runtime/schema";
 import { AclDenied, AclFieldForbidden, ACL_PLUGIN_NAME } from "./errors.js";
 import type { AclPluginOptions, AclRule } from "./types.js";
 import {

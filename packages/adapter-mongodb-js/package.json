@@ -11,12 +11,12 @@
         "bench": "tsc && node dist/bench/run.js"
     },
     "peerDependencies": {
-        "@keyma/runtime-js": "*",
+        "@keyma/runtime": "*",
         "mongodb": "^7.0.0"
     },
     "devDependencies": {
         "@keyma/bench": "*",
-        "@keyma/runtime-js": "*",
+        "@keyma/runtime": "*",
         "@types/node": "*",
         "mongodb": "^7.0.0",
         "mongodb-memory-server": "^11.0.0",

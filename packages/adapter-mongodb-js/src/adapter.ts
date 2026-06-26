@@ -9,7 +9,7 @@ import type {
     ListQuery,
     SchemaMetadata,
     TraversalSpec,
-} from "@keyma/runtime-js";
+} from "@keyma/runtime/schema";
 import { translateSort, translateWhere } from "./filter.js";
 import { buildIndexes } from "./indexes.js";
 import {

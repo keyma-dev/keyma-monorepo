@@ -11,13 +11,13 @@
         "bench": "tsc && node dist/bench/run.js"
     },
     "peerDependencies": {
-        "@keyma/runtime-js": "*",
+        "@keyma/runtime": "*",
         "better-sqlite3": "^11.0.0",
         "kysely": "^0.29.0"
     },
     "devDependencies": {
         "@keyma/bench": "*",
-        "@keyma/runtime-js": "*",
+        "@keyma/runtime": "*",
         "@types/better-sqlite3": "^7.6.0",
         "@types/node": "*",
         "better-sqlite3": "^11.0.0",

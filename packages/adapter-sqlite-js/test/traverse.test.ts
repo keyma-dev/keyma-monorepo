@@ -1,6 +1,6 @@
 import { describe, it, before, after, beforeEach } from "node:test";
 import assert from "node:assert/strict";
-import type { AdapterTraversalContext, SchemaMetadata } from "@keyma/runtime-js";
+import type { AdapterTraversalContext, SchemaMetadata } from "@keyma/runtime/schema";
 import { SqliteAdapter } from "../src/index.js";
 import {
     ALL_SCHEMAS, AUTHORSHIP_SCHEMA, FRIENDSHIP_SCHEMA, IDS,

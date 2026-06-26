@@ -1,8 +1,9 @@
 import { mkdirSync, writeFileSync } from "node:fs";
 import { dirname, isAbsolute, join, resolve } from "node:path";
 import { drive } from "@keyma/compiler";
-import type { KeymaIR, IRDiagnostic } from "@keyma/ir";
+import type { KeymaIR, IRDiagnostic } from "@keyma/core/ir";
 import { createTsFrontend } from "../frontend.js";
+import { prepareDomains } from "../domains.js";
 import { loadResolvedConfig } from "./build.js";
 import { readTagManifest } from "../tag-manifest.js";
 
@@ -35,8 +36,10 @@ export async function runInspect(opts: InspectOptions = {}): Promise<InspectResu
         if (existing !== undefined) driveConfig = { ...driveConfig, tagManifest: existing };
     }
 
+    // Resolve domains so the frontend extracts (and IR validation checks) the domain sections.
+    const setup = await prepareDomains(config.domains);
     // Drive with no backends — frontend + IR validation only.
-    const result = await drive(driveConfig, createTsFrontend(cwd), []);
+    const result = await drive(driveConfig, createTsFrontend(cwd, setup.frontendDomains), []);
 
     let writtenOut: string | undefined;
     if (opts.outFile !== undefined) {

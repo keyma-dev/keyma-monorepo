@@ -1,6 +1,6 @@
-import { Schema, Validate, Format, Indexed, Phase } from "@keyma/dsl";
-import { minLength, maxLength } from "@keyma/validators";
-import { trim, slugify } from "@keyma/formatters";
+import { Schema, Validate, Format, Indexed, Phase } from "@keyma/schema/dsl";
+import { minLength, maxLength } from "@keyma/schema/validators";
+import { trim, slugify } from "@keyma/schema/formatters";
 import { Entity } from "./base.js";
 
 @Schema({ name: "tag", description: "A label that posts can be related to." })

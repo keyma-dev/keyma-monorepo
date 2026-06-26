@@ -1,5 +1,5 @@
 import type { Expression, ExpressionBuilder, SqlBool } from "kysely";
-import type { FieldType, SchemaMetadata } from "@keyma/runtime-js";
+import type { FieldType, SchemaMetadata } from "@keyma/runtime/schema";
 import { SqliteAdapterInvalidQuery } from "./errors.js";
 import { valueToSqlite } from "./record.js";
 import type { SchemaMap } from "./kysely.js";

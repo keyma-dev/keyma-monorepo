@@ -20,15 +20,24 @@
     },
     "dependencies": {
         "@keyma/compiler": "*",
-        "@keyma/compiler-backend-cpp": "*",
-        "@keyma/compiler-backend-js": "*",
-        "@keyma/compiler-backend-python": "*",
-        "@keyma/compiler-frontend-ts": "*",
-        "@keyma/ir": "*",
+        "@keyma/core": "*",
         "typescript": "*"
     },
+    "peerDependencies": {
+        "@keyma/schema": "*",
+        "@keyma/ui": "*"
+    },
+    "peerDependenciesMeta": {
+        "@keyma/schema": {
+            "optional": true
+        },
+        "@keyma/ui": {
+            "optional": true
+        }
+    },
     "devDependencies": {
-        "@keyma/dsl": "*",
+        "@keyma/schema": "*",
+        "@keyma/ui": "*",
         "@types/node": "*",
         "typescript": "*"
     },

@@ -1,6 +1,6 @@
 import { describe, it, before, after, beforeEach, afterEach } from "node:test";
 import assert from "node:assert/strict";
-import type { AdapterTraversalContext, SchemaMetadata } from "@keyma/runtime-js";
+import type { AdapterTraversalContext, SchemaMetadata } from "@keyma/runtime/schema";
 import { MongoAdapter } from "../src/index.js";
 import {
     AUTHORSHIP_SCHEMA,

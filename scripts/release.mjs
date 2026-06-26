@@ -32,16 +32,10 @@ const ROOT = path.resolve(path.dirname(fileURLToPath(import.meta.url)), "..");
 // The exact publish set (directory names under packages/). Ordering is derived
 // by toposort below — this list only defines membership.
 const CORE_DIRS = [
-    "dsl",
-    "ir",
+    "core",
+    "runtime",
     "compiler",
-    "compiler-frontend-ts",
-    "compiler-backend-js",
-    "compiler-backend-python",
-    "compiler-backend-cpp",
-    "runtime-js",
-    "validators",
-    "formatters",
+    "schema",
 ];
 
 // ---------------------------------------------------------------------------

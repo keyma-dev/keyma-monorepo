@@ -6,9 +6,9 @@
  * consumer of this schema library would do. `keyma build` must run first
  * (the `pretest` script handles that).
  */
-import { KeymaServer, createDirectTransport } from "@keyma/runtime-js";
-import type { RequestContext, ServiceProvider } from "@keyma/runtime-js";
-import { InMemoryAdapter } from "@keyma/runtime-js/testing";
+import { KeymaServer, createDirectTransport } from "@keyma/runtime/schema";
+import type { RequestContext, ServiceProvider } from "@keyma/runtime/schema";
+import { InMemoryAdapter } from "@keyma/runtime/schema/testing";
 
 import {
     Author,

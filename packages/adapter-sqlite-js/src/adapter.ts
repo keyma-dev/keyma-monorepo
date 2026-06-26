@@ -8,7 +8,7 @@ import type {
     ListQuery,
     SchemaMetadata,
     TraversalSpec,
-} from "@keyma/runtime-js";
+} from "@keyma/runtime/schema";
 import { buildCreateTable } from "./ddl.js";
 import { buildIndexStatements } from "./indexes.js";
 import { translateWhereInto } from "./filter.js";

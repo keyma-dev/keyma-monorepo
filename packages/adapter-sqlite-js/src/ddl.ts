@@ -1,4 +1,4 @@
-import type { FieldMetadata, FieldType, SchemaMetadata } from "@keyma/runtime-js";
+import type { FieldMetadata, FieldType, SchemaMetadata } from "@keyma/runtime/schema";
 import { SqliteAdapterInvalidQuery } from "./errors.js";
 
 export function buildCreateTable(schema: SchemaMetadata): string {

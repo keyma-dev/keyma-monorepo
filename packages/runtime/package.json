@@ -1,0 +1,31 @@
+{
+    "name": "@keyma/runtime",
+    "version": "0.0.1",
+    "description": "Keyma JS/TS runtime — validate/format/defaults, query builder, server, and adapter interfaces (consumed via @keyma/runtime/schema)",
+    "type": "module",
+    "exports": {
+        ".": "./dist/src/index.js",
+        "./schema": "./dist/src/index.js",
+        "./schema/testing": "./dist/src/testing.js"
+    },
+    "files": [
+        "dist/src"
+    ],
+    "repository": {
+        "type": "git",
+        "url": "git+https://github.com/keyma-dev/keyma-monorepo.git",
+        "directory": "packages/runtime"
+    },
+    "publishConfig": {
+        "access": "public"
+    },
+    "scripts": {
+        "build": "tsc",
+        "test": "tsc && node --test dist/test/*.test.js"
+    },
+    "devDependencies": {
+        "@types/node": "*",
+        "typescript": "*"
+    },
+    "license": "MIT"
+}

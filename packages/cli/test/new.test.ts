@@ -8,7 +8,7 @@ import { runBuild } from "../src/commands/build.js";
 
 const __filename = fileURLToPath(import.meta.url);
 const __dirname = dirname(__filename);
-// Live inside the repo so npm workspace resolution finds @keyma/dsl when the
+// Live inside the repo so npm workspace resolution finds @keyma/core/dsl when the
 // scaffolded project's TypeScript imports it.
 const TMP_ROOT = join(__dirname, "..", "..", ".tmp");
 
@@ -48,7 +48,7 @@ describe("keyma new", () => {
         };
         assert.equal(pkg.name, "my-app");
         assert.equal(pkg.scripts["build"], "keyma build");
-        assert.ok(pkg.devDependencies["@keyma/dsl"], "should depend on @keyma/dsl");
+        assert.ok(pkg.devDependencies["@keyma/schema"], "should depend on @keyma/schema");
     });
 
     it("scaffolded project builds successfully (empty schemas)", async () => {

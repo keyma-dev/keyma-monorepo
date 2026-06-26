@@ -1,5 +1,5 @@
-import { Schema, Indexed } from "@keyma/dsl";
-import type { Reference } from "@keyma/dsl";
+import { Schema, Indexed } from "@keyma/schema/dsl";
+import type { Reference } from "@keyma/schema/dsl";
 import { Entity } from "./base.js";
 import { Author } from "./author.js";
 

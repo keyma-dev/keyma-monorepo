@@ -1,0 +1,16 @@
+{
+  "extends": "../../tsconfig.base.json",
+  "compilerOptions": {
+    "rootDir": ".",
+    "outDir": "./dist",
+    "experimentalDecorators": true
+  },
+  "include": [
+    "ir/src/**/*.ts",
+    "ir/test/**/*.ts",
+    "util/src/**/*.ts",
+    "util/test/**/*.ts",
+    "dsl/src/**/*.ts",
+    "dsl/test/**/*.ts"
+  ]
+}

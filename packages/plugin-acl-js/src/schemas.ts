@@ -1,4 +1,4 @@
-import type { SchemaMetadata, ValidatorFn } from "@keyma/runtime-js";
+import type { SchemaMetadata, ValidatorFn } from "@keyma/runtime/schema";
 
 // Direct-ref validators for the internal storage schemas (the runtime no longer
 // resolves validators by name through a registry).

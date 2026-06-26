@@ -1,4 +1,4 @@
-import type { ListOptions } from "@keyma/runtime-js";
+import type { ListOptions } from "@keyma/runtime/schema";
 import type { GraphTraversal } from "./gremlin.js";
 import { applyOrder, applyRange, translateSort, type SortEntry } from "./filter.js";
 

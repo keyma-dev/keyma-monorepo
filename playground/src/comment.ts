@@ -1,7 +1,7 @@
-import { Schema, Validate, Format, Indexed, Phase } from "@keyma/dsl";
-import type { Reference } from "@keyma/dsl";
-import { minLength, maxLength, length, isIpAddress } from "@keyma/validators";
-import { normalizeWhitespace, uppercase } from "@keyma/formatters";
+import { Schema, Validate, Format, Indexed, Phase } from "@keyma/schema/dsl";
+import type { Reference } from "@keyma/schema/dsl";
+import { minLength, maxLength, length, isIpAddress } from "@keyma/schema/validators";
+import { normalizeWhitespace, uppercase } from "@keyma/schema/formatters";
 import { Entity } from "./base.js";
 import { Author } from "./author.js";
 import { Post } from "./post.js";

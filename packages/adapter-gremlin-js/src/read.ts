@@ -1,4 +1,4 @@
-import type { AdapterProjection, SchemaMetadata } from "@keyma/runtime-js";
+import type { AdapterProjection, SchemaMetadata } from "@keyma/runtime/schema";
 import { __, P } from "./gremlin.js";
 import type { GraphTraversal } from "./gremlin.js";
 import { elementMapToPlain, fromProps, type SchemaMap } from "./props.js";

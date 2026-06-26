@@ -3,8 +3,8 @@ import type {
     SchemaMetadata,
     TraversalSpec,
     TraversalStep,
-} from "@keyma/runtime-js";
-import type { AdapterProjection } from "@keyma/runtime-js";
+} from "@keyma/runtime/schema";
+import type { AdapterProjection } from "@keyma/runtime/schema";
 import { __ } from "./gremlin.js";
 import type { GraphTraversal, GraphTraversalSource } from "./gremlin.js";
 import { applyWhere } from "./filter.js";

@@ -1,4 +1,4 @@
-import type { SchemaMetadata } from "@keyma/runtime-js";
+import type { SchemaMetadata } from "@keyma/runtime/schema";
 import type { GraphTraversalSource } from "./gremlin.js";
 
 /** Index creation in Gremlin has no portable, vendor-neutral API: TinkerGraph

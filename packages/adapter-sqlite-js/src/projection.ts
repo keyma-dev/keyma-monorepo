@@ -6,7 +6,7 @@ import type {
     PopulateNode,
     PopulateSpec,
     SchemaMetadata,
-} from "@keyma/runtime-js";
+} from "@keyma/runtime/schema";
 import { SqliteAdapterInvalidQuery } from "./errors.js";
 import type { SchemaMap } from "./kysely.js";
 import type { TableNameFn } from "./adapter.js";

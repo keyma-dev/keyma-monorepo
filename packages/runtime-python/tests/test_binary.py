@@ -1,7 +1,7 @@
 """Cross-runtime binary parity for keyma.runtime.
 
 Reads the SAME canonical fixtures the JS reference codec generates
-(``packages/runtime-js/test/binary-fixtures.json``) and asserts byte-identical
+(``packages/runtime/test/binary-fixtures.json``) and asserts byte-identical
 output, plus round-trips and the unknown-tag skip (durability) guarantee.
 """
 
@@ -17,7 +17,7 @@ from keyma.runtime import decode_binary, encode_binary
 from keyma.runtime._iso import from_epoch_ms
 
 # Canonical fixtures live in the JS reference runtime (single source of truth).
-FIXTURES_PATH = Path(__file__).resolve().parents[2] / "runtime-js" / "test" / "binary-fixtures.json"
+FIXTURES_PATH = Path(__file__).resolve().parents[2] / "runtime" / "test" / "binary-fixtures.json"
 
 
 def _from_wire(v: Any) -> Any:

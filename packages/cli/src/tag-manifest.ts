@@ -1,6 +1,6 @@
 import { existsSync, mkdirSync, readFileSync, writeFileSync } from "node:fs";
 import { dirname } from "node:path";
-import type { TagManifest } from "@keyma/ir";
+import type { TagManifest } from "@keyma/core/ir";
 
 // Real-filesystem I/O for the committed binary tag manifest (`keyma.tags.json`). The CLI is
 // the ONLY layer that touches the manifest on disk — it is read before `drive()` and written
