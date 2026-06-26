@@ -9,48 +9,48 @@
       "types": "./dist/src/index.d.ts"
     },
     "./dsl": {
-      "import": "./dist/dsl/src/index.js",
-      "types": "./dist/dsl/src/index.d.ts"
+      "import": "./dist/src/dsl/index.js",
+      "types": "./dist/src/dsl/index.d.ts"
     },
     "./ir": {
-      "import": "./dist/ir/src/index.js",
-      "types": "./dist/ir/src/index.d.ts"
+      "import": "./dist/src/ir/index.js",
+      "types": "./dist/src/ir/index.d.ts"
     },
     "./frontend-ts": {
-      "import": "./dist/frontend-ts/src/index.js",
-      "types": "./dist/frontend-ts/src/index.d.ts"
+      "import": "./dist/src/frontend-ts/index.js",
+      "types": "./dist/src/frontend-ts/index.d.ts"
     },
     "./backend-js": {
-      "import": "./dist/backend-js/src/index.js",
-      "types": "./dist/backend-js/src/index.d.ts"
+      "import": "./dist/src/backend-js/index.js",
+      "types": "./dist/src/backend-js/index.d.ts"
     },
     "./backend-python": {
-      "import": "./dist/backend-python/src/index.js",
-      "types": "./dist/backend-python/src/index.d.ts"
+      "import": "./dist/src/backend-python/index.js",
+      "types": "./dist/src/backend-python/index.d.ts"
     },
     "./backend-cpp": {
-      "import": "./dist/backend-cpp/src/index.js",
-      "types": "./dist/backend-cpp/src/index.d.ts"
+      "import": "./dist/src/backend-cpp/index.js",
+      "types": "./dist/src/backend-cpp/index.d.ts"
     },
     "./validators": {
-      "types": "./validators/src/index.ts",
-      "import": "./validators/src/index.ts"
+      "types": "./src/validators/index.ts",
+      "import": "./src/validators/index.ts"
     },
     "./formatters": {
-      "types": "./formatters/src/index.ts",
-      "import": "./formatters/src/index.ts"
+      "types": "./src/formatters/index.ts",
+      "import": "./src/formatters/index.ts"
     }
   },
   "files": [
     "dist/src",
-    "dist/dsl/src",
-    "dist/ir/src",
-    "dist/frontend-ts/src",
-    "dist/backend-js/src",
-    "dist/backend-python/src",
-    "dist/backend-cpp/src",
-    "validators/src",
-    "formatters/src"
+    "dist/src/dsl",
+    "dist/src/ir",
+    "dist/src/frontend-ts",
+    "dist/src/backend-js",
+    "dist/src/backend-python",
+    "dist/src/backend-cpp",
+    "src/validators",
+    "src/formatters"
   ],
   "repository": {
     "type": "git",
@@ -62,7 +62,7 @@
   },
   "scripts": {
     "build": "tsc",
-    "test": "tsc && cp -r backend-js/test/snapshots dist/backend-js/test/ && node --test dist/dsl/test/*.test.js dist/ir/test/*.test.js dist/frontend-ts/test/*.test.js dist/backend-js/test/*.test.js dist/backend-python/test/*.test.js dist/backend-cpp/test/*.test.js"
+    "test": "tsc && cp -r test/backend-js/snapshots dist/test/backend-js/ && node --test dist/test/dsl/*.test.js dist/test/ir/*.test.js dist/test/frontend-ts/*.test.js dist/test/backend-js/*.test.js dist/test/backend-python/*.test.js dist/test/backend-cpp/*.test.js"
   },
   "dependencies": {
     "@keyma/core": "^0.0.1",

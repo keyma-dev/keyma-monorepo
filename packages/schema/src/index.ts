@@ -1,9 +1,9 @@
 import type { KeymaDomain } from "@keyma/compiler";
-import { schemaFrontendDomain } from "../frontend-ts/src/index.js";
-import { schemaIRValidator } from "../ir/src/index.js";
-import { schemaJsEmitterPack } from "../backend-js/src/index.js";
-import { schemaPythonEmitterPack } from "../backend-python/src/index.js";
-import { schemaCppEmitterPack } from "../backend-cpp/src/index.js";
+import { schemaFrontendDomain } from "./frontend-ts/index.js";
+import { schemaIRValidator } from "./ir/index.js";
+import { schemaJsEmitterPack } from "./backend-js/index.js";
+import { schemaPythonEmitterPack } from "./backend-python/index.js";
+import { schemaCppEmitterPack } from "./backend-cpp/index.js";
 
 /**
  * The schema domain, wired across all four extension seams of a domain-neutral

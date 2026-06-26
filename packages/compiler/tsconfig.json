@@ -8,16 +8,8 @@
     "experimentalDecorators": true
   },
   "include": [
-    "driver/src/**/*.ts",
-    "driver/test/**/*.ts",
-    "frontend-ts/src/**/*.ts",
-    "frontend-ts/test/**/*.ts",
-    "backend-js/src/**/*.ts",
-    "backend-js/test/**/*.ts",
-    "backend-python/src/**/*.ts",
-    "backend-python/test/**/*.ts",
-    "backend-cpp/src/**/*.ts",
-    "backend-cpp/test/**/*.ts"
+    "src/**/*.ts",
+    "test/**/*.ts"
   ],
-  "exclude": ["backend-js/test/snapshots/**/*"]
+  "exclude": ["test/**/snapshots/**/*"]
 }

@@ -5,24 +5,24 @@
   "type": "module",
   "exports": {
     "./dsl": {
-      "import": "./dist/dsl/src/index.js",
-      "types": "./dist/dsl/src/index.d.ts"
+      "import": "./dist/src/dsl/index.js",
+      "types": "./dist/src/dsl/index.d.ts"
     },
     "./ir": {
-      "import": "./dist/ir/src/index.js",
-      "types": "./dist/ir/src/index.d.ts"
+      "import": "./dist/src/ir/index.js",
+      "types": "./dist/src/ir/index.d.ts"
     },
-    "./ir/schema.json": "./ir/src/schema.json",
+    "./ir/schema.json": "./src/ir/schema.json",
     "./util": {
-      "import": "./dist/util/src/index.js",
-      "types": "./dist/util/src/index.d.ts"
+      "import": "./dist/src/util/index.js",
+      "types": "./dist/src/util/index.d.ts"
     }
   },
   "files": [
-    "dist/dsl/src",
-    "dist/ir/src",
-    "dist/util/src",
-    "ir/src/schema.json"
+    "dist/src/dsl",
+    "dist/src/ir",
+    "dist/src/util",
+    "src/ir/schema.json"
   ],
   "repository": {
     "type": "git",
@@ -34,7 +34,7 @@
   },
   "scripts": {
     "build": "tsc",
-    "test": "tsc && node --test dist/util/test/*.test.js"
+    "test": "tsc && node --test dist/test/util/*.test.js"
   },
   "devDependencies": {
     "@types/node": "*",

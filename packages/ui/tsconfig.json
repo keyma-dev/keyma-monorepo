@@ -9,14 +9,6 @@
   },
   "include": [
     "src/**/*.ts",
-    "dsl/src/**/*.ts",
-    "dsl/test/**/*.ts",
-    "frontend-ts/src/**/*.ts",
-    "frontend-ts/test/**/*.ts",
-    "backend-js/src/**/*.ts",
-    "backend-js/test/**/*.ts",
-    "backend-python/src/**/*.ts",
-    "backend-cpp/src/**/*.ts",
     "test/**/*.ts"
   ]
 }

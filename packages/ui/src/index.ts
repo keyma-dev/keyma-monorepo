@@ -1,8 +1,8 @@
 import type { KeymaDomain } from "@keyma/compiler";
-import { uiFrontendDomain } from "../frontend-ts/src/index.js";
-import { uiJsEmitterPack } from "../backend-js/src/index.js";
-import { uiPythonEmitterPack } from "../backend-python/src/index.js";
-import { uiCppEmitterPack } from "../backend-cpp/src/index.js";
+import { uiFrontendDomain } from "./frontend-ts/index.js";
+import { uiJsEmitterPack } from "./backend-js/index.js";
+import { uiPythonEmitterPack } from "./backend-python/index.js";
+import { uiCppEmitterPack } from "./backend-cpp/index.js";
 
 // The UI domain's IR contract (the `extensions['ui']` shape), re-exported for consumers.
 export * from "./extension.js";

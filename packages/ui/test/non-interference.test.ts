@@ -25,10 +25,10 @@ import { schemaJsEmitterPack } from "@keyma/schema/backend-js";
 import { schemaPythonEmitterPack } from "@keyma/schema/backend-python";
 import { schemaCppEmitterPack } from "@keyma/schema/backend-cpp";
 
-import { uiFrontendDomain } from "../frontend-ts/src/index.js";
-import { uiJsEmitterPack } from "../backend-js/src/index.js";
-import { uiPythonEmitterPack } from "../backend-python/src/index.js";
-import { uiCppEmitterPack } from "../backend-cpp/src/index.js";
+import { uiFrontendDomain } from "../src/frontend-ts/index.js";
+import { uiJsEmitterPack } from "../src/backend-js/index.js";
+import { uiPythonEmitterPack } from "../src/backend-python/index.js";
+import { uiCppEmitterPack } from "../src/backend-cpp/index.js";
 
 // Register the schema-domain IR validator exactly as the CLI does, so validateIR runs the full
 // envelope + schema-section checks against the UI-bearing document below.
@@ -36,7 +36,7 @@ defaultIRValidators.register(schemaIRValidator);
 
 const __dirname = path.dirname(fileURLToPath(import.meta.url));
 // A directory under packages/ui from which both @keyma/schema/dsl and @keyma/ui/dsl resolve.
-const BASE = path.join(__dirname, "..", "..", "frontend-ts", "src");
+const BASE = path.join(__dirname, "..", "..", "src", "frontend-ts");
 
 // One source file exercising both domains: a @Schema class and a @UiView class side by side.
 const SRC = `

@@ -5,36 +5,36 @@
   "type": "module",
   "exports": {
     ".": {
-      "import": "./dist/driver/src/index.js",
-      "types": "./dist/driver/src/index.d.ts"
+      "import": "./dist/src/driver/index.js",
+      "types": "./dist/src/driver/index.d.ts"
     },
     "./frontend-ts": {
-      "import": "./dist/frontend-ts/src/index.js",
-      "types": "./dist/frontend-ts/src/index.d.ts"
+      "import": "./dist/src/frontend-ts/index.js",
+      "types": "./dist/src/frontend-ts/index.d.ts"
     },
     "./frontend-ts/node": {
-      "import": "./dist/frontend-ts/src/node-system.js",
-      "types": "./dist/frontend-ts/src/node-system.d.ts"
+      "import": "./dist/src/frontend-ts/node-system.js",
+      "types": "./dist/src/frontend-ts/node-system.d.ts"
     },
     "./backend-js": {
-      "import": "./dist/backend-js/src/index.js",
-      "types": "./dist/backend-js/src/index.d.ts"
+      "import": "./dist/src/backend-js/index.js",
+      "types": "./dist/src/backend-js/index.d.ts"
     },
     "./backend-python": {
-      "import": "./dist/backend-python/src/index.js",
-      "types": "./dist/backend-python/src/index.d.ts"
+      "import": "./dist/src/backend-python/index.js",
+      "types": "./dist/src/backend-python/index.d.ts"
     },
     "./backend-cpp": {
-      "import": "./dist/backend-cpp/src/index.js",
-      "types": "./dist/backend-cpp/src/index.d.ts"
+      "import": "./dist/src/backend-cpp/index.js",
+      "types": "./dist/src/backend-cpp/index.d.ts"
     }
   },
   "files": [
-    "dist/driver/src",
-    "dist/frontend-ts/src",
-    "dist/backend-js/src",
-    "dist/backend-python/src",
-    "dist/backend-cpp/src"
+    "dist/src/driver",
+    "dist/src/frontend-ts",
+    "dist/src/backend-js",
+    "dist/src/backend-python",
+    "dist/src/backend-cpp"
   ],
   "repository": {
     "type": "git",
@@ -45,12 +45,12 @@
     "access": "public"
   },
   "scripts": {
-    "gen-types": "node backend-js/scripts/gen-emitted-types.mjs",
-    "gen-runtime-header": "node backend-cpp/scripts/gen-runtime-header.mjs",
-    "prebuild": "node backend-js/scripts/gen-emitted-types.mjs && node backend-cpp/scripts/gen-runtime-header.mjs",
+    "gen-types": "node src/backend-js/scripts/gen-emitted-types.mjs",
+    "gen-runtime-header": "node src/backend-cpp/scripts/gen-runtime-header.mjs",
+    "prebuild": "node src/backend-js/scripts/gen-emitted-types.mjs && node src/backend-cpp/scripts/gen-runtime-header.mjs",
     "build": "tsc",
-    "pretest": "node backend-js/scripts/gen-emitted-types.mjs && node backend-cpp/scripts/gen-runtime-header.mjs",
-    "test": "tsc && node --test dist/driver/test/*.test.js"
+    "pretest": "node src/backend-js/scripts/gen-emitted-types.mjs && node src/backend-cpp/scripts/gen-runtime-header.mjs",
+    "test": "tsc && node --test dist/test/driver/*.test.js"
   },
   "dependencies": {
     "@keyma/core": "^0.0.1",
