@@ -13,7 +13,7 @@ import type { RawTaggedField } from "./assign-tags.js";
 import { mapTypeNode } from "@keyma/compiler/frontend-ts";
 import { lowerValidateArgs, lowerFormatArgs, lowerIndexedArgs, lowerInitializerDefault, lowerFormFieldArg } from "./lower-decorator.js";
 import { lowerGetterBody } from "@keyma/compiler/frontend-ts";
-import { lowerMethod, lowerSetter, type MethodLowerCtx } from "@keyma/compiler/frontend-ts";
+import { lowerMethod, lowerSetter, lowerConstructor, lowerDestructor, type MethodLowerCtx } from "@keyma/compiler/frontend-ts";
 import type { FnRefVerdict } from "@keyma/compiler/frontend-ts";
 import type { ResolvedFactory } from "./discover-validators.js";
 import type { DiscoveredSchema } from "./discover.js";
@@ -92,14 +92,22 @@ export function extractSchema(
             if (g) rawMethods.push(g);
         } else if (ts.isMethodDeclaration(member)) {
             if (!member.name || !ts.isIdentifier(member.name)) continue;
-            const m = lowerMethod(member, member.name.text, memberVisibility(member), methodCtx);
+            const methodName = member.name.text;
+            // A method literally named `destructor` is the finalizer authoring convention
+            // (matches the JS emission name); everything else lowers as a plain method.
+            const m = methodName === "destructor"
+                ? lowerDestructor(member, memberVisibility(member), methodCtx)
+                : lowerMethod(member, methodName, memberVisibility(member), methodCtx);
             if (m) rawMethods.push(m);
         } else if (ts.isSetAccessorDeclaration(member)) {
             if (!member.name || !ts.isIdentifier(member.name)) continue;
             const m = lowerSetter(member, member.name.text, memberVisibility(member), methodCtx);
             if (m) rawMethods.push(m);
+        } else if (ts.isConstructorDeclaration(member)) {
+            const c = lowerConstructor(member, memberVisibility(member), methodCtx);
+            if (c) rawMethods.push(c);
         }
-        // Skip the constructor, static members, etc.
+        // Skip static members, etc.
     }
 
     const methods = dedupeMethods(rawMethods, fields, ctx, sourceFile);

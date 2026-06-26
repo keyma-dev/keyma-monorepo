@@ -1,7 +1,7 @@
 import ts from "typescript";
-import type { IRExpression, IRStatement, IRType, IRDiagnostic } from "@keyma/core/ir";
+import type { IRExpression, IRStatement, IRSwitchCase, IRType, IRDiagnostic } from "@keyma/core/ir";
 import { intrinsicByMember, intrinsicByOp } from "@keyma/core/ir";
-import { mkError, KEYMA082, KEYMA085, KEYMA087 } from "./diagnostics.js";
+import { mkError, mkWarning, KEYMA082, KEYMA085, KEYMA087, KEYMA0201, KEYMA0202, KEYMA0203, KEYMA0204, KEYMA0205 } from "./diagnostics.js";
 import { getLocation } from "./util.js";
 import { inferIRTypeFromType } from "./map-type.js";
 
@@ -131,8 +131,253 @@ export function lowerStatement(stmt: ts.Statement, ctx: PortableExprCtx): IRStat
         return { kind: "expression", expr };
     }
 
+    // `for (const x of iterable) { … }` — a single `const` binding with a simple identifier.
+    if (ts.isForOfStatement(stmt)) {
+        if (stmt.awaitModifier !== undefined) {
+            ctx.diagnostics.push(mkError(unsupp(ctx), "`for await … of` is not portable", getLocation(stmt, ctx.sourceFile)));
+            return null;
+        }
+        const list = stmt.initializer;
+        if (!ts.isVariableDeclarationList(list) || (list.flags & ts.NodeFlags.Const) === 0 || list.declarations.length !== 1) {
+            ctx.diagnostics.push(mkError(KEYMA0204, "`for…of` requires a single `const` binding (no `let`/`var`, no multiple bindings)", getLocation(stmt, ctx.sourceFile)));
+            return null;
+        }
+        const decl = list.declarations[0];
+        if (decl === undefined || !ts.isIdentifier(decl.name)) {
+            ctx.diagnostics.push(mkError(KEYMA0204, "`for…of` binding must be a simple identifier (destructuring is not portable)", getLocation(stmt, ctx.sourceFile)));
+            return null;
+        }
+        const iterable = lowerExpr(stmt.expression, ctx);
+        if (iterable === null) return null;
+        // In field mode the loop variable shadows any same-named schema field inside the body.
+        const bodyCtx: PortableExprCtx = isFieldMode(ctx)
+            ? { ...ctx, locals: new Set([...(ctx.locals ?? []), decl.name.text]) }
+            : ctx;
+        const body = lowerBlock(stmt.statement, bodyCtx);
+        return { kind: "forOf", name: decl.name.text, iterable, body };
+    }
+
+    if (ts.isWhileStatement(stmt)) {
+        const condition = lowerExpr(stmt.expression, ctx);
+        if (condition === null) return null;
+        const body = lowerBlock(stmt.statement, ctx);
+        return { kind: "while", condition, body };
+    }
+
+    if (ts.isBreakStatement(stmt)) {
+        if (stmt.label !== undefined) {
+            ctx.diagnostics.push(mkError(KEYMA0205, "Labeled `break` is not portable", getLocation(stmt, ctx.sourceFile)));
+            return null;
+        }
+        return { kind: "break" };
+    }
+
+    if (ts.isContinueStatement(stmt)) {
+        if (stmt.label !== undefined) {
+            ctx.diagnostics.push(mkError(KEYMA0205, "Labeled `continue` is not portable", getLocation(stmt, ctx.sourceFile)));
+            return null;
+        }
+        return { kind: "continue" };
+    }
+
+    // `for…in` is not portable — steer to `Object.keys`/`Object.entries` + `for…of`.
+    if (ts.isForInStatement(stmt)) {
+        ctx.diagnostics.push(mkError(
+            KEYMA0203,
+            "`for…in` is not portable — iterate `Object.keys(obj)` or `Object.entries(obj)` with a `for…of` loop instead",
+            getLocation(stmt, ctx.sourceFile),
+        ));
+        return null;
+    }
+
+    if (ts.isSwitchStatement(stmt)) {
+        const discriminant = lowerExpr(stmt.expression, ctx);
+        if (discriminant === null) return null;
+        const cases: IRSwitchCase[] = [];
+        for (const clause of stmt.caseBlock.clauses) {
+            // Source-faithful: lower each clause's statements as authored (a trailing
+            // `break` lowers to `{kind:"break"}`; its absence is fallthrough).
+            const body = lowerStatements(clause.statements, ctx);
+            if (ts.isCaseClause(clause)) {
+                const test = lowerExpr(clause.expression, ctx);
+                if (test === null) return null;
+                cases.push({ test, body });
+            } else {
+                cases.push({ test: null, body });
+            }
+        }
+        return { kind: "switch", discriminant, cases };
+    }
+
     ctx.diagnostics.push(mkError(unsupp(ctx), `Unsupported statement kind: ${ts.SyntaxKind[stmt.kind]}`, getLocation(stmt, ctx.sourceFile)));
     return null;
+}
+
+// ─── Multi-statement lowering (C-style `for` desugar) ─────────────────────────
+
+/**
+ * Lower one statement, appending the resulting IR statement(s) to `out`. Most
+ * statements append exactly one node and defer to {@link lowerStatement}; a C-style
+ * `for (init; cond; update)` is the one shape that desugars to several nodes — its
+ * `init` becomes leading statement(s) and the loop becomes a `while` whose body ends
+ * with the `update` step. Returns `false` (a diagnostic was pushed) on failure.
+ */
+function lowerStatementInto(out: IRStatement[], stmt: ts.Statement, ctx: PortableExprCtx): boolean {
+    if (ts.isForStatement(stmt)) return lowerCStyleFor(out, stmt, ctx);
+    const single = lowerStatement(stmt, ctx);
+    if (single === null) return false;
+    out.push(single);
+    return true;
+}
+
+/**
+ * Desugar a C-style `for (init; cond; update) body` to `init…; while (cond) { body; update }`,
+ * emitting a KEYMA0201 warning. A `continue` anywhere in the body is a hard error (KEYMA0202):
+ * the while-desugar cannot run the `update` step before continuing, so the loop semantics
+ * would silently change.
+ */
+function lowerCStyleFor(out: IRStatement[], stmt: ts.ForStatement, ctx: PortableExprCtx): boolean {
+    if (statementContainsContinue(stmt.statement)) {
+        ctx.diagnostics.push(mkError(
+            KEYMA0202,
+            "`continue` inside a C-style `for` is not portable — it is desugared to a `while`, which cannot run the update step before continuing; rewrite as a `for…of` or `while` loop",
+            getLocation(stmt, ctx.sourceFile),
+        ));
+        return false;
+    }
+
+    // init → leading statements
+    const lead: IRStatement[] = [];
+    const init = stmt.initializer;
+    if (init !== undefined) {
+        if (ts.isVariableDeclarationList(init)) {
+            for (const decl of init.declarations) {
+                if (!ts.isIdentifier(decl.name) || decl.initializer === undefined) {
+                    ctx.diagnostics.push(mkError(KEYMA0204, "C-style `for` initializer must declare simple, initialized identifier variables", getLocation(stmt, ctx.sourceFile)));
+                    return false;
+                }
+                const value = lowerExpr(decl.initializer, ctx);
+                if (value === null) return false;
+                lead.push({ kind: "const", name: decl.name.text, init: value });
+            }
+        } else {
+            const initStmts = lowerForSideEffect(init, ctx);
+            if (initStmts === null) return false;
+            lead.push(...initStmts);
+        }
+    }
+
+    // condition (an omitted condition means an infinite loop → `true`)
+    let condition: IRExpression;
+    if (stmt.condition !== undefined) {
+        const c = lowerExpr(stmt.condition, ctx);
+        if (c === null) return false;
+        condition = c;
+    } else {
+        condition = { kind: "literal", value: true };
+    }
+
+    // body, with the update step appended as trailing statement(s)
+    const body = lowerBlock(stmt.statement, ctx);
+    if (stmt.incrementor !== undefined) {
+        const upd = lowerForSideEffect(stmt.incrementor, ctx);
+        if (upd === null) return false;
+        body.push(...upd);
+    }
+
+    ctx.diagnostics.push(mkWarning(
+        KEYMA0201,
+        "C-style `for (init; cond; update)` is desugared to a `while` loop; prefer `for…of` where possible",
+        getLocation(stmt, ctx.sourceFile),
+    ));
+
+    out.push(...lead);
+    out.push({ kind: "while", condition, body });
+    return true;
+}
+
+/** Compound-assignment tokens → the underlying binary op (for C-style-`for` update steps). */
+const COMPOUND_OP_MAP = new Map<ts.SyntaxKind, "+" | "-" | "*" | "/" | "%">([
+    [ts.SyntaxKind.PlusEqualsToken, "+"],
+    [ts.SyntaxKind.MinusEqualsToken, "-"],
+    [ts.SyntaxKind.AsteriskEqualsToken, "*"],
+    [ts.SyntaxKind.SlashEqualsToken, "/"],
+    [ts.SyntaxKind.PercentEqualsToken, "%"],
+]);
+
+/** Require `allowAssign`; push a diagnostic and return false when mutation is disallowed. */
+function requireAssign(ctx: PortableExprCtx, node: ts.Node): boolean {
+    if (ctx.allowAssign === true) return true;
+    ctx.diagnostics.push(mkError(unsupp(ctx), "Assignment is not allowed in this body", getLocation(node, ctx.sourceFile)));
+    return false;
+}
+
+/**
+ * Lower a C-style-`for` init/update expression to side-effecting IR statement(s),
+ * desugaring `++`/`--` and compound assignments (`+=`, …) into `assign` statements so a
+ * counter step survives the while-desugar. Returns `null` (diagnostic pushed) on failure.
+ */
+function lowerForSideEffect(expr: ts.Expression, ctx: PortableExprCtx): IRStatement[] | null {
+    // `i++` / `i--` / `++i` / `--i` → `i = i ± 1`
+    if (ts.isPostfixUnaryExpression(expr) || ts.isPrefixUnaryExpression(expr)) {
+        const op = expr.operator;
+        if (op === ts.SyntaxKind.PlusPlusToken || op === ts.SyntaxKind.MinusMinusToken) {
+            if (!requireAssign(ctx, expr)) return null;
+            const target = lowerExpr(expr.operand, ctx);
+            if (target === null) return null;
+            const binOp = op === ts.SyntaxKind.PlusPlusToken ? "+" : "-";
+            return [{ kind: "assign", target, value: { kind: "binary", op: binOp, left: target, right: { kind: "literal", value: 1 } } }];
+        }
+    }
+
+    if (ts.isBinaryExpression(expr)) {
+        const opKind = expr.operatorToken.kind;
+        if (opKind === ts.SyntaxKind.EqualsToken) {
+            if (!requireAssign(ctx, expr)) return null;
+            const target = lowerExpr(expr.left, ctx);
+            if (target === null) return null;
+            const value = lowerExpr(expr.right, ctx);
+            if (value === null) return null;
+            return [{ kind: "assign", target, value }];
+        }
+        const compound = COMPOUND_OP_MAP.get(opKind);
+        if (compound !== undefined) {
+            if (!requireAssign(ctx, expr)) return null;
+            const target = lowerExpr(expr.left, ctx);
+            if (target === null) return null;
+            const rhs = lowerExpr(expr.right, ctx);
+            if (rhs === null) return null;
+            return [{ kind: "assign", target, value: { kind: "binary", op: compound, left: target, right: rhs } }];
+        }
+    }
+
+    // Fallback: any other side-effecting expression (e.g. a function call).
+    const e = lowerExpr(expr, ctx);
+    if (e === null) return null;
+    return [{ kind: "expression", expr: e }];
+}
+
+/**
+ * True if `node` contains a `continue` that targets the enclosing loop — i.e. one not
+ * inside a nested loop or function (whose `continue` belongs to that inner construct).
+ * A `continue` inside a `switch`/`if`/`block` within the loop still counts.
+ */
+function statementContainsContinue(node: ts.Node): boolean {
+    let found = false;
+    const visit = (n: ts.Node): void => {
+        if (found) return;
+        if (ts.isContinueStatement(n)) { found = true; return; }
+        if (
+            ts.isForStatement(n) || ts.isForOfStatement(n) || ts.isForInStatement(n) ||
+            ts.isWhileStatement(n) || ts.isDoStatement(n) ||
+            ts.isFunctionDeclaration(n) || ts.isFunctionExpression(n) || ts.isArrowFunction(n)
+        ) {
+            return; // a nested loop/function owns its own `continue`
+        }
+        ts.forEachChild(n, visit);
+    };
+    ts.forEachChild(node, visit);
+    return found;
 }
 
 /**
@@ -147,18 +392,25 @@ export function lowerStatements(stmts: readonly ts.Statement[], ctx: PortableExp
     let locals = ctx.locals;
     for (const s of stmts) {
         const stmtCtx: PortableExprCtx = locals === undefined ? ctx : { ...ctx, locals };
-        const irS = lowerStatement(s, stmtCtx);
-        if (irS === null) continue;
-        out.push(irS);
-        if (irS.kind === "const") locals = new Set([...(locals ?? []), irS.name]);
+        const before = out.length;
+        lowerStatementInto(out, s, stmtCtx);
+        // Newly-appended `const` bindings (incl. a C-style-`for` desugar's init) are
+        // visible to subsequent statements — matters in field mode (local shadows a field).
+        for (let i = before; i < out.length; i++) {
+            const appended = out[i];
+            if (appended !== undefined && appended.kind === "const") {
+                locals = new Set([...(locals ?? []), appended.name]);
+            }
+        }
     }
     return out;
 }
 
 export function lowerBlock(node: ts.Statement, ctx: PortableExprCtx): IRStatement[] {
     if (ts.isBlock(node)) return lowerStatements(node.statements, ctx);
-    const irS = lowerStatement(node, ctx);
-    return irS !== null ? [irS] : [];
+    const out: IRStatement[] = [];
+    lowerStatementInto(out, node, ctx);
+    return out;
 }
 
 // ─── Expression lowering ──────────────────────────────────────────────────────
@@ -187,6 +439,14 @@ export function lowerExpr(node: ts.Expression, ctx: PortableExprCtx): IRExpressi
         const operand = lowerExpr(node.expression, ctx);
         if (operand === null) return null;
         return { kind: "typeof", operand };
+    }
+
+    // `await operand` — only meaningful inside an async function/method body (the
+    // declaration's `async` flag is set separately by lower-method/lower-function).
+    if (ts.isAwaitExpression(node)) {
+        const operand = lowerExpr(node.expression, ctx);
+        if (operand === null) return null;
+        return { kind: "await", operand };
     }
 
     if (ts.isPropertyAccessExpression(node)) {

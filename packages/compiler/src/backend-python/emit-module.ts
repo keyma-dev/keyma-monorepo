@@ -97,10 +97,12 @@ function orderClassesByInheritance(classes: readonly IRClassDeclaration[]): IRCl
     return out;
 }
 
-/** Emit a plain project-local utility function as a module-level `def`. */
+/** Emit a plain project-local utility function as a module-level `def` (or `async def` when the
+ *  declaration is async — its body may then use `await`; `returnType` is the unwrapped `T`). */
 function emitFunctionPy(decl: IRFunctionDeclaration): string {
     const params = decl.params.map((p) => p.name).join(", ");
-    const lines = [`def ${decl.name}(${params}):`];
+    const kw = decl.async === true ? "async def" : "def";
+    const lines = [`${kw} ${decl.name}(${params}):`];
     if (decl.statements.length === 0) lines.push("    pass");
     else lines.push(renderStatements(decl.statements, "    "));
     return lines.join("\n");
@@ -122,23 +124,33 @@ function emitSchemaClass(schema: IRClassDeclaration, deps: ModuleEmitDeps): stri
     const fields = filterVisibleFields(schema, deps.includePrivate);
     const lines: string[] = [];
 
-    // Inheritance is real: `class Child(Parent)`; `__init__` chains to the base then assigns only
-    // OWN fields. `extends` is the parent sourceName (the emit symbol).
+    // Inheritance is real: `class Child(Parent)`. `extends` is the parent sourceName (emit symbol).
     const extendsClause = schema.extends !== undefined ? `(${schema.extends})` : "";
     lines.push(`class ${schema.sourceName}${extendsClause}:`);
-    lines.push(`    def __init__(self, value: Dict[str, Any] = None):`);
-    if (schema.extends !== undefined) lines.push(`        super().__init__(value)`);
+
+    // Hydration is a STATIC factory (008), freeing `__init__` for a user-authored constructor:
+    //   • `from_value` allocates via `__new__` (bypassing any user `__init__`) and delegates to
+    //     `_hydrate`, returning the instance.
+    //   • `_hydrate` chains to the base then assigns only this class's OWN fields — real
+    //     inheritance, base-chain walked through `super()._hydrate(value)`.
+    lines.push(`    @classmethod`);
+    lines.push(`    def from_value(cls, value: Dict[str, Any] = None):`);
+    lines.push(`        obj = cls.__new__(cls)`);
+    lines.push(`        obj._hydrate(value)`);
+    lines.push(`        return obj`);
+    lines.push("");
+    lines.push(`    def _hydrate(self, value: Dict[str, Any] = None):`);
+    if (schema.extends !== undefined) lines.push(`        super()._hydrate(value)`);
     if (fields.length > 0) {
         lines.push(`        if value:`);
         for (const field of fields) {
             lines.push(`            self.${field.name}: ${fieldAnnotation(field, deps.classNameByName)} = value.get("${field.name}")`);
         }
     } else if (schema.extends === undefined) {
-        // Fieldless base class: keep the historical empty-but-valid body.
-        lines.push(`        if value:`);
-        lines.push(`            pass`);
+        // Fieldless base class: a valid no-op body.
+        lines.push(`        pass`);
     }
-    // (extends with no own fields → the body is just the super().__init__(value) call.)
+    // (extends with no own fields → the body is just the super()._hydrate(value) call.)
 
     // Getters, setters, and methods are all behaviors re-emitted as class members.
     // Emit getters first so a paired `@name.setter` follows its `@property`.
@@ -295,8 +307,22 @@ function emitMethodPython(
         }
         return lines;
     }
+    // A user-authored constructor (008) → `__init__`. It coexists with the hydration factory
+    // (`from_value`/`_hydrate`), which bypasses `__init__` via `__new__`.
+    if (method.kind === "constructor") {
+        const params = ["self", ...method.params.map((p) => p.name)].join(", ");
+        lines.push(`    def __init__(${params}):`, ...body);
+        return lines;
+    }
+    // A user-authored destructor (009) → `__del__` (no params, no return).
+    if (method.kind === "destructor") {
+        lines.push(`    def __del__(self):`, ...body);
+        return lines;
+    }
+    // Regular method — `async def` when async (010); its body may then use `await`.
+    const kw = method.async === true ? "async def" : "def";
     const params = ["self", ...method.params.map((p) => p.name)].join(", ");
-    lines.push(`    def ${method.name}(${params}):`, ...body);
+    lines.push(`    ${kw} ${method.name}(${params}):`, ...body);
     return lines;
 }
 

@@ -25,6 +25,17 @@ export const KEYMA087 = "KEYMA087"; // Unsupported `instanceof` right-hand const
 // Method / setter behavior errors
 export const KEYMA092 = "KEYMA092"; // Method/setter parameter or return type must be explicitly annotated (portable subset)
 
+// Control-flow lowering — loops (011), constructor (008) and destructor (009). These live in
+// the compiler-owned reserved band KEYMA0200–0299 (see the band note above), kept distinct
+// from the schema domain's KEYMA0800+ band.
+export const KEYMA0201 = "KEYMA0201"; // C-style `for (init; cond; update)` desugared to a `while` loop (warning)
+export const KEYMA0202 = "KEYMA0202"; // `continue` inside a C-style `for` is not portable (the while-desugar can't run the update step)
+export const KEYMA0203 = "KEYMA0203"; // `for…in` is not portable — iterate `Object.keys`/`Object.entries` with `for…of`
+export const KEYMA0204 = "KEYMA0204"; // Unsupported loop binding — `for…of`/C-style-`for` need a single `const`/simple identifier binding (no let/var/destructuring)
+export const KEYMA0205 = "KEYMA0205"; // Labeled `break`/`continue` is not portable
+export const KEYMA0206 = "KEYMA0206"; // A destructor must be a no-parameter, void-returning, synchronous method
+export const KEYMA0207 = "KEYMA0207"; // A constructor may not be async
+
 // TS-type → IR-type mapping (the generic `map-type` engine, shared by schema extraction and
 // the generic validator/method/function lowering, stays in the compiler).
 export const KEYMA010 = "KEYMA010"; // Unknown field type

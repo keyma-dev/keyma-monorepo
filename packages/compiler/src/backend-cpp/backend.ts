@@ -1,7 +1,7 @@
 import { path, reachableFunctions, collectFunctionRefs, filterVisibleFields, inheritedFields } from "@keyma/core/util";
 import type {
     KeymaIR, IRClassDeclaration, IREnumDeclaration, IRService, IRType,
-    IRFunctionDeclaration,
+    IRFunctionDeclaration, IRDiagnostic,
 } from "@keyma/core/ir";
 import type { KeymaBackend, KeymaTargetConfig, ResolvedConfig, EmitFile, EmitResult } from "../driver/index.js";
 import { emitModuleCpp, collectFactoryNames, type ModuleEmitDeps } from "./emit-module.js";
@@ -123,23 +123,38 @@ export async function emitCpp(
         binary: config.binary === true,
     };
 
+    // Diagnostics raised during emission (e.g. issue 010's async-not-yet-C++-emittable). The same
+    // async member is emitted into multiple bundles (client + server), so dedupe before returning.
+    const diagnostics: IRDiagnostic[] = [];
+
     if (cppTarget.emitClient) {
         files.push(...emitBundle(ir, path.posix.join(cppTarget.outDir, "client"), shared, decls, {
             includePrivate: false, includeIndexes: false, formPhasesOnly: true, includeDefaults: false,
-        }, cppTarget.vendorRuntime, packs, "client"));
+        }, cppTarget.vendorRuntime, packs, "client", diagnostics));
     }
     if (cppTarget.emitServer) {
         files.push(...emitBundle(ir, path.posix.join(cppTarget.outDir, "server"), shared, decls, {
             includePrivate: true, includeIndexes: true, formPhasesOnly: false, includeDefaults: true,
-        }, cppTarget.vendorRuntime, packs, "server"));
+        }, cppTarget.vendorRuntime, packs, "server", diagnostics));
     }
     if (cppTarget.emitLibrary) {
         files.push(...emitBundle(ir, cppTarget.outDir, shared, decls, {
             includePrivate: true, includeIndexes: true, formPhasesOnly: false, includeDefaults: true,
-        }, cppTarget.vendorRuntime, packs, "library"));
+        }, cppTarget.vendorRuntime, packs, "library", diagnostics));
     }
 
-    return { files, diagnostics: [] };
+    return { files, diagnostics: dedupeDiagnostics(diagnostics) };
+}
+
+/** Collapse identical diagnostics (same code/message/source) raised once per bundle into one. */
+function dedupeDiagnostics(diagnostics: readonly IRDiagnostic[]): IRDiagnostic[] {
+    const seen = new Map<string, IRDiagnostic>();
+    for (const d of diagnostics) {
+        const s = d.source;
+        const key = `${d.code}|${d.severity}|${d.message}|${s?.file ?? ""}:${s?.line ?? ""}:${s?.column ?? ""}`;
+        if (!seen.has(key)) seen.set(key, d);
+    }
+    return [...seen.values()];
 }
 
 type BundleOptions = Pick<
@@ -156,6 +171,7 @@ function emitBundle(
     vendorRuntime: boolean,
     packs: readonly CppEmitterPack[],
     bundle: "client" | "server" | "library",
+    diagnostics: IRDiagnostic[],
 ): EmitFile[] {
     const files: EmitFile[] = [];
 
@@ -221,7 +237,7 @@ function emitBundle(
             ...(renderClaimedFunctions !== undefined ? { renderClaimedFunctions } : {}),
         };
         for (const ref of moduleRefs) {
-            const content = emitModuleCpp(ref, schemaGroups.get(ref) ?? [], enumGroups.get(ref) ?? [], fnGroups.get(ref) ?? [], deps);
+            const content = emitModuleCpp(ref, schemaGroups.get(ref) ?? [], enumGroups.get(ref) ?? [], fnGroups.get(ref) ?? [], deps, diagnostics);
             files.push({ path: path.posix.join(bundleDir, `${ref}.hpp`), content });
         }
     }

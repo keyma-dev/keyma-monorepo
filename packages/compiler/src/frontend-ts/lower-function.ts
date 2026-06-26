@@ -9,7 +9,8 @@ import type {
 import { mkError, KEYMA086 } from "./diagnostics.js";
 import { getLocation, resolveAlias } from "./util.js";
 import { mapTypeNode, type TypeMapContext } from "./map-type.js";
-import { lowerExpr, lowerStatement, type BodyLowerCtx, type FnRefVerdict } from "./lower-body.js";
+import { lowerExpr, lowerStatements, type BodyLowerCtx, type FnRefVerdict } from "./lower-body.js";
+import { peelPromise } from "./lower-method.js";
 
 /** A callable node that can be compiled into an IRFunctionDeclaration. */
 type CallableNode = ts.FunctionDeclaration | ts.ArrowFunction | ts.FunctionExpression;
@@ -190,17 +191,23 @@ export function createFunctionCollector(deps: FunctionCollectorDeps): FunctionCo
             type: mapAnnotatedType(p.type, p, `parameter of "${fn.name}"`, typeMapCtx, ctx),
         }));
 
-        const returnType = mapAnnotatedType(fn.node.type, fn.node, `return type of "${fn.name}"`, typeMapCtx, ctx);
+        // An `async` function's body may `await`; its `Promise<T>` return annotation is
+        // peeled to the unwrapped `T` (the wrapper is implied by `async`).
+        const isAsync = isAsyncCallable(fn.node);
+        const returnNode = isAsync && fn.node.type !== undefined ? peelPromise(fn.node.type) : fn.node.type;
+        const returnType = mapAnnotatedType(returnNode, fn.node, `return type of "${fn.name}"`, typeMapCtx, ctx);
 
         const statements = lowerFunctionBody(fn.node, ctx);
 
-        return {
+        const result: IRFunctionDeclaration = {
             name: fn.name,
             params,
             returnType,
             statements,
             source: getLocation(fn.node, fn.sourceFile),
         };
+        if (isAsync) result.async = true;
+        return result;
     }
 
     /** Map an explicit type annotation; missing/unknown/any → KEYMA086 + `json` fallback. */
@@ -243,6 +250,11 @@ function findCallable(decls: readonly ts.Declaration[]): { node: CallableNode } 
     return undefined;
 }
 
+/** True when a callable is declared `async` (works for all three callable node forms). */
+function isAsyncCallable(node: CallableNode): boolean {
+    return node.modifiers?.some((m) => m.kind === ts.SyntaxKind.AsyncKeyword) ?? false;
+}
+
 function lowerFunctionBody(node: CallableNode, ctx: BodyLowerCtx): IRStatement[] {
     // Concise arrow body: (x) => expr  →  return expr
     if (ts.isArrowFunction(node) && !ts.isBlock(node.body)) {
@@ -250,10 +262,6 @@ function lowerFunctionBody(node: CallableNode, ctx: BodyLowerCtx): IRStatement[]
         return expr !== null ? [{ kind: "return", value: expr }] : [];
     }
     const block = node.body as ts.Block;
-    const statements: IRStatement[] = [];
-    for (const s of block.statements) {
-        const irStmt = lowerStatement(s, ctx);
-        if (irStmt !== null) statements.push(irStmt);
-    }
-    return statements;
+    // lowerStatements drives the shared engine (loop/switch/C-style-`for` desugar).
+    return lowerStatements(block.statements, ctx);
 }

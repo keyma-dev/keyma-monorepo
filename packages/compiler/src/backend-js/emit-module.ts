@@ -79,12 +79,25 @@ function emitSchemaClassJs(schema: IRClassDeclaration, deps: ModuleEmitDeps): st
     const fields = filterVisibleFields(schema, deps.includePrivate);
     const lines: string[] = [];
 
-    // Inheritance is real: emit `extends Parent` and assign only OWN fields here; `super(value)`
-    // populates the inherited ones. (`extends` is the parent's sourceName — the emit symbol.)
+    // Inheritance is real: emit `extends Parent` and assign only OWN fields here; the
+    // base-chain walk in `_hydrate` populates the inherited ones. (`extends` is the parent's
+    // sourceName — the emit symbol.)
     const ext = schema.extends !== undefined ? ` extends ${schema.extends}` : "";
     lines.push(`export class ${schema.sourceName}${ext} {`);
-    lines.push(`    constructor(value) {`);
-    if (schema.extends !== undefined) lines.push(`        super(value);`);
+
+    // Hydration is a STATIC factory (mirrors C++ `T::from_value`), which frees the constructor
+    // slot for a user-authored constructor. `Object.create` bypasses the constructor so the two
+    // never collide — no code path hydrates via `new Class(plain)`.
+    lines.push(`    static fromValue(value) {`);
+    lines.push(`        const instance = Object.create(this.prototype);`);
+    lines.push(`        instance._hydrate(value);`);
+    lines.push(`        return instance;`);
+    lines.push(`    }`);
+    lines.push("");
+    // Per-class field assignment, walking the base chain via `super._hydrate` (real inheritance:
+    // each class assigns only its OWN fields; the parent assigns the inherited ones).
+    lines.push(`    _hydrate(value) {`);
+    if (schema.extends !== undefined) lines.push(`        super._hydrate(value);`);
     lines.push(`        if (value) {`);
     for (const field of fields) {
         lines.push(`            this.${field.name} = value.${field.name};`);
@@ -92,14 +105,18 @@ function emitSchemaClassJs(schema: IRClassDeclaration, deps: ModuleEmitDeps): st
     lines.push(`        }`);
     lines.push(`    }`);
 
-    // Getters, setters, and methods are all behaviors re-emitted as class members.
+    // Getters, setters, methods, and the user-authored constructor/destructor are all re-emitted
+    // as class members. `async` rides on plain methods only.
     for (const method of filterVisibleMethods(schema, deps.includePrivate)) {
         lines.push("");
         const params = method.params.map((p) => p.name).join(", ");
+        const asyncKw = method.async ? "async " : "";
         const signature =
             method.kind === "setter" ? `    set ${method.name}(${params}) {`
             : method.kind === "getter" ? `    get ${method.name}() {`
-            : `    ${method.name}(${params}) {`;
+            : method.kind === "constructor" ? `    constructor(${params}) {`
+            : method.kind === "destructor" ? `    destructor() {`
+            : `    ${asyncKw}${method.name}(${params}) {`;
         lines.push(signature);
         for (const stmt of method.statements) lines.push(stmtToJs(stmt, "        "));
         lines.push(`    }`);
@@ -127,7 +144,8 @@ function emitSchemaClassJs(schema: IRClassDeclaration, deps: ModuleEmitDeps): st
 function emitFunctionJs(decl: IRFunctionDeclaration): string {
     const params = decl.params.map((p) => p.name).join(", ");
     const body = decl.statements.map((s) => stmtToJs(s, "    ")).join("\n");
-    return `export function ${decl.name}(${params}) {\n${body}\n}\n`;
+    const asyncKw = decl.async ? "async " : "";
+    return `export ${asyncKw}function ${decl.name}(${params}) {\n${body}\n}\n`;
 }
 
 // ─── .d.ts module ──────────────────────────────────────────────────────────────
@@ -180,16 +198,22 @@ function emitSchemaClassDts(schema: IRClassDeclaration, deps: ModuleEmitDeps): s
         } else if (method.kind === "getter") {
             const ret = method.returnType ? irTypeToTs(method.returnType, deps.embeddedTypeNames) : "void";
             lines.push(`    get ${method.name}(): ${ret};`);
+        } else if (method.kind === "constructor") {
+            lines.push(`    constructor(${params});`);
         } else {
-            const ret = method.returnType ? irTypeToTs(method.returnType, deps.embeddedTypeNames) : "void";
+            // method or destructor — async re-wraps the unwrapped `returnType` in `Promise<…>`.
+            let ret = method.returnType ? irTypeToTs(method.returnType, deps.embeddedTypeNames) : "void";
+            if (method.async) ret = `Promise<${ret}>`;
             lines.push(`    ${method.name}(${params}): ${ret};`);
         }
     }
 
-    const ctorParams = fields
+    // Hydration is the static `fromValue` factory (mirrors the `.js`); the constructor slot is
+    // left for the user-authored constructor declared in the method loop above.
+    const fromValueParams = fields
         .map((f) => `${f.name}?: ${irTypeToTs(f.type, deps.embeddedTypeNames)}${f.nullable ? " | null" : ""}`)
         .join("; ");
-    lines.push(`    constructor(value?: { ${ctorParams} });`);
+    lines.push(`    static fromValue(value?: { ${fromValueParams} }): ${declName};`);
     lines.push(`}`);
 
     if (shape?.trailer !== undefined && shape.trailer.length > 0) {
@@ -204,7 +228,10 @@ function emitSchemaClassDts(schema: IRClassDeclaration, deps: ModuleEmitDeps): s
 /** Emit a plain project-local utility function's `.d.ts` declaration. */
 function emitFunctionDts(decl: IRFunctionDeclaration, embeddedNames: ReadonlyMap<string, string>): string {
     const params = decl.params.map((p) => `${p.name}: ${irTypeToTs(p.type, embeddedNames)}`).join(", ");
-    return `export declare function ${decl.name}(${params}): ${irTypeToTs(decl.returnType, embeddedNames)};\n`;
+    // `returnType` carries the UNWRAPPED `T`; an async fn re-wraps it in `Promise<…>`.
+    let ret = irTypeToTs(decl.returnType, embeddedNames);
+    if (decl.async) ret = `Promise<${ret}>`;
+    return `export declare function ${decl.name}(${params}): ${ret};\n`;
 }
 
 // ─── Import resolution ─────────────────────────────────────────────────────────

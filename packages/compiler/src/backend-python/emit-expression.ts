@@ -112,10 +112,16 @@ export function exprToPython(expr: IRExpression): string {
             return `${callee}(${args})`;
         }
 
+        case "await":
+            // `await <operand>`. Emitted only inside an `async def` body (the frontend
+            // guarantees that). wrapIfComplex parenthesizes a binary/conditional operand so
+            // `await` binds to the whole awaitable, not just its left side.
+            return `await ${wrapIfComplex(expr.operand)}`;
+
         case "intrinsic":
             return intrinsicToPython(expr);
         default:
-            // Additive IR vocabulary (e.g. `await`) whose Python emission lands in a later slice.
+            // Additive IR vocabulary whose Python emission lands in a later slice.
             throw new Error(`exprToPython: unsupported IR expression kind "${(expr as { kind: string }).kind}"`);
     }
 }

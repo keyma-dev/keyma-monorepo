@@ -1,6 +1,6 @@
 import type {
     IRClassDeclaration, IRField, IRType, IRMethod, IREnumDeclaration,
-    IRFunctionDeclaration,
+    IRFunctionDeclaration, IRDiagnostic,
 } from "@keyma/core/ir";
 import { collectRefTargets, collectFunctionRefs, collectStatementIdentifiers, unwrapArray, filterVisible, filterVisibleFields, filterVisibleMethods, inheritedFields } from "@keyma/core/util";
 import { exprToCpp, type ExprOpts } from "./emit-expression.js";
@@ -61,12 +61,30 @@ export type ModuleEmitDeps = {
 
 const CLIENT_PHASES = new Set(["change", "blur", "submit"]);
 
+/** Diagnostic code for an async function/method the C++ backend cannot yet emit (issue 010). */
+export const CPP_ASYNC_DIAGNOSTIC = "KEYMA-CPP-ASYNC";
+
+/**
+ * Record the "async not yet C++-emittable" diagnostic for an async function/method. The CALLER
+ * then OMITS the member's body entirely — the C++ backend never silently strips `async` and
+ * emits a synchronous body (issue 010).
+ */
+function asyncDiagnostic(what: string, name: string, source: IRDiagnostic["source"]): IRDiagnostic {
+    return {
+        code: CPP_ASYNC_DIAGNOSTIC,
+        severity: "error",
+        message: `async ${what} "${name}": async bodies not yet C++-emittable`,
+        ...(source !== undefined ? { source } : {}),
+    };
+}
+
 export function emitModuleCpp(
     moduleRef: string,
     schemas: readonly IRClassDeclaration[],
     enums: readonly IREnumDeclaration[],
     functions: readonly IRFunctionDeclaration[],
     deps: ModuleEmitDeps,
+    diagnostics: IRDiagnostic[] = [],
 ): string {
     const ordered = topoSort(schemas, deps);
     const ns = namespaceOf(moduleRef, deps.nsRoot);
@@ -135,7 +153,7 @@ export function emitModuleCpp(
         lines.push("", `namespace ${ns} {`);
         if (useLines.length > 0) { lines.push(...useLines); }
         lines.push("");
-        for (const decl of utility) { lines.push(...emitFunctionCpp(decl)); lines.push(""); }
+        for (const decl of utility) { lines.push(...emitFunctionCpp(decl, diagnostics)); lines.push(""); }
         for (const r of claimedRenderings) { lines.push(r, ""); }
         lines.push(`}  // namespace ${ns}`, "");
     }
@@ -147,7 +165,7 @@ export function emitModuleCpp(
     if (useLines.length > 0) lines.push(...useLines);
     lines.push("");
     for (const schema of ordered) {
-        lines.push(...emitStruct(schema, deps));
+        lines.push(...emitStruct(schema, deps, diagnostics));
         lines.push(`static_assert(std::uses_allocator_v<${schema.sourceName}, ${schema.sourceName}::allocator_type>);`, "");
     }
     lines.push(`}  // namespace ${ns}`, "");
@@ -192,7 +210,13 @@ export function emitModuleCpp(
 }
 
 /** Emit a plain project-local utility function as an inline free function. */
-function emitFunctionCpp(decl: IRFunctionDeclaration): string[] {
+function emitFunctionCpp(decl: IRFunctionDeclaration, diagnostics: IRDiagnostic[]): string[] {
+    // An async function body may use `await`, which has no C++ lowering yet. Record a diagnostic
+    // and OMIT the function entirely — never emit a silently-desynced synchronous body (issue 010).
+    if (decl.async === true) {
+        diagnostics.push(asyncDiagnostic("function", decl.name, decl.source));
+        return [];
+    }
     const params = decl.params.map((p) => `${irTypeToCpp(p.type)} ${p.name}`).join(", ");
     const lines = [`inline auto ${decl.name}(${params}) {`];
     for (const stmt of decl.statements) lines.push(stmtToCpp(stmt, "    ", plainReturn));
@@ -252,7 +276,7 @@ function fullMethods(schema: IRClassDeclaration, deps: ModuleEmitDeps): IRMethod
     return filterVisible([...byKey.values()], deps.includePrivate);
 }
 
-function emitStruct(schema: IRClassDeclaration, deps: ModuleEmitDeps): string[] {
+function emitStruct(schema: IRClassDeclaration, deps: ModuleEmitDeps, diagnostics: IRDiagnostic[]): string[] {
     // Real inheritance: the struct holds OWN members and derives from the base. The traits/codecs
     // and field descriptors below use the FULL (own + inherited) set — base members are accessible.
     const stored = filterVisibleFields(schema, deps.includePrivate);
@@ -306,9 +330,9 @@ function emitStruct(schema: IRClassDeclaration, deps: ModuleEmitDeps): string[] 
     lines.push(`    static ${C} from_value(const keyma::Value& v, const allocator_type& a);`);
     lines.push(`    keyma::Value to_value(const allocator_type& a) const;`);
 
-    // Getters, setters, and methods — own behaviors re-emitted as member functions (inherited
-    // ones come through C++ inheritance).
-    for (const m of filterVisibleMethods(schema, deps.includePrivate)) lines.push(...emitMethod(m, opts, deps));
+    // Getters, setters, methods, plus the user-authored constructor/destructor — own behaviors
+    // re-emitted as member functions (inherited ones come through C++ inheritance).
+    for (const m of filterVisibleMethods(schema, deps.includePrivate)) lines.push(...emitMethod(m, C, opts, deps, diagnostics));
 
     // Typed field descriptors (consumed by keyma/query.hpp). The full set — a child's `f` would
     // otherwise HIDE the base's, so `Child::f::baseField` must resolve here.
@@ -343,7 +367,13 @@ function emitFieldDescriptors(C: string, stored: readonly IRField[], deps: Modul
     return lines;
 }
 
-function emitMethod(method: IRMethod, opts: ExprOpts, deps: ModuleEmitDeps): string[] {
+function emitMethod(method: IRMethod, C: string, opts: ExprOpts, deps: ModuleEmitDeps, diagnostics: IRDiagnostic[]): string[] {
+    // An async method body may use `await`, which has no C++ lowering yet. Record a diagnostic and
+    // OMIT the member entirely — never emit a silently-desynced synchronous body (issue 010).
+    if (method.async === true) {
+        diagnostics.push(asyncDiagnostic(method.kind, method.name, method.source));
+        return [];
+    }
     const ret: ReturnLowerer = (v, indent) =>
         v === null ? `${indent}return;` : `${indent}return ${exprToCpp(v, opts)};`;
     const body = method.statements.map((s) => stmtToCpp(s, "        ", ret, opts));
@@ -352,6 +382,16 @@ function emitMethod(method: IRMethod, opts: ExprOpts, deps: ModuleEmitDeps): str
         return [`    auto ${method.name}() const {`, ...body, `    }`];
     }
     const params = method.params.map((p) => `${irTypeToCpp(p.type, deps.cppTypeByName, deps.enumTypeByName)} ${p.name}`).join(", ");
+    if (method.kind === "constructor") {
+        // A user-authored constructor — `T(params) { body }`. Coexists with the allocator ctors and
+        // the static `from_value` hydration factory (issue 008); a parameterized ctor is a distinct
+        // overload, so there is no collision with `T() = default` or `from_value`.
+        return [`    ${C}(${params}) {`, ...body, `    }`];
+    }
+    if (method.kind === "destructor") {
+        // A user-authored destructor — `~T() { body }` (no params, no return) (issue 009).
+        return [`    ~${C}() {`, ...body, `    }`];
+    }
     if (method.kind === "setter") {
         return [`    void set_${method.name}(${params}) {`, ...body, `    }`];
     }

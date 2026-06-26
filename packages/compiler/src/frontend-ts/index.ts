@@ -38,7 +38,7 @@ export type { FunctionCollector, FunctionCollectorDeps } from "./lower-function.
 export { lowerGetterBody } from "./lower-expression.js";
 export type { GetterLowerDeps } from "./lower-expression.js";
 
-export { lowerMethod, lowerSignature, lowerSetter } from "./lower-method.js";
+export { lowerMethod, lowerSignature, lowerSetter, lowerConstructor, lowerDestructor, peelPromise } from "./lower-method.js";
 export type { MethodLowerCtx } from "./lower-method.js";
 
 export { lowerExpr, lowerStatement, lowerStatements, lowerBlock } from "./lower-portable-expr.js";

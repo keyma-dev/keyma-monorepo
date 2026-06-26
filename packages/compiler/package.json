@@ -50,7 +50,7 @@
     "prebuild": "node src/backend-js/scripts/gen-emitted-types.mjs && node src/backend-cpp/scripts/gen-runtime-header.mjs",
     "build": "tsc",
     "pretest": "node src/backend-js/scripts/gen-emitted-types.mjs && node src/backend-cpp/scripts/gen-runtime-header.mjs",
-    "test": "tsc && node --test dist/test/driver/*.test.js"
+    "test": "tsc && node --test \"dist/test/**/*.test.js\""
   },
   "dependencies": {
     "@keyma/core": "^0.0.1",

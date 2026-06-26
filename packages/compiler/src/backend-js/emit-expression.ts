@@ -79,10 +79,15 @@ export function exprToJs(expr: IRExpression, opts: ExprEmitOptions = {}): string
                 return `new ${callee}(${args})`;
             }
 
+            case "await":
+                // `async` implies the awaitable wrapper; the operand is parenthesized when
+                // complex so e.g. `await (a + b)` / `(await foo).bar` stay correct.
+                return `await ${wrapIfComplex(e.operand)}`;
+
             case "intrinsic":
                 return intrinsicToJs(e);
             default:
-                // Additive IR vocabulary (e.g. `await`) whose JS emission lands in a later slice.
+                // Additive IR vocabulary whose JS emission lands in a later slice.
                 throw new Error(`exprToJs: unsupported IR expression kind "${(e as { kind: string }).kind}"`);
         }
     };
@@ -90,7 +95,7 @@ export function exprToJs(expr: IRExpression, opts: ExprEmitOptions = {}): string
     /** Wrap in parens if this is a complex expression that needs grouping. */
     const wrapIfComplex = (e: IRExpression): string => {
         const s = emit(e);
-        if (e.kind === "binary" || e.kind === "conditional" || e.kind === "typeof" || e.kind === "new" || e.kind === "arrow") {
+        if (e.kind === "binary" || e.kind === "conditional" || e.kind === "typeof" || e.kind === "new" || e.kind === "arrow" || e.kind === "await") {
             return `(${s})`;
         }
         return s;
@@ -180,8 +185,42 @@ export function stmtToJs(stmt: IRStatement, indent: string, opts: ExprEmitOption
 
         case "assign":
             return `${indent}${exprToJs(stmt.target, opts)} = ${exprToJs(stmt.value, opts)};`;
+
+        case "forOf": {
+            const iterable = exprToJs(stmt.iterable, opts);
+            const body = stmt.body.map((s) => stmtToJs(s, indent + "    ", opts)).join("\n");
+            return `${indent}for (const ${stmt.name} of ${iterable}) {\n${body}\n${indent}}`;
+        }
+
+        case "while": {
+            const cond = exprToJs(stmt.condition, opts);
+            const body = stmt.body.map((s) => stmtToJs(s, indent + "    ", opts)).join("\n");
+            return `${indent}while (${cond}) {\n${body}\n${indent}}`;
+        }
+
+        case "break":
+            return `${indent}break;`;
+
+        case "continue":
+            return `${indent}continue;`;
+
+        case "switch": {
+            // Native, source-faithful `switch` — case bodies are emitted verbatim, so a case
+            // without a trailing `break` falls through exactly as authored. `test: null` ⇒ default.
+            const disc = exprToJs(stmt.discriminant, opts);
+            const lines: string[] = [];
+            for (const c of stmt.cases) {
+                lines.push(
+                    c.test === null
+                        ? `${indent}    default:`
+                        : `${indent}    case ${exprToJs(c.test, opts)}:`,
+                );
+                for (const s of c.body) lines.push(stmtToJs(s, indent + "        ", opts));
+            }
+            return `${indent}switch (${disc}) {\n${lines.join("\n")}\n${indent}}`;
+        }
         default:
-            // Additive IR vocabulary (forOf/while/break/continue/switch) emitted in a later slice.
+            // Exhaustiveness guard: every IRStatement kind is handled above.
             throw new Error(`stmtToJs: unsupported IR statement kind "${(stmt as { kind: string }).kind}"`);
     }
 }
