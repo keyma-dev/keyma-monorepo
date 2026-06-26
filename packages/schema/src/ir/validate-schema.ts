@@ -18,20 +18,21 @@ import {
     type IRValidationError,
     type IRDocumentValidator,
 } from "@keyma/core/ir";
-import { SCHEMA_EXT } from "./extensions.js";
+import { SCHEMA_EXT, UI_EXT } from "./extensions.js";
 
 /**
- * Schema-domain IR sections — schemas, enums, validator/formatter/function declarations,
- * and services. Registered onto the IR validator registry by the CLI; the core envelope
- * checks (irVersion/compilerVersion + diagnostics) stay in `@keyma/core/ir`.
+ * Schema-domain IR sections — classes, enums, function declarations (utilities + the
+ * collapsed validator/formatter factories), and services. Validator/formatter field
+ * attachments ride in `field.extensions['schema']`. Registered onto the IR validator
+ * registry by the CLI; the core envelope checks stay in `@keyma/core/ir`.
  */
 export function checkSchemaDomain(doc: Record<string, unknown>): IRValidationError[] {
     const errors: IRValidationError[] = [];
 
-    if (!isArr(doc["schemas"])) {
-        errors.push(e("schemas", "must be an array"));
+    if (!isArr(doc["classes"])) {
+        errors.push(e("classes", "must be an array"));
     } else {
-        doc["schemas"].forEach((s, i) => errors.push(...checkSchema(s, `schemas[${i}]`)));
+        doc["classes"].forEach((s, i) => errors.push(...checkSchema(s, `classes[${i}]`)));
     }
 
     if ("enums" in doc && doc["enums"] !== undefined) {
@@ -39,24 +40,6 @@ export function checkSchemaDomain(doc: Record<string, unknown>): IRValidationErr
             errors.push(e("enums", "must be an array when present"));
         } else {
             doc["enums"].forEach((d, i) => errors.push(...checkEnumDeclaration(d, `enums[${i}]`)));
-        }
-    }
-
-    if ("validatorDeclarations" in doc && doc["validatorDeclarations"] !== undefined) {
-        if (!isArr(doc["validatorDeclarations"])) {
-            errors.push(e("validatorDeclarations", "must be an array when present"));
-        } else {
-            doc["validatorDeclarations"].forEach((d, i) =>
-                errors.push(...checkDeclaration(d, `validatorDeclarations[${i}]`)));
-        }
-    }
-
-    if ("formatterDeclarations" in doc && doc["formatterDeclarations"] !== undefined) {
-        if (!isArr(doc["formatterDeclarations"])) {
-            errors.push(e("formatterDeclarations", "must be an array when present"));
-        } else {
-            doc["formatterDeclarations"].forEach((d, i) =>
-                errors.push(...checkDeclaration(d, `formatterDeclarations[${i}]`)));
         }
     }
 
@@ -83,12 +66,15 @@ export function checkSchemaDomain(doc: Record<string, unknown>): IRValidationErr
 /** The schema-domain IR validator, registered onto the core `IRValidatorRegistry` by the CLI. */
 export const schemaIRValidator: IRDocumentValidator = checkSchemaDomain;
 
-/** Shared check for a `{ name, type }` typed parameter. */
+/** Shared check for a `{ name, type, optional? }` typed parameter. */
 function checkParam(p: unknown, path: string): IRValidationError[] {
     if (!isObj(p)) return [e(path, "must be an object")];
     const errors: IRValidationError[] = [];
     if (!isStr(p["name"]) || p["name"] === "") errors.push(e(`${path}.name`, "must be a non-empty string"));
     errors.push(...checkType(p["type"], `${path}.type`));
+    if ("optional" in p && p["optional"] !== undefined && !isBool(p["optional"])) {
+        errors.push(e(`${path}.optional`, "must be a boolean when present"));
+    }
     return errors;
 }
 
@@ -136,7 +122,6 @@ function checkSchema(schema: unknown, path: string): IRValidationError[] {
     if (!isObj(schema)) return [e(path, "must be an object")];
     const errors: IRValidationError[] = [];
 
-    if (!isStr(schema["id"]) || schema["id"] === "") errors.push(e(`${path}.id`, "must be a non-empty string"));
     if (!isStr(schema["name"]) || schema["name"] === "") errors.push(e(`${path}.name`, "must be a non-empty string"));
     if (!isStr(schema["sourceName"]) || schema["sourceName"] === "") errors.push(e(`${path}.sourceName`, "must be a non-empty string"));
     if (schema["visibility"] !== "public" && schema["visibility"] !== "private") {
@@ -216,7 +201,7 @@ function checkSchemaExt(ext: unknown, path: string): IRValidationError[] {
     return errors;
 }
 
-/** The schema domain's per-field extension slice: `{ indexes?, ephemeral? }`. */
+/** The schema domain's per-field extension slice: `{ indexes?, ephemeral?, validators?, formatters? }`. */
 function checkFieldExt(ext: unknown, path: string): IRValidationError[] {
     if (ext === undefined) return [];
     if (!isObj(ext)) return [e(path, "must be an object when present")];
@@ -231,7 +216,31 @@ function checkFieldExt(ext: unknown, path: string): IRValidationError[] {
     if ("ephemeral" in ext && ext["ephemeral"] !== undefined && !isBool(ext["ephemeral"])) {
         errors.push(e(`${path}.ephemeral`, "must be a boolean when present"));
     }
+    if ("validators" in ext && ext["validators"] !== undefined) {
+        if (!isArr(ext["validators"])) {
+            errors.push(e(`${path}.validators`, "must be an array when present"));
+        } else {
+            ext["validators"].forEach((v, i) => errors.push(...checkValidator(v, `${path}.validators[${i}]`)));
+        }
+    }
+    if ("formatters" in ext && ext["formatters"] !== undefined) {
+        if (!isArr(ext["formatters"])) {
+            errors.push(e(`${path}.formatters`, "must be an array when present"));
+        } else {
+            ext["formatters"].forEach((f, i) => errors.push(...checkFormatter(f, `${path}.formatters[${i}]`)));
+        }
+    }
     return errors;
+}
+
+/** The UI domain's per-field slice (`field.extensions['ui']`): an optional `@FormField`. */
+function checkFieldUiExt(ext: unknown, path: string): IRValidationError[] {
+    if (ext === undefined) return [];
+    if (!isObj(ext)) return [e(path, "must be an object when present")];
+    if ("form" in ext && ext["form"] !== undefined) {
+        return checkFormField(ext["form"], `${path}.form`);
+    }
+    return [];
 }
 
 function checkEdge(edge: unknown, path: string): IRValidationError[] {
@@ -261,23 +270,8 @@ function checkField(field: unknown, path: string): IRValidationError[] {
         errors.push(e(`${path}.nullable`, "must be a boolean when present"));
     }
 
-    if (!isArr(field["validators"])) {
-        errors.push(e(`${path}.validators`, "must be an array"));
-    } else {
-        field["validators"].forEach((v, i) => errors.push(...checkValidator(v, `${path}.validators[${i}]`)));
-    }
-
-    if (!isArr(field["formatters"])) {
-        errors.push(e(`${path}.formatters`, "must be an array"));
-    } else {
-        field["formatters"].forEach((f, i) => errors.push(...checkFormatter(f, `${path}.formatters[${i}]`)));
-    }
-
     if ("default" in field && field["default"] !== undefined) {
         errors.push(...checkDefault(field["default"], `${path}.default`));
-    }
-    if ("form" in field && field["form"] !== undefined) {
-        errors.push(...checkFormField(field["form"], `${path}.form`));
     }
     if ("deprecated" in field && field["deprecated"] !== undefined
         && !isBool(field["deprecated"]) && !isStr(field["deprecated"])) {
@@ -293,13 +287,15 @@ function checkField(field: unknown, path: string): IRValidationError[] {
     }
 
     // Schema-domain per-field metadata (indexes / ephemeral) rides in the
-    // `extensions['schema']` slice; other domains' slices are tolerated and ignored here.
+    // `extensions['schema']` slice; the UI domain's `@FormField` metadata rides in the
+    // `extensions['ui']` slice. Any other domain's slice is tolerated and ignored here.
     const fExts = field["extensions"];
     if (fExts !== undefined) {
         if (!isObj(fExts)) {
             errors.push(e(`${path}.extensions`, "must be an object when present"));
         } else {
             errors.push(...checkFieldExt(fExts[SCHEMA_EXT], `${path}.extensions.${SCHEMA_EXT}`));
+            errors.push(...checkFieldUiExt(fExts[UI_EXT], `${path}.extensions.${UI_EXT}`));
         }
     }
 
@@ -414,50 +410,6 @@ function checkIndex(idx: unknown, path: string): IRValidationError[] {
     return errors;
 }
 
-function checkFunctionBody(body: unknown, path: string): IRValidationError[] {
-    if (!isObj(body)) return [e(path, "must be an object")];
-    const errors: IRValidationError[] = [];
-
-    if (!isArr(body["params"])) {
-        errors.push(e(`${path}.params`, "must be an array"));
-    } else {
-        body["params"].forEach((p, i) => {
-            if (!isObj(p)) { errors.push(e(`${path}.params[${i}]`, "must be an object")); return; }
-            if (!isStr(p["name"]) || p["name"] === "") errors.push(e(`${path}.params[${i}].name`, "must be a non-empty string"));
-            if (p["role"] !== "value" && p["role"] !== "field" && p["role"] !== "spec" && p["role"] !== "context") {
-                errors.push(e(`${path}.params[${i}].role`, 'must be "value", "field", "spec", or "context"'));
-            }
-        });
-    }
-
-    if (!isArr(body["statements"])) {
-        errors.push(e(`${path}.statements`, "must be an array"));
-    } else {
-        body["statements"].forEach((s, i) => errors.push(...checkStatement(s, `${path}.statements[${i}]`)));
-    }
-
-    return errors;
-}
-
-function checkDeclaration(decl: unknown, path: string): IRValidationError[] {
-    if (!isObj(decl)) return [e(path, "must be an object")];
-    const errors: IRValidationError[] = [];
-    if (!isStr(decl["name"]) || decl["name"] === "") errors.push(e(`${path}.name`, "must be a non-empty string"));
-    if (!isArr(decl["factoryParams"])) {
-        errors.push(e(`${path}.factoryParams`, "must be an array"));
-    } else {
-        decl["factoryParams"].forEach((p, i) => {
-            if (!isObj(p)) { errors.push(e(`${path}.factoryParams[${i}]`, "must be an object")); return; }
-            if (!isStr(p["name"]) || p["name"] === "") errors.push(e(`${path}.factoryParams[${i}].name`, "must be a non-empty string"));
-            if (p["optional"] !== undefined && typeof p["optional"] !== "boolean") errors.push(e(`${path}.factoryParams[${i}].optional`, "must be a boolean"));
-        });
-    }
-    errors.push(...checkType(decl["inputType"], `${path}.inputType`));
-    errors.push(...checkFunctionBody(decl["body"], `${path}.body`));
-    errors.push(...checkSourceLocation(decl["source"], `${path}.source`));
-    return errors;
-}
-
 function checkFunctionDeclaration(decl: unknown, path: string): IRValidationError[] {
     if (!isObj(decl)) return [e(path, "must be an object")];
     const errors: IRValidationError[] = [];
@@ -468,6 +420,9 @@ function checkFunctionDeclaration(decl: unknown, path: string): IRValidationErro
         decl["params"].forEach((p, i) => errors.push(...checkParam(p, `${path}.params[${i}]`)));
     }
     errors.push(...checkType(decl["returnType"], `${path}.returnType`));
+    if ("async" in decl && decl["async"] !== undefined && !isBool(decl["async"])) {
+        errors.push(e(`${path}.async`, "must be a boolean when present"));
+    }
     if (!isArr(decl["statements"])) {
         errors.push(e(`${path}.statements`, "must be an array"));
     } else {
@@ -498,8 +453,9 @@ function checkMethod(m: unknown, path: string): IRValidationError[] {
     if (!isObj(m)) return [e(path, "must be an object")];
     const errors: IRValidationError[] = [];
     if (!isStr(m["name"]) || m["name"] === "") errors.push(e(`${path}.name`, "must be a non-empty string"));
-    if (m["kind"] !== "method" && m["kind"] !== "setter" && m["kind"] !== "getter") {
-        errors.push(e(`${path}.kind`, 'must be "method", "setter", or "getter"'));
+    if (m["kind"] !== "method" && m["kind"] !== "setter" && m["kind"] !== "getter"
+        && m["kind"] !== "constructor" && m["kind"] !== "destructor") {
+        errors.push(e(`${path}.kind`, 'must be "method", "setter", "getter", "constructor", or "destructor"'));
     }
     if (!isArr(m["params"])) {
         errors.push(e(`${path}.params`, "must be an array"));
@@ -508,6 +464,9 @@ function checkMethod(m: unknown, path: string): IRValidationError[] {
     }
     if ("returnType" in m && m["returnType"] !== undefined) {
         errors.push(...checkType(m["returnType"], `${path}.returnType`));
+    }
+    if ("async" in m && m["async"] !== undefined && !isBool(m["async"])) {
+        errors.push(e(`${path}.async`, "must be a boolean when present"));
     }
     if (m["visibility"] !== "public" && m["visibility"] !== "private") {
         errors.push(e(`${path}.visibility`, 'must be "public" or "private"'));

@@ -1,4 +1,4 @@
-import type { IRSchema } from "@keyma/core/ir";
+import type { IRClassDeclaration } from "@keyma/core/ir";
 
 type IndexEmitOptions = {
     includePrivate: boolean;
@@ -11,7 +11,7 @@ type IndexEmitOptions = {
  * defaults ride directly in the schema metadata now.
  */
 export function emitIndexJs(
-    schemas: readonly IRSchema[],
+    schemas: readonly IRClassDeclaration[],
     schemaModule: ReadonlyMap<string, string>,
     opts: IndexEmitOptions,
     serviceNames: readonly string[] = [],
@@ -40,7 +40,7 @@ export function emitIndexJs(
 /** The `index.d.ts` content is identical to `index.js` — the same re-exports carry
  *  both the class values and their types. */
 export function emitIndexDts(
-    schemas: readonly IRSchema[],
+    schemas: readonly IRClassDeclaration[],
     schemaModule: ReadonlyMap<string, string>,
     opts: IndexEmitOptions,
     serviceNames: readonly string[] = [],

@@ -1,4 +1,4 @@
-import type { IRSchema } from "@keyma/core/ir";
+import type { IRClassDeclaration } from "@keyma/core/ir";
 import type { SchemaDtsContext, SchemaDtsShape } from "@keyma/compiler/backend-js";
 import { schemaEdge } from "../ir/extensions.js";
 
@@ -9,7 +9,7 @@ import { schemaEdge } from "../ir/extensions.js";
  * `undefined`, leaving the generic default. This is the schema domain's reader of `edge` for
  * `.d.ts` emission — the generic JS backend no longer knows about edges.
  */
-export function shapeSchemaDts(schema: IRSchema, ctx: SchemaDtsContext): SchemaDtsShape | undefined {
+export function shapeSchemaDts(schema: IRClassDeclaration, ctx: SchemaDtsContext): SchemaDtsShape | undefined {
     const edge = schemaEdge(schema);
     if (edge === undefined) return undefined;
 

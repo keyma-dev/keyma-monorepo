@@ -156,7 +156,7 @@ function mkTypeMapCtx(ctx: MethodLowerCtx): TypeMapContext {
         dslModuleName: ctx.dslModuleName,
         schemaClassNames: ctx.schemaClassNames,
         ...(ctx.enums !== undefined && { enums: ctx.enums }),
-        bareClassReference: true,
+        bareClassInstance: true,
         diagnostics: ctx.diagnostics,
         sourceFile: ctx.sourceFile,
     };

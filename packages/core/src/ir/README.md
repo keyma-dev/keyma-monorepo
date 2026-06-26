@@ -32,15 +32,13 @@ import type { KeymaIR, IRSchema, IRField, IRType } from "@keyma/ir";
 | `IREdge` | Edge metadata on an edge schema (`from`/`to`/`label`/`directed`). |
 | `IRField` | A single field within a schema. |
 | `IRType` | Discriminated union of all supported field types. |
-| `IRValidator` | Discriminated union of all built-in validators. |
-| `IRFormatter` / `IRFormatterSpec` | A formatter entry (`{ phase, spec }`) and the spec union. |
 | `IRComputed` | Computed-field descriptor. |
 | `IRExpression` | Discriminated union for getter / method / body expressions. |
-| `IRStatement` (+ `IRReturnStmt`, `IRIfStmt`, `IRConstDecl`, `IRExprStmt`, `IRAssignStmt`) | Portable statement nodes for method/setter/validator/formatter bodies. |
-| `IRMethod`, `IRParam`, `IRFunctionBody` | Method / behavior descriptors. |
+| `IRStatement` (+ `IRReturnStmt`, `IRIfStmt`, `IRConstDecl`, `IRExprStmt`, `IRAssignStmt`) | Portable statement nodes for function / method / behavior bodies. |
+| `IRMethod` | Method / behavior descriptors. |
 | `IRFieldIndex` / `IRIndex` | Single-field and composite index descriptors. |
 | `IRFormField` / `IRDefault` | Form metadata and default-value descriptors. |
-| `IRValidatorDeclaration`, `IRFormatterDeclaration`, `IRFunctionDeclaration`, `IREnumDeclaration` | Project-declared validators, formatters, utility functions, and enums. |
+| `IRFunctionParam`, `IRFunctionDeclaration`, `IREnumDeclaration` | Project-declared functions (utilities + validator/formatter factories) and enums. The `IRValidator`/`IRFormatter` field-attachment types live in `@keyma/schema/ir`. |
 | `IRDiagnostic` / `IRSourceLocation` | A compiler diagnostic with a stable code, and `{ file, line, column }`. |
 
 ### `validateIR(doc: unknown): IRValidationResult`

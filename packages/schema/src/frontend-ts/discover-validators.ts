@@ -1,14 +1,15 @@
 import ts from "typescript";
 import type { IRSourceLocation } from "@keyma/core/ir";
-import { getLocation, resolveAlias, isFromModule } from "./util.js";
+import { getLocation, resolveAlias, isFromModule } from "@keyma/compiler/frontend-ts";
 
-/** A callable node that can be lowered into a validator/formatter declaration. */
+/** A callable node that can be lowered into a validator/formatter factory function. */
 type CallableNode = ts.FunctionDeclaration | ts.ArrowFunction | ts.FunctionExpression;
 
 /**
  * A validator/formatter factory collected at a `@Validate`/`@Format` use site,
- * pending lowering to an IR declaration. The factory is a plain function returning
- * a `ValidatorFn`/`FormatterFn` (e.g. `function minLength(m): ValidatorFn<string>`).
+ * pending lowering to an `IRFunctionDeclaration`. The factory is a plain function
+ * returning a `ValidatorFn`/`FormatterFn` (e.g. `function minLength(m): ValidatorFn<string>`)
+ * — an ordinary higher-order function, lowered like any other.
  */
 export type CollectedFactory = {
     /** IR name — the factory function's own name (also the model-file import binding). */
@@ -28,15 +29,13 @@ export type CollectorDeps = {
     checker: ts.TypeChecker;
     /** Module specifier the authoring decorators are imported from (e.g. "@keyma/schema/dsl"). */
     dslModuleName: string;
-    /** DSL marker type names whose presence on a factory's return annotation identifies
-     *  it as a validator/formatter factory. Supplied by the domain (the schema domain
-     *  uses `ValidatorFn`/`FormatterFn`); defaults to those so this generic resolver works
-     *  standalone. */
+    /** DSL marker type names whose presence on a factory's return annotation identifies it as a
+     *  validator/formatter factory (the schema domain uses `ValidatorFn`/`FormatterFn`). */
     markerNames?: { validator: string; formatter: string };
-    /** Module specifier the marker contract types (`ValidatorFn`/`FormatterFn`) are
-     *  canonically declared in. They live in `@keyma/core/dsl` but may reach a use site via
-     *  a re-export (e.g. `@keyma/schema/dsl`), so a factory is accepted when its return type
-     *  comes from EITHER this module or {@link dslModuleName}. Defaults to "@keyma/core/dsl". */
+    /** Module specifier the marker contract types (`ValidatorFn`/`FormatterFn`) are canonically
+     *  declared in. They live in `@keyma/core/dsl` but may reach a use site via a re-export
+     *  (e.g. `@keyma/schema/dsl`), so a factory is accepted when its return type comes from
+     *  EITHER this module or {@link dslModuleName}. Defaults to "@keyma/core/dsl". */
     markerModuleName?: string;
 };
 
@@ -48,9 +47,13 @@ const DEFAULT_MARKER_MODULE = "@keyma/core/dsl";
  * source file for declarations up front, `resolveValidator`/`resolveFormatter` are
  * called at each `@Validate(...)`/`@Format(...)` argument: they resolve the callee
  * across imports/aliases to a function whose return type is the DSL's
- * `ValidatorFn`/`FormatterFn`, enqueue it (deduped by symbol identity), and return
- * its IR name + factory parameter list. `drainValidators`/`drainFormatters` return
- * the set actually referenced — so unused library validators are never emitted.
+ * `ValidatorFn`/`FormatterFn`, enqueue it (deduped by symbol identity), and return its
+ * IR name + factory parameter list. `drainValidators`/`drainFormatters` return the set
+ * actually referenced — so unused library validators are never emitted.
+ *
+ * This is the conformance gate: a `@Validate(...)` argument whose callee does NOT resolve
+ * to a function declaring a `ValidatorFn<T>` return type is rejected (the use-site lowering
+ * reports KEYMA020/021), which is the assignability-style check against the DSL marker types.
  */
 export type ValidatorFormatterCollector = {
     resolveValidator: (callee: ts.Identifier) => ResolvedFactory | undefined;

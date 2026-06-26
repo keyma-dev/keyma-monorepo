@@ -12,7 +12,7 @@
 // (which would orphan stored data), so it is KEYMA100 unless `--accept-tags`. Pure additions
 // and pure removals are additive and applied automatically.
 
-import type { IRField, IRSchema, IRDiagnostic, TagManifest, TagManifestSchema } from "@keyma/core/ir";
+import type { IRField, IRClassDeclaration, IRDiagnostic, TagManifest, TagManifestSchema } from "@keyma/core/ir";
 import { mkError } from "@keyma/core/util";
 import { KEYMA100, KEYMA101, KEYMA103 } from "./diagnostics.js";
 
@@ -29,7 +29,7 @@ export type AssignTagsResult = {
 
 /** Strip the binary tag hints when binary serialization is disabled — guarantees `tag`/
  *  `renamedFrom` never leak into JSON-only IR (which `validateIR` would reject). */
-export function stripTagHints(schemas: IRSchema[]): void {
+export function stripTagHints(schemas: IRClassDeclaration[]): void {
     for (const schema of schemas) {
         for (const field of schema.fields as RawTaggedField[]) {
             if ("tag" in field) delete field.tag;
@@ -40,7 +40,7 @@ export function stripTagHints(schemas: IRSchema[]): void {
 
 export function assignTags(
     prev: TagManifest | undefined,
-    schemas: IRSchema[],
+    schemas: IRClassDeclaration[],
     opts: { acceptTags: boolean },
 ): AssignTagsResult {
     const diagnostics: IRDiagnostic[] = [];
@@ -63,7 +63,7 @@ export function assignTags(
 }
 
 function assignSchemaTags(
-    schema: IRSchema,
+    schema: IRClassDeclaration,
     prevEntry: TagManifestSchema | undefined,
     opts: { acceptTags: boolean },
     diagnostics: IRDiagnostic[],

@@ -38,24 +38,28 @@ export type IRType =
     | { kind: "reference"; schema: string; idType?: IRType }
     /** Inline nested document. `schema` is the target schema's `name` (see
      *  `reference` above), never its `sourceName`. */
-    | { kind: "embedded"; schema: string };
+    | { kind: "embedded"; schema: string }
+    /** A live value of a class `T` — an *instance*, distinct from the ownership
+     *  types `reference` (non-owning id handle) and `embedded` (owning inline
+     *  value). `name` is the target class's canonical `name`. Appears only in
+     *  param/return positions (function/method signatures, HOF types), never as a
+     *  stored field, so the runtime wire codec is untouched. */
+    | { kind: "instance"; name: string }
+    /** A higher-order-function type — `(params) => returns`. `params` are typed;
+     *  `returns` absent ⇒ a `void`-returning function (mirrors the absent-return
+     *  convention on methods). Used wherever a value is itself a function (HOF
+     *  param/return positions); never a stored field. */
+    | { kind: "function"; params: IRFunctionParam[]; returns?: IRType };
 
-/** Generic validator reference — identified by name, optionally parameterized. */
-export type IRValidator = {
-    name: string;
-    params?: Record<string, unknown>;
-};
-
-/** Generic formatter spec — identified by name, optionally parameterized. */
-export type IRFormatterSpec = {
-    name: string;
-    params?: Record<string, unknown>;
-};
-
-export type IRFormatter = {
-    phase: "change" | "blur" | "submit" | "save";
-    spec: IRFormatterSpec;
-};
+/**
+ * An arrow-function parameter. The bare-string form (just the name) is the common
+ * inline case and the only form the frontend emits today. The object form
+ * additionally carries an optional declared `type` and an `optional?` flag (the
+ * param has a `?` or a default) — the vocabulary later slices use to give arrows
+ * typed parameters. Backends that only render the name read either form via the
+ * name.
+ */
+export type IRArrowParam = string | { name: string; type?: IRType; optional?: boolean };
 
 export type IRExpression =
     | { kind: "literal"; value: string | number | boolean | null }
@@ -77,8 +81,11 @@ export type IRExpression =
      * absent). A block whose sole statement is `return e` is normalized by the frontend down
      * to `body: e` so the inline path is preserved.
      */
-    | { kind: "arrow"; params: string[]; body?: IRExpression; statements?: IRStatement[]; returnType?: IRType }
+    | { kind: "arrow"; params: IRArrowParam[]; body?: IRExpression; statements?: IRStatement[]; returnType?: IRType }
     | { kind: "new"; callee: IRExpression; args: IRExpression[] }
+    /** Awaits an async operand — `await operand`. Emitted only inside an `async`
+     *  function/method body (see `IRFunctionDeclaration.async` / `IRMethod.async`). */
+    | { kind: "await"; operand: IRExpression }
     /**
      * A canonical, language-neutral operation that each backend translates to an
      * idiomatic form (string/array methods, `typeof`, `instanceof`). `op` is an id
@@ -89,7 +96,7 @@ export type IRExpression =
      */
     | { kind: "intrinsic"; op: string; receiver: IRExpression | null; args: IRExpression[] };
 
-// ─── Statement IR (for validator / formatter function bodies) ─────────────────
+// ─── Statement IR (portable function / method / behavior bodies) ──────────────
 
 export type IRReturnStmt  = { kind: "return"; value: IRExpression | null };
 export type IRIfStmt      = { kind: "if"; condition: IRExpression; consequent: IRStatement[]; alternate?: IRStatement[] };
@@ -101,68 +108,52 @@ export type IRExprStmt    = { kind: "expression"; expr: IRExpression };
  * behavior bodies — validator/formatter bodies do not permit mutation.
  */
 export type IRAssignStmt  = { kind: "assign"; target: IRExpression; value: IRExpression };
-export type IRStatement   = IRReturnStmt | IRIfStmt | IRConstDecl | IRExprStmt | IRAssignStmt;
+/** `for (const <name> of <iterable>) { <body> }`. The loop variable `name` is a
+ *  fresh binding; backends infer its type (`auto` / dynamic). */
+export type IRForOfStmt   = { kind: "forOf"; name: string; iterable: IRExpression; body: IRStatement[] };
+export type IRWhileStmt   = { kind: "while"; condition: IRExpression; body: IRStatement[] };
+export type IRBreakStmt   = { kind: "break" };
+export type IRContinueStmt= { kind: "continue" };
+/**
+ * One arm of a `switch`. `test` is the case-label expression, or `null` for the
+ * `default` arm. A `break` in `body` terminates the arm; its absence is
+ * source-faithful fallthrough into the next arm.
+ */
+export type IRSwitchCase  = { test: IRExpression | null; body: IRStatement[] };
+export type IRSwitchStmt  = { kind: "switch"; discriminant: IRExpression; cases: IRSwitchCase[] };
+export type IRStatement   =
+    | IRReturnStmt | IRIfStmt | IRConstDecl | IRExprStmt | IRAssignStmt
+    | IRForOfStmt | IRWhileStmt | IRBreakStmt | IRContinueStmt | IRSwitchStmt;
 
-export type IRParam = { name: string; role: "value" | "field" | "spec" | "context" };
-export type IRFunctionBody = { params: IRParam[]; statements: IRStatement[] };
-
-// ─── Validator / formatter declarations ───────────────────────────────────────
-
-export type IRValidatorDeclaration = {
-    name: string;
-    /**
-     * Outer factory function's parameters; names become spec keys at code-gen time.
-     * `optional` (the param has a `?` or a default) lets typed backends emit a default so
-     * a call site may omit it — e.g. `pattern(value, flags?)` → C++ `auto flags = ...`,
-     * Python `flags=None`. JS ignores it (missing args are natively `undefined`).
-     */
-    factoryParams: { name: string; optional?: boolean }[];
-    /** Declared type of the inner function's `value` parameter; backends emit a runtime guard from it. */
-    inputType: IRType;
-    body: IRFunctionBody;
-    source: IRSourceLocation;
-};
-
-export type IRFormatterDeclaration = {
-    name: string;
-    /**
-     * Outer factory function's parameters; names become spec keys at code-gen time.
-     * `optional` (the param has a `?` or a default) lets typed backends emit a default so
-     * a call site may omit it — e.g. `pattern(value, flags?)` → C++ `auto flags = ...`,
-     * Python `flags=None`. JS ignores it (missing args are natively `undefined`).
-     */
-    factoryParams: { name: string; optional?: boolean }[];
-    /** Declared type of the inner function's `value` parameter; backends emit a runtime guard from it. */
-    inputType: IRType;
-    body: IRFunctionBody;
-    source: IRSourceLocation;
-};
-
-// ─── Compiled utility functions ───────────────────────────────────────────────
-
-/** A typed parameter of a compiled project-local utility function. */
-export type IRFunctionParam = { name: string; type: IRType };
+// ─── Compiled functions (utilities + validator/formatter factories) ───────────
 
 /**
- * A project-local utility function referenced from a validator/formatter body and
- * lowered into the IR so backends can re-emit it. Body uses the same portable
- * statement/expression subset as validator/formatter bodies.
+ * A typed parameter of a compiled function. `optional` (the param had a `?` or a
+ * default in source) lets typed backends emit a default so a call site may omit it —
+ * e.g. a validator factory's `pattern(value, flags?)` → C++ `auto flags = …`,
+ * Python `flags=None`. JS ignores it (missing args are natively `undefined`).
+ */
+export type IRFunctionParam = { name: string; type: IRType; optional?: boolean };
+
+/**
+ * A project-local function lowered into the IR so backends can re-emit it. This is the
+ * general home for every authored function — plain utility helpers AND the higher-order
+ * validator/formatter factories (`function f(spec) { return (value) => … }`), which are
+ * ordinary functions whose body returns a typed arrow. The body uses the portable
+ * statement/expression subset.
  */
 export type IRFunctionDeclaration = {
     name: string;
     params: IRFunctionParam[];
     returnType: IRType;
+    /**
+     * Async marker. When `true` the body may use `await` (`{ kind: "await" }`) and
+     * `returnType` holds the UNWRAPPED `T` — the awaitable wrapper is implied,
+     * consistent with the frontend's `Promise<…>` peeling.
+     */
+    async?: boolean;
     statements: IRStatement[];
     source: IRSourceLocation;
-};
-
-/** Presentational metadata for form generation (from `@FormField`). */
-export type IRFormField = {
-    title?: string;
-    hint?: string;
-    placeholder?: string;
-    group?: string;
-    order?: number;
 };
 
 /**
@@ -195,12 +186,21 @@ export type IRMethod = {
      * `"setter"` → `set name(value) { ... }` (exactly one param, no return).
      * `"getter"` → `get name(): returnType { ... }` (no params; body is the portable
      *   statement subset — `const`/`if`/`return` — reaching a `return`; `returnType` present).
+     * `"constructor"` → `constructor(params) { ... }` (no return type).
+     * `"destructor"` → a finalizer with no params and no return (`~T()` in C++,
+     *   `__del__` in Python, a plain `destructor()` method in JS).
      */
-    kind: "method" | "setter" | "getter";
+    kind: "method" | "setter" | "getter" | "constructor" | "destructor";
     /** Typed parameters. A setter has exactly one (the incoming value); a getter has none. */
     params: IRFunctionParam[];
     /** Method/getter return type. Absent for setters and for `void`-returning methods. */
     returnType?: IRType;
+    /**
+     * Async marker. When `true` the body may use `await` (`{ kind: "await" }`) and
+     * `returnType` holds the UNWRAPPED `T` — the awaitable wrapper (`Promise<T>` /
+     * `Task<T>`) is implied, consistent with the frontend's `Promise<…>` peeling.
+     */
+    async?: boolean;
     statements: IRStatement[];
     visibility: "public" | "private";
     source: IRSourceLocation;
@@ -222,13 +222,9 @@ export type IRField = {
      * not nullable.
      */
     nullable?: boolean;
-    validators: IRValidator[];
-    formatters: IRFormatter[];
     /** Default value applied on create when the key is absent (from the field's
      *  TypeScript property initializer). */
     default?: IRDefault;
-    /** Presentational metadata for form generation (from `@FormField`). */
-    form?: IRFormField;
     /** Deprecation marker — `true`, or a reason string (from `@Deprecated`). */
     deprecated?: boolean | string;
     /**
@@ -250,8 +246,7 @@ export type IRField = {
     source: IRSourceLocation;
 };
 
-export type IRSchema = {
-    id: string;
+export type IRClassDeclaration = {
     /** Canonical identity. Used everywhere downstream — reference/embedded/edge
      *  targets, runtime registries, RPC, serialization, DB naming. Unique across
      *  the project (KEYMA001) and carries the optional `schemaPrefix`. */
@@ -361,12 +356,14 @@ export type KeymaIR = {
     irVersion: string;
     compilerVersion: string;
     sourceRoot?: string;
-    schemas: IRSchema[];
+    classes: IRClassDeclaration[];
     /** Named enum declarations referenced by schema fields. */
     enums?: IREnumDeclaration[];
-    validatorDeclarations?: IRValidatorDeclaration[];
-    formatterDeclarations?: IRFormatterDeclaration[];
-    /** Project-local utility functions referenced (transitively) from validator/formatter bodies. */
+    /**
+     * Project-local functions: plain utility helpers AND the higher-order
+     * validator/formatter factories (now ordinary functions). Domains attach which
+     * function validates/formats which field via `field.extensions`.
+     */
     functionDeclarations?: IRFunctionDeclaration[];
     /** Remotely-callable service contracts authored with `@Service(...)`. */
     services?: IRService[];

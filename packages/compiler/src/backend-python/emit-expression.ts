@@ -114,6 +114,9 @@ export function exprToPython(expr: IRExpression): string {
 
         case "intrinsic":
             return intrinsicToPython(expr);
+        default:
+            // Additive IR vocabulary (e.g. `await`) whose Python emission lands in a later slice.
+            throw new Error(`exprToPython: unsupported IR expression kind "${(expr as { kind: string }).kind}"`);
     }
 }
 

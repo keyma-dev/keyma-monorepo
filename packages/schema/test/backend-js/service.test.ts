@@ -11,7 +11,6 @@ const loc = { file: path.join(SRC_DIR, "svc.ts"), line: 1, column: 1 };
 
 function ephemeral(name: string, sourceName: string) {
     return {
-        id: `schema:${name}`,
         name,
         sourceName,
         visibility: "public" as const,
@@ -38,7 +37,7 @@ const IR: KeymaIR = {
     irVersion: "3.1.0",
     compilerVersion: "0.1.0",
     sourceRoot: SRC_DIR,
-    schemas: [ephemeral("in", "In"), ephemeral("out", "Out")],
+    classes: [ephemeral("in", "In"), ephemeral("out", "Out")],
     services: [
         {
             id: "service:Greeter",

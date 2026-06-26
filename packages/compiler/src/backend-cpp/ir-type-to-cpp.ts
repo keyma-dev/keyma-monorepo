@@ -52,6 +52,13 @@ export function irTypeToCpp(
             return `std::shared_ptr<${cppTypeByName?.get(type.schema) ?? type.schema}>`;
         case "embedded":
             return cppTypeByName?.get(type.schema) ?? type.schema;
+        case "instance":
+            // A live value of a class T (param/return position) — a shared,
+            // allocator-aware handle to the object, like the runtime's model objects.
+            return `std::shared_ptr<${cppTypeByName?.get(type.name) ?? type.name}>`;
+        default:
+            // `function` (param/return-position vocabulary) gains C++ emission in a later slice.
+            throw new Error(`irTypeToCpp: unsupported IR type kind "${(type as { kind: string }).kind}"`);
     }
 }
 
@@ -141,6 +148,9 @@ export function fieldKind(field: IRField): string {
             k = "Reference"; break;
         case "json": case "embedded": case "array":
             k = "Json"; break;
+        default:
+            // `instance` / `function` never occur as a stored-field type.
+            throw new Error(`fieldKind: unsupported IR type kind "${(core as { kind: string }).kind}"`);
     }
     return `keyma::FieldKind::${k}`;
 }
@@ -224,13 +234,16 @@ export function binaryFieldPlan(
 
 /** The keyma::TypeTag enumerator for a type, for schema metadata. */
 export function typeTag(type: IRType): string {
-    const map: Record<IRType["kind"], string> = {
+    const map: Partial<Record<IRType["kind"], string>> = {
         string: "String", number: "Number", integer: "Integer", bigint: "BigInt",
         decimal: "Decimal", boolean: "Boolean", bytes: "Bytes", json: "Json",
         date: "Date", dateTime: "DateTime", time: "Time", id: "Id",
         enum: "Enum", array: "Array", reference: "Reference", embedded: "Embedded",
     };
-    return `keyma::TypeTag::${map[type.kind]}`;
+    const tag = map[type.kind];
+    // `instance` / `function` are never stored-field types, so never reach metadata tagging.
+    if (tag === undefined) throw new Error(`typeTag: unsupported IR type kind "${type.kind}"`);
+    return `keyma::TypeTag::${tag}`;
 }
 
 /**
@@ -263,8 +276,12 @@ export function valueBinding(type: IRType, rawVar: string): { cppType: string; i
         case "json":
         case "reference":
         case "embedded":
+        case "instance":
         case "dateTime":
             return { cppType: "const keyma::Value&", init: rawVar };
+        default:
+            // `function` is never a validator/formatter input-binding type in this slice.
+            throw new Error(`valueBinding: unsupported IR type kind "${(type as { kind: string }).kind}"`);
     }
 }
 
@@ -297,7 +314,11 @@ export function irTypeGuard(type: IRType, value: string): string | null {
         case "json":
         case "reference":
         case "embedded":
+        case "instance":
             return null;
+        default:
+            // `function` is never an input-guard type in this slice.
+            throw new Error(`irTypeGuard: unsupported IR type kind "${(type as { kind: string }).kind}"`);
     }
 }
 
@@ -308,6 +329,7 @@ export function irTypeLabel(type: IRType): string {
         case "enum": return `one of ${type.values.map((v) => JSON.stringify(v)).join(", ")}`;
         case "reference":
         case "embedded": return type.schema;
+        case "instance": return type.name;
         default: return type.kind;
     }
 }

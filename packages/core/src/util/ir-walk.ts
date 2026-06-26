@@ -1,4 +1,4 @@
-import type { IRExpression, IRStatement, IRField, IRType, IRSchema } from "../ir/index.js";
+import type { IRExpression, IRStatement, IRField, IRType, IRClassDeclaration } from "../ir/index.js";
 import { filterVisibleFields, filterVisibleMethods } from "./visibility.js";
 
 /** Recursively unwrap array layers from an IRType to get the innermost element type. */
@@ -27,6 +27,7 @@ export function collectIdentifiers(expr: IRExpression, out: Set<string>): void {
             if (expr.body) collectIdentifiers(expr.body, out);
             (expr.statements ?? []).forEach((s) => collectStatementIdentifiers(s, out));
             break;
+        case "await": collectIdentifiers(expr.operand, out); break;
         case "intrinsic":
             if (expr.receiver) collectIdentifiers(expr.receiver, out);
             expr.args.forEach((a) => collectIdentifiers(a, out));
@@ -45,6 +46,25 @@ export function collectStatementIdentifiers(stmt: IRStatement, out: Set<string>)
             collectIdentifiers(stmt.condition, out);
             stmt.consequent.forEach((s) => collectStatementIdentifiers(s, out));
             (stmt.alternate ?? []).forEach((s) => collectStatementIdentifiers(s, out));
+            break;
+        case "forOf":
+            // `stmt.name` is a fresh loop binding, not a free reference (mirrors `const`).
+            collectIdentifiers(stmt.iterable, out);
+            stmt.body.forEach((s) => collectStatementIdentifiers(s, out));
+            break;
+        case "while":
+            collectIdentifiers(stmt.condition, out);
+            stmt.body.forEach((s) => collectStatementIdentifiers(s, out));
+            break;
+        case "switch":
+            collectIdentifiers(stmt.discriminant, out);
+            stmt.cases.forEach((c) => {
+                if (c.test) collectIdentifiers(c.test, out);
+                c.body.forEach((s) => collectStatementIdentifiers(s, out));
+            });
+            break;
+        case "break":
+        case "continue":
             break;
     }
 }
@@ -71,7 +91,7 @@ export interface FunctionRefDeps {
  * The subset of declared utility-function names (`deps.functionNames`) actually referenced by a
  * module's expression defaults and method bodies — used to tree-shake function imports/emit.
  */
-export function collectFunctionRefs(schemas: readonly IRSchema[], deps: FunctionRefDeps): Set<string> {
+export function collectFunctionRefs(schemas: readonly IRClassDeclaration[], deps: FunctionRefDeps): Set<string> {
     const ids = new Set<string>();
     for (const schema of schemas) {
         for (const field of filterVisibleFields(schema, deps.includePrivate)) {

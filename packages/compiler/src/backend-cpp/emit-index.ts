@@ -1,4 +1,4 @@
-import type { IRSchema, IREnumDeclaration, IRService } from "@keyma/core/ir";
+import type { IRClassDeclaration, IREnumDeclaration, IRService } from "@keyma/core/ir";
 import { includePath, namespaceOf, cppSanitizer } from "./module-path.js";
 import { SERVICES_REF } from "./emitter-registry.js";
 
@@ -19,13 +19,13 @@ type IndexEmitOptions = {
  * validators/formatters/defaults ride directly in the schema metadata.
  */
 export function emitIndexCpp(
-    schemas: readonly IRSchema[],
+    schemas: readonly IRClassDeclaration[],
     schemaModule: ReadonlyMap<string, string>,
     opts: IndexEmitOptions,
 ): string {
     const visible = opts.includePrivate ? schemas : schemas.filter((s) => s.visibility === "public");
 
-    const schemasByModule = new Map<string, IRSchema[]>();
+    const schemasByModule = new Map<string, IRClassDeclaration[]>();
     for (const schema of visible) {
         const ref = schemaModule.get(schema.sourceName);
         if (ref === undefined) continue;

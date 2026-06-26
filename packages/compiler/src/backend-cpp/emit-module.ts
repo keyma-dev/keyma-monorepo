@@ -1,6 +1,6 @@
 import type {
-    IRSchema, IRField, IRType, IRMethod, IREnumDeclaration,
-    IRValidatorDeclaration, IRFormatterDeclaration,
+    IRClassDeclaration, IRField, IRType, IRMethod, IREnumDeclaration,
+    IRFunctionDeclaration,
 } from "@keyma/core/ir";
 import { collectRefTargets, collectFunctionRefs, unwrapArray, filterVisibleFields, filterVisibleMethods } from "@keyma/core/util";
 import { exprToCpp, type ExprOpts } from "./emit-expression.js";
@@ -33,8 +33,9 @@ export type ModuleEmitDeps = {
     idFieldByName: ReadonlyMap<string, string>;
     /** Schema `name`s that are the target of some reference (carry id-stub helpers). */
     referenceTargetNames: ReadonlySet<string>;
-    validatorDecls: ReadonlyMap<string, IRValidatorDeclaration>;
-    formatterDecls: ReadonlyMap<string, IRFormatterDeclaration>;
+    /** Every project-local function declaration keyed by name (a domain pack reads a
+     *  validator/formatter factory's params for factory-call arg ordering). */
+    functionDecls: ReadonlyMap<string, IRFunctionDeclaration>;
     functionNames: ReadonlySet<string>;
     validatorsModuleRef: string;
     formattersModuleRef: string;
@@ -53,7 +54,7 @@ const CLIENT_PHASES = new Set(["change", "blur", "submit"]);
 
 export function emitModuleCpp(
     moduleRef: string,
-    schemas: readonly IRSchema[],
+    schemas: readonly IRClassDeclaration[],
     enums: readonly IREnumDeclaration[],
     deps: ModuleEmitDeps,
 ): string {
@@ -152,7 +153,7 @@ export function emitModuleCpp(
 
 // ─── Struct ───────────────────────────────────────────────────────────────────
 
-function emitStruct(schema: IRSchema, deps: ModuleEmitDeps): string[] {
+function emitStruct(schema: IRClassDeclaration, deps: ModuleEmitDeps): string[] {
     const fields = filterVisibleFields(schema, deps.includePrivate);
     const stored = fields;
     // Getter behaviors are member functions, so a reference to one is a call `this->n()`.
@@ -253,7 +254,7 @@ function emitMethod(method: IRMethod, opts: ExprOpts, deps: ModuleEmitDeps): str
 
 // ─── from_value / schema() out-of-line definitions ────────────────────────────
 
-function emitSchemaAccessor(schema: IRSchema, deps: ModuleEmitDeps): string[] {
+function emitSchemaAccessor(schema: IRClassDeclaration, deps: ModuleEmitDeps): string[] {
     const C = schema.sourceName;
     const stored = filterVisibleFields(schema, deps.includePrivate);
 
@@ -274,8 +275,7 @@ function emitSchemaAccessor(schema: IRSchema, deps: ModuleEmitDeps): string[] {
             includePrivate: deps.includePrivate,
             includeIndexes: deps.includeIndexes,
             formPhasesOnly: deps.formPhasesOnly,
-            validatorDecls: deps.validatorDecls,
-            formatterDecls: deps.formatterDecls,
+            functionDecls: deps.functionDecls,
             nsRoot: deps.nsRoot,
             refs: schemaRefs(stored, deps),
             ...(ad !== null ? { applyDefaultsName: ad.name } : {}),
@@ -291,7 +291,7 @@ function emitSchemaAccessor(schema: IRSchema, deps: ModuleEmitDeps): string[] {
  * instantiates a target's value_traits has seen its declaration first (in every TU and
  * include order). Redeclaration across the reference cycle's headers is legal.
  */
-function valueTraitsForwardDecls(ns: string, schemas: readonly IRSchema[], deps: ModuleEmitDeps): string[] {
+function valueTraitsForwardDecls(ns: string, schemas: readonly IRClassDeclaration[], deps: ModuleEmitDeps): string[] {
     const out: string[] = [];
     // Forward-declare the same-module structs (defined later in this header) so their own
     // value_traits declaration below — and any sibling's value_traits body — names a
@@ -323,7 +323,7 @@ function valueTraitsForwardDecls(ns: string, schemas: readonly IRSchema[], deps:
  * target also gets `set_id`/`id_value` so the generic `shared_ptr<T>` traits can build /
  * serialize an id-stub.
  */
-function emitValueTraits(schema: IRSchema, deps: ModuleEmitDeps): string[] {
+function emitValueTraits(schema: IRClassDeclaration, deps: ModuleEmitDeps): string[] {
     const C = deps.cppTypeByName.get(schema.name) ?? schema.sourceName;
     const stored = filterVisibleFields(schema, deps.includePrivate);
 
@@ -380,7 +380,7 @@ function emitValueTraits(schema: IRSchema, deps: ModuleEmitDeps): string[] {
 // targets additionally get id helpers (the binary analogues of value_traits' set_id/id_value).
 
 /** `keyma::binary_traits<T>` forward declarations for same-module structs + reference targets. */
-function binaryTraitsForwardDecls(schemas: readonly IRSchema[], deps: ModuleEmitDeps): string[] {
+function binaryTraitsForwardDecls(schemas: readonly IRClassDeclaration[], deps: ModuleEmitDeps): string[] {
     const fqns = new Set<string>();
     for (const s of schemas) {
         const fqn = deps.cppTypeByName.get(s.name);
@@ -395,7 +395,7 @@ function binaryTraitsForwardDecls(schemas: readonly IRSchema[], deps: ModuleEmit
 }
 
 /** Block 2a: the `keyma::binary_traits<T>` specialization for one schema. */
-function emitBinaryTraits(schema: IRSchema, deps: ModuleEmitDeps): string[] {
+function emitBinaryTraits(schema: IRClassDeclaration, deps: ModuleEmitDeps): string[] {
     const C = deps.cppTypeByName.get(schema.name) ?? schema.sourceName;
     const stored = filterVisibleFields(schema, deps.includePrivate);
     const plans = stored.map((f, i) => binaryFieldPlan(f, i, deps.cppTypeByName, deps.enumTypeByName));
@@ -587,10 +587,23 @@ function schemaRefs(fields: IRField[], deps: ModuleEmitDeps): { name: string; cp
         .map((name) => ({ name, cppClass: deps.cppTypeByName.get(name)! }));
 }
 
+// Validator/formatter attachments now ride in the field's `extensions['schema']` slice
+// (a schema-domain concern). The generic module emitter still needs to know whether a field
+// references any factory to wire the model header's `#include` of validators.hpp/formatters.hpp —
+// a transitional read of the well-known slice keeps that include wiring here without depending
+// on `@keyma/schema`.
+type SchemaFieldSlice = {
+    validators?: { name: string }[];
+    formatters?: { phase: string; spec: { name: string } }[];
+};
+function schemaSlice(field: IRField): SchemaFieldSlice | undefined {
+    return field.extensions?.["schema"] as SchemaFieldSlice | undefined;
+}
+
 /** Top-of-file includes: embedded targets (by-value, complete type needed) and named
  *  enums used by value, plus the validator/formatter/function bundles. Reference
  *  targets are deliberately excluded here — see referenceIncludes. */
-function buildIncludes(moduleRef: string, schemas: readonly IRSchema[], deps: ModuleEmitDeps, hasFunctions: boolean): string[] {
+function buildIncludes(moduleRef: string, schemas: readonly IRClassDeclaration[], deps: ModuleEmitDeps, hasFunctions: boolean): string[] {
     const refs = new Set<string>();
     const allFields = schemas.flatMap((s) => filterVisibleFields(s, deps.includePrivate));
 
@@ -608,8 +621,11 @@ function buildIncludes(moduleRef: string, schemas: readonly IRSchema[], deps: Mo
     let anyValidators = false;
     let anyFormatters = false;
     for (const f of allFields) {
-        if (f.validators.length > 0) anyValidators = true;
-        const fmts = deps.formPhasesOnly ? f.formatters.filter((fm) => CLIENT_PHASES.has(fm.phase)) : f.formatters;
+        const slice = schemaSlice(f);
+        if ((slice?.validators?.length ?? 0) > 0) anyValidators = true;
+        const fmts = deps.formPhasesOnly
+            ? (slice?.formatters ?? []).filter((fm) => CLIENT_PHASES.has(fm.phase))
+            : (slice?.formatters ?? []);
         if (fmts.length > 0) anyFormatters = true;
     }
     if (anyValidators) refs.add(includePath(deps.validatorsModuleRef));
@@ -620,7 +636,7 @@ function buildIncludes(moduleRef: string, schemas: readonly IRSchema[], deps: Mo
 }
 
 /** Forward declarations (grouped by namespace) for every reference target. */
-function referenceForwardDecls(schemas: readonly IRSchema[], deps: ModuleEmitDeps): string[] {
+function referenceForwardDecls(schemas: readonly IRClassDeclaration[], deps: ModuleEmitDeps): string[] {
     const fields = schemas.flatMap((s) => filterVisibleFields(s, deps.includePrivate));
     const byNs = new Map<string, Set<string>>();
     for (const name of collectTargetsByKind(fields, "reference")) {
@@ -638,7 +654,7 @@ function referenceForwardDecls(schemas: readonly IRSchema[], deps: ModuleEmitDep
 }
 
 /** Cross-module reference-target headers, included after the struct definitions. */
-function referenceIncludes(moduleRef: string, schemas: readonly IRSchema[], deps: ModuleEmitDeps): string[] {
+function referenceIncludes(moduleRef: string, schemas: readonly IRClassDeclaration[], deps: ModuleEmitDeps): string[] {
     const fields = schemas.flatMap((s) => filterVisibleFields(s, deps.includePrivate));
     const incs = new Set<string>();
     for (const name of collectTargetsByKind(fields, "reference")) {
@@ -674,11 +690,11 @@ function collectEnumTargets(fields: IRField[]): Set<string> {
 }
 
 /** Order schemas so a same-module embedded target is defined before its user (by-value). */
-function topoSort(schemas: readonly IRSchema[], deps: ModuleEmitDeps): IRSchema[] {
+function topoSort(schemas: readonly IRClassDeclaration[], deps: ModuleEmitDeps): IRClassDeclaration[] {
     const inModule = new Map(schemas.map((s) => [s.sourceName, s]));
-    const result: IRSchema[] = [];
+    const result: IRClassDeclaration[] = [];
     const seen = new Set<string>();
-    const visit = (s: IRSchema): void => {
+    const visit = (s: IRClassDeclaration): void => {
         if (seen.has(s.sourceName)) return;
         seen.add(s.sourceName);
         for (const f of filterVisibleFields(s, deps.includePrivate)) {

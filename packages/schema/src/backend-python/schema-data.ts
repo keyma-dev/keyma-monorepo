@@ -1,8 +1,10 @@
-import type { IRSchema, IRField } from "@keyma/core/ir";
+import type { IRClassDeclaration, IRField } from "@keyma/core/ir";
 import { filterVisibleFields } from "@keyma/core/util";
-import { mkRaw, buildFactoryCall, type SchemaDataOptions } from "@keyma/compiler/backend-python";
+import { mkRaw, type SchemaDataOptions } from "@keyma/compiler/backend-python";
+import { buildFactoryCall } from "./emit-validators.js";
 import {
     schemaIndexes, schemaEdge, schemaEphemeral, fieldIndexes, fieldEphemeral,
+    fieldValidators, fieldFormatters,
     type IRFieldIndex, type IRIndex,
 } from "../ir/extensions.js";
 
@@ -11,7 +13,7 @@ export type { SchemaDataOptions };
 const CLIENT_PHASES = new Set(["change", "blur", "submit"]);
 
 /** Build the metadata object for a schema, ready to be emitted with `emitLiteral`. */
-export function buildSchemaData(schema: IRSchema, opts: SchemaDataOptions): Record<string, unknown> {
+export function buildSchemaData(schema: IRClassDeclaration, opts: SchemaDataOptions): Record<string, unknown> {
     const fields = filterVisibleFields(schema, opts.includePrivate).map((f) => buildFieldData(f, opts));
     const indexes = opts.includeIndexes ? schemaIndexes(schema).map(buildIndexData) : [];
 
@@ -34,9 +36,11 @@ export function buildSchemaData(schema: IRSchema, opts: SchemaDataOptions): Reco
 }
 
 function buildFieldData(field: IRField, opts: SchemaDataOptions): object {
+    const validators = fieldValidators(field);
+    const allFormatters = fieldFormatters(field);
     const formatters = opts.formPhasesOnly
-        ? field.formatters.filter((fmt) => CLIENT_PHASES.has(fmt.phase))
-        : field.formatters;
+        ? allFormatters.filter((fmt) => CLIENT_PHASES.has(fmt.phase))
+        : allFormatters;
     const indexes: IRFieldIndex[] = opts.includeIndexes ? fieldIndexes(field) : [];
 
     const base: Record<string, unknown> = { name: field.name, type: field.type };
@@ -45,15 +49,15 @@ function buildFieldData(field: IRField, opts: SchemaDataOptions): object {
     if (field.readonly) base["readonly"] = true;
     if (!field.required) base["required"] = false;
     if (field.nullable) base["nullable"] = true;
-    if (field.validators.length > 0) {
-        base["validators"] = field.validators.map((v) =>
-            mkRaw(buildFactoryCall(v.name, v.params, opts.validatorDecls.get(v.name)?.factoryParams ?? [])),
+    if (validators.length > 0) {
+        base["validators"] = validators.map((v) =>
+            mkRaw(buildFactoryCall(v.name, v.params, opts.functionDecls.get(v.name)?.params ?? [])),
         );
     }
     if (formatters.length > 0) {
         base["formatters"] = formatters.map((fmt) => ({
             phase: fmt.phase,
-            fn: mkRaw(buildFactoryCall(fmt.spec.name, fmt.spec.params, opts.formatterDecls.get(fmt.spec.name)?.factoryParams ?? [])),
+            fn: mkRaw(buildFactoryCall(fmt.spec.name, fmt.spec.params, opts.functionDecls.get(fmt.spec.name)?.params ?? [])),
         }));
     }
     if (indexes.length > 0) base["indexes"] = indexes;

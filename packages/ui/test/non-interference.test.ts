@@ -99,7 +99,7 @@ describe("non-interference: domains ['schema','ui']", () => {
     const irBoth = ir([schemaFrontendDomain, uiFrontendDomain]);
 
     it("the UI domain leaves the schema IR sections untouched", () => {
-        assert.deepEqual(irBoth.schemas, irSchemaOnly.schemas, "schemas identical with/without the ui domain");
+        assert.deepEqual(irBoth.classes, irSchemaOnly.classes, "schemas identical with/without the ui domain");
         assert.equal(irSchemaOnly.extensions, undefined, "schema-only IR has no extensions");
         const ui = irBoth.extensions?.["ui"] as { views: unknown[] } | undefined;
         assert.ok(ui !== undefined, "ui extension present under extensions.ui");
@@ -108,7 +108,7 @@ describe("non-interference: domains ['schema','ui']", () => {
 
     it("does not pollute the top-level schema/service arrays", () => {
         // The UI domain returns empty schemas/services — its data rides only in extensions.ui.
-        assert.equal(irBoth.schemas.length, irSchemaOnly.schemas.length);
+        assert.equal(irBoth.classes.length, irSchemaOnly.classes.length);
         assert.equal(irBoth.services?.length ?? 0, irSchemaOnly.services?.length ?? 0);
     });
 

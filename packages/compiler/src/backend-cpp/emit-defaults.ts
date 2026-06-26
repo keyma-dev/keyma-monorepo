@@ -1,4 +1,4 @@
-import type { IRSchema, IRDefault, IRExpression } from "@keyma/core/ir";
+import type { IRClassDeclaration, IRDefault, IRExpression } from "@keyma/core/ir";
 import { filterVisibleFields } from "@keyma/core/util";
 import { exprToCpp, type ExprOpts } from "./emit-expression.js";
 import { factoryIdent } from "./emit-validators.js";
@@ -10,7 +10,7 @@ import { factoryIdent } from "./emit-validators.js";
  * references inside an expression default lower to `value.at("x")`. Returns the
  * function name + source, or null when there are no applicable defaults.
  */
-export function buildApplyDefaults(schema: IRSchema, includePrivate: boolean): { name: string; def: string } | null {
+export function buildApplyDefaults(schema: IRClassDeclaration, includePrivate: boolean): { name: string; def: string } | null {
     const valueOpts: ExprOpts = { fieldExpr: (n: string) => `value.at(${JSON.stringify(n)})` };
     const body: string[] = [];
     for (const f of filterVisibleFields(schema, includePrivate)) {

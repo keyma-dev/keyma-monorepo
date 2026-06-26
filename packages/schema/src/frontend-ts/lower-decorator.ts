@@ -1,13 +1,13 @@
 import ts from "typescript";
-import type { IRValidator, IRFormatterSpec, IRDiagnostic, IRDefault, IRFormField, IRType } from "@keyma/core/ir";
-import type { IRFieldIndex } from "../ir/extensions.js";
+import type { IRDiagnostic, IRDefault, IRType } from "@keyma/core/ir";
+import type { IRValidator, IRFormatterSpec, IRFieldIndex, IRFormField } from "../ir/extensions.js";
 import {
     mkError,
     KEYMA011, KEYMA013, KEYMA016, KEYMA020, KEYMA021, KEYMA090,
 } from "./diagnostics.js";
 import { getLocation, numericLiteralValue, stringLiteralValue, booleanLiteralValue } from "@keyma/compiler/frontend-ts";
 import { lowerExpr, type FnRefVerdict } from "@keyma/compiler/frontend-ts";
-import type { ResolvedFactory } from "@keyma/compiler/frontend-ts";
+import type { ResolvedFactory } from "./discover-validators.js";
 
 type LowerContext = {
     checker: ts.TypeChecker;
@@ -232,6 +232,8 @@ function literalMatchesType(value: unknown, type: IRType): boolean {
             return Array.isArray(value);
         case "bytes": case "reference": case "embedded":
             return value === null; // only null is a sensible literal default here
+        case "instance": case "function":
+            return false; // never a stored field type — no literal default applies
     }
 }
 

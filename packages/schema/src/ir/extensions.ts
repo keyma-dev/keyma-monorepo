@@ -1,11 +1,11 @@
 // Schema-domain IR extension payloads. These types and the per-node accessors are the
-// schema domain's slice of the generic `extensions` channel on `IRSchema`/`IRField`
+// schema domain's slice of the generic `extensions` channel on `IRClassDeclaration`/`IRField`
 // (the `@keyma/core/ir` envelope reserves `extensions?: Record<string, unknown>` and
 // neither sets nor reads it). The edge/index/ephemeral metadata used to live as
 // first-class fields on the core IR; the carve relocated them here so `@keyma/core`'s
 // IR is genuinely domain-neutral. The `IREdge`/`IRIndex`/`IRFieldIndex` type definitions
 // moved here from `@keyma/core/ir` for the same reason.
-import type { IRSchema, IRField } from "@keyma/core/ir";
+import type { IRClassDeclaration, IRField } from "@keyma/core/ir";
 
 /** Domain id keying the schema slice of the generic `extensions` channel. */
 export const SCHEMA_EXT = "schema";
@@ -46,6 +46,33 @@ export type IREdge = {
     directed: boolean;
 };
 
+// ─── Validator / formatter field attachments ─────────────────────────────────
+// "Which function validates this field, in which phase" is irreducibly schema-
+// semantic, so these attachment shapes live in the schema domain (they moved here
+// from `@keyma/core/ir` in the validator→function collapse). They reference a core
+// `IRFunctionDeclaration` by `name`; `params` are the bound factory-call arguments.
+// The `<Class>.schema` runtime metadata builder reads them straight back.
+
+/** A validator attachment — references a validator factory function by name,
+ *  optionally with bound factory-call arguments. */
+export type IRValidator = {
+    name: string;
+    params?: Record<string, unknown>;
+};
+
+/** A formatter spec — references a formatter factory function by name, optionally
+ *  with bound factory-call arguments. */
+export type IRFormatterSpec = {
+    name: string;
+    params?: Record<string, unknown>;
+};
+
+/** A formatter attachment — a formatter spec bound to a form/persistence phase. */
+export type IRFormatter = {
+    phase: "change" | "blur" | "submit" | "save";
+    spec: IRFormatterSpec;
+};
+
 /** The schema domain's per-schema extension slice (`schema.extensions['schema']`). */
 export type SchemaExtData = {
     /** Present iff the class was decorated with `@Edge(...)`. */
@@ -62,13 +89,17 @@ export type FieldExtData = {
     indexes?: IRFieldIndex[];
     /** When true, the field is dropped before persistence. */
     ephemeral?: boolean;
+    /** Validators attached via `@Validate(...)`, referencing factory functions by name. */
+    validators?: IRValidator[];
+    /** Formatters attached via `@Format(phase, ...)`, referencing factory functions by name. */
+    formatters?: IRFormatter[];
 };
 
 // ─── Readers ──────────────────────────────────────────────────────────────────
 // Live (mutable) reads of each node's schema-domain slice; `undefined` when the
 // node carries no schema extension.
 
-export function schemaExt(schema: IRSchema): SchemaExtData | undefined {
+export function schemaExt(schema: IRClassDeclaration): SchemaExtData | undefined {
     return schema.extensions?.[SCHEMA_EXT] as SchemaExtData | undefined;
 }
 
@@ -77,7 +108,7 @@ export function fieldExt(field: IRField): FieldExtData | undefined {
 }
 
 /** Composite indexes, defaulting to `[]` (these arrays were always-present pre-carve). */
-export function schemaIndexes(schema: IRSchema): IRIndex[] {
+export function schemaIndexes(schema: IRClassDeclaration): IRIndex[] {
     return schemaExt(schema)?.indexes ?? [];
 }
 
@@ -86,11 +117,11 @@ export function fieldIndexes(field: IRField): IRFieldIndex[] {
     return fieldExt(field)?.indexes ?? [];
 }
 
-export function schemaEdge(schema: IRSchema): IREdge | undefined {
+export function schemaEdge(schema: IRClassDeclaration): IREdge | undefined {
     return schemaExt(schema)?.edge;
 }
 
-export function schemaEphemeral(schema: IRSchema): boolean {
+export function schemaEphemeral(schema: IRClassDeclaration): boolean {
     return schemaExt(schema)?.ephemeral === true;
 }
 
@@ -98,10 +129,20 @@ export function fieldEphemeral(field: IRField): boolean {
     return fieldExt(field)?.ephemeral === true;
 }
 
+/** Validators attached to a field, defaulting to `[]`. */
+export function fieldValidators(field: IRField): IRValidator[] {
+    return fieldExt(field)?.validators ?? [];
+}
+
+/** Formatters attached to a field, defaulting to `[]`. */
+export function fieldFormatters(field: IRField): IRFormatter[] {
+    return fieldExt(field)?.formatters ?? [];
+}
+
 // ─── Writers (frontend only) ────────────────────────────────────────────────────
 
 /** Get-or-create the mutable schema-domain slice on a schema. */
-export function mutSchemaExt(schema: IRSchema): SchemaExtData {
+export function mutSchemaExt(schema: IRClassDeclaration): SchemaExtData {
     const exts = schema.extensions ?? (schema.extensions = {});
     let slice = exts[SCHEMA_EXT] as SchemaExtData | undefined;
     if (slice === undefined) {
@@ -129,7 +170,8 @@ function schemaSliceEmpty(slice: SchemaExtData): boolean {
 
 /** True when a field slice carries nothing. */
 function fieldSliceEmpty(slice: FieldExtData): boolean {
-    return slice.indexes === undefined && slice.ephemeral === undefined;
+    return slice.indexes === undefined && slice.ephemeral === undefined
+        && slice.validators === undefined && slice.formatters === undefined;
 }
 
 /**
@@ -137,7 +179,7 @@ function fieldSliceEmpty(slice: FieldExtData): boolean {
  * fresh top-level `extensions` object so callers that shallow-spread a schema (e.g.
  * inheritance flattening) do not mutate the source node's extension by reference.
  */
-export function setSchemaExtSlice(schema: IRSchema, slice: SchemaExtData): void {
+export function setSchemaExtSlice(schema: IRClassDeclaration, slice: SchemaExtData): void {
     if (schemaSliceEmpty(slice)) {
         if (schema.extensions !== undefined) {
             const { [SCHEMA_EXT]: _drop, ...rest } = schema.extensions;
@@ -160,4 +202,47 @@ export function setFieldExtSlice(field: IRField, slice: FieldExtData): void {
         return;
     }
     field.extensions = { ...(field.extensions ?? {}), [SCHEMA_EXT]: slice };
+}
+
+// ─── UI domain field slice (transitional) ───────────────────────────────────────
+// The `@FormField` presentational metadata rides in the field's `extensions['ui']`
+// slice. It is UI-domain data; today the schema frontend is still its producer (the
+// producer migrates toward a dedicated UI frontend later), so the contract lives here
+// rather than in `@keyma/ui` — `@keyma/ui` depends on `@keyma/schema`, not the reverse.
+
+/** Domain id keying the UI slice of the generic `extensions` channel. */
+export const UI_EXT = "ui";
+
+/** Presentational metadata for form generation (from `@FormField`). */
+export type IRFormField = {
+    title?: string;
+    hint?: string;
+    placeholder?: string;
+    group?: string;
+    order?: number;
+};
+
+/** The UI domain's per-field extension slice (`field.extensions['ui']`). */
+export type UiFieldExtData = {
+    /** `@FormField(...)` presentational metadata. Absent ⇒ none. */
+    form?: IRFormField;
+};
+
+/** Live read of a field's UI slice; `undefined` when the field carries no UI extension. */
+export function fieldUi(field: IRField): UiFieldExtData | undefined {
+    return field.extensions?.[UI_EXT] as UiFieldExtData | undefined;
+}
+
+/** The field's `@FormField` metadata, or `undefined` when none. */
+export function fieldForm(field: IRField): IRFormField | undefined {
+    return fieldUi(field)?.form;
+}
+
+/** Attach `@FormField` metadata to a field's UI slice (no-op when `undefined`). */
+export function setFieldForm(field: IRField, form: IRFormField | undefined): void {
+    if (form === undefined) return;
+    const exts = field.extensions ?? (field.extensions = {});
+    const slice = (exts[UI_EXT] as UiFieldExtData | undefined) ?? {};
+    slice.form = form;
+    exts[UI_EXT] = slice;
 }

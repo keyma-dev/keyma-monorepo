@@ -81,6 +81,9 @@ export function exprToJs(expr: IRExpression, opts: ExprEmitOptions = {}): string
 
             case "intrinsic":
                 return intrinsicToJs(e);
+            default:
+                // Additive IR vocabulary (e.g. `await`) whose JS emission lands in a later slice.
+                throw new Error(`exprToJs: unsupported IR expression kind "${(e as { kind: string }).kind}"`);
         }
     };
 
@@ -177,6 +180,9 @@ export function stmtToJs(stmt: IRStatement, indent: string, opts: ExprEmitOption
 
         case "assign":
             return `${indent}${exprToJs(stmt.target, opts)} = ${exprToJs(stmt.value, opts)};`;
+        default:
+            // Additive IR vocabulary (forOf/while/break/continue/switch) emitted in a later slice.
+            throw new Error(`stmtToJs: unsupported IR statement kind "${(stmt as { kind: string }).kind}"`);
     }
 }
 

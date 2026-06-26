@@ -1,6 +1,6 @@
 import { test } from "node:test";
 import assert from "node:assert/strict";
-import type { IRExpression, IRStatement, IRField, IRSchema, IRType } from "../../src/ir/index.js";
+import type { IRExpression, IRStatement, IRField, IRClassDeclaration, IRType } from "../../src/ir/index.js";
 import { mkRaw, isRaw } from "../../src/util/emit-literal.js";
 import { mkError, mkWarning } from "../../src/util/diagnostics.js";
 import { filterVisible, filterVisibleFields, filterVisibleMethods } from "../../src/util/visibility.js";
@@ -46,12 +46,12 @@ test("visibleFields / visibleMethods read schema shape (methods may be absent)",
     const schema = {
         fields: [{ name: "a", visibility: "public" }, { name: "b", visibility: "private" }],
         methods: [{ name: "m", visibility: "private" }],
-    } as unknown as IRSchema;
+    } as unknown as IRClassDeclaration;
     assert.deepEqual(filterVisibleFields(schema, false).map((f) => f.name), ["a"]);
     assert.deepEqual(filterVisibleFields(schema, true).map((f) => f.name), ["a", "b"]);
     assert.deepEqual(filterVisibleMethods(schema, false), []);
     assert.deepEqual(filterVisibleMethods(schema, true).map((m) => m.name), ["m"]);
-    assert.deepEqual(filterVisibleMethods({ fields: [] } as unknown as IRSchema, false), []); // undefined methods
+    assert.deepEqual(filterVisibleMethods({ fields: [] } as unknown as IRClassDeclaration, false), []); // undefined methods
 });
 
 // ─── IR traversal ──────────────────────────────────────────────────────────────
@@ -85,6 +85,29 @@ test("collectStatementIdentifiers walks statements and nested expressions", () =
     assert.deepEqual([...out].sort(), ["h", "x"]);
 });
 
+test("collectIdentifiers walks an await operand", () => {
+    const expr: IRExpression = { kind: "await", operand: { kind: "call", callee: { kind: "identifier", name: "fetch" }, args: [{ kind: "identifier", name: "url" }] } };
+    const out = new Set<string>();
+    collectIdentifiers(expr, out);
+    assert.deepEqual([...out].sort(), ["fetch", "url"]);
+});
+
+test("collectStatementIdentifiers walks forOf / while / switch (and skips break/continue)", () => {
+    const stmts: IRStatement[] = [
+        { kind: "forOf", name: "item", iterable: { kind: "identifier", name: "xs" }, body: [
+            { kind: "expression", expr: { kind: "call", callee: { kind: "identifier", name: "use" }, args: [{ kind: "identifier", name: "item" }] } },
+        ] },
+        { kind: "while", condition: { kind: "identifier", name: "go" }, body: [{ kind: "break" }, { kind: "continue" }] },
+        { kind: "switch", discriminant: { kind: "identifier", name: "d" }, cases: [
+            { test: { kind: "identifier", name: "k" }, body: [{ kind: "expression", expr: { kind: "identifier", name: "g" } }] },
+            { test: null, body: [{ kind: "expression", expr: { kind: "await", operand: { kind: "identifier", name: "p" } } }] },
+        ] },
+    ];
+    const out = new Set<string>();
+    stmts.forEach((s) => collectStatementIdentifiers(s, out));
+    assert.deepEqual([...out].sort(), ["d", "g", "go", "item", "k", "p", "use", "xs"]);
+});
+
 test("collectRefTargets gathers embedded/reference schema names through arrays", () => {
     const fields = [
         { type: { kind: "embedded", schema: "Addr" } },
@@ -98,7 +121,7 @@ test("collectFunctionRefs returns only declared function names actually referenc
     const schema = {
         fields: [{ name: "createdAt", visibility: "public", default: { kind: "expression", expression: { kind: "call", callee: { kind: "identifier", name: "seedFn" }, args: [] } } }],
         methods: [{ name: "full", visibility: "public", statements: [{ kind: "return", value: { kind: "call", callee: { kind: "identifier", name: "helperFn" }, args: [] } }] }],
-    } as unknown as IRSchema;
+    } as unknown as IRClassDeclaration;
     const functionNames = new Set(["seedFn", "helperFn", "unused"]);
 
     assert.deepEqual(

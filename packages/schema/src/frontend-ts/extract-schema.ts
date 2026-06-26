@@ -1,10 +1,11 @@
 import ts from "typescript";
 import type {
-    IRSchema, IRField, IRType, IRValidator, IRFormatter, IRDiagnostic, IRDefault, IRFormField, IRMethod,
+    IRClassDeclaration, IRField, IRType, IRDiagnostic, IRDefault, IRMethod,
 } from "@keyma/core/ir";
 import {
-    fieldExt, setFieldExtSlice, setSchemaExtSlice,
-    type IRFieldIndex, type IRIndex, type IREdge, type FieldExtData, type SchemaExtData,
+    fieldExt, setFieldExtSlice, setSchemaExtSlice, setFieldForm,
+    type IRValidator, type IRFormatter,
+    type IRFieldIndex, type IRIndex, type IREdge, type FieldExtData, type SchemaExtData, type IRFormField,
 } from "../ir/extensions.js";
 import { mkError, mkWarning, KEYMA017, KEYMA019, KEYMA040, KEYMA061, KEYMA065, KEYMA066, KEYMA098, KEYMA102 } from "./diagnostics.js";
 import { getLocation, isFromModule, stringLiteralValue, numericLiteralValue } from "@keyma/compiler/frontend-ts";
@@ -14,7 +15,7 @@ import { lowerValidateArgs, lowerFormatArgs, lowerIndexedArgs, lowerInitializerD
 import { lowerGetterBody } from "@keyma/compiler/frontend-ts";
 import { lowerMethod, lowerSetter, type MethodLowerCtx } from "@keyma/compiler/frontend-ts";
 import type { FnRefVerdict } from "@keyma/compiler/frontend-ts";
-import type { ResolvedFactory } from "@keyma/compiler/frontend-ts";
+import type { ResolvedFactory } from "./discover-validators.js";
 import type { DiscoveredSchema } from "./discover.js";
 import type { EnumInfo } from "@keyma/compiler/frontend-ts";
 
@@ -34,13 +35,13 @@ type ExtractContext = {
 };
 
 /**
- * Extract an IRSchema from a discovered class. The schema contains only the
+ * Extract an IRClassDeclaration from a discovered class. The schema contains only the
  * class's own fields (not inherited). Flattening happens in a later pass.
  */
 export function extractSchema(
     discovered: DiscoveredSchema,
     ctx: ExtractContext
-): IRSchema {
+): IRClassDeclaration {
     const { classNode, className, sourceFile, schemaOptions } = discovered;
     const name = schemaOptions.name ?? className.toLowerCase();
     const visibility = schemaOptions.private === true ? "private" : "public";
@@ -116,11 +117,12 @@ export function extractSchema(
             if (!compositeGroups.has(key)) compositeGroups.set(key, []);
             compositeGroups.get(key)!.push({ fieldName: field.name, idx });
         }
-        // Keyed entries live only in schema-level indexes, not on the field.
+        // Keyed entries live only in schema-level indexes, not on the field. Preserve the
+        // rest of the slice (ephemeral + validator/formatter attachments) — only `indexes` changes.
         const remaining = ext.indexes.filter((idx) => idx.key === undefined);
-        const newExt: FieldExtData = {};
+        const newExt: FieldExtData = { ...ext };
         if (remaining.length > 0) newExt.indexes = remaining;
-        if (ext.ephemeral === true) newExt.ephemeral = true;
+        else delete newExt.indexes;
         setFieldExtSlice(field, newExt);
     }
 
@@ -154,8 +156,7 @@ export function extractSchema(
         compositeIndexes.push(irIndex);
     }
 
-    const schema: IRSchema = {
-        id: `schema:${name}`,
+    const schema: IRClassDeclaration = {
         name,
         sourceName: className,
         visibility,
@@ -203,7 +204,7 @@ function referenceTargetOf(type: IRType): string | undefined {
  * type). Returns undefined when the edge cannot be formed.
  */
 function deriveEdge(
-    schema: IRSchema,
+    schema: IRClassDeclaration,
     endpoints: EndpointAccumulator,
     directed: boolean,
     ctx: ExtractContext,
@@ -276,7 +277,7 @@ function dedupeMethods(
     _sourceFile: ts.SourceFile,
 ): IRMethod[] {
     const fieldNames = new Set(fields.map((f) => f.name));
-    const seen = new Map<string, { getter?: true; setter?: true; method?: true }>();
+    const seen = new Map<string, Partial<Record<IRMethod["kind"], true>>>();
     const result: IRMethod[] = [];
     for (const m of rawMethods) {
         // A method may not share a name with a stored field; a getter may not
@@ -286,7 +287,7 @@ function dedupeMethods(
             ctx.diagnostics.push(mkError(KEYMA040, `${m.kind === "method" ? "Method" : "Getter"} "${m.name}" conflicts with a field of the same name`, m.source));
             continue;
         }
-        const prior = seen.get(m.name) ?? {};
+        const prior: Partial<Record<IRMethod["kind"], true>> = seen.get(m.name) ?? {};
         // A getter pairs only with a setter; a setter pairs only with a getter.
         const conflict =
             (m.kind === "method" && (prior.getter || prior.setter || prior.method)) ||
@@ -463,13 +464,13 @@ function extractField(
         visibility,
         readonly: isReadonly,
         required: !(isOptional || typeResult.optional === true),
-        validators,
-        formatters,
         source: getLocation(prop, sf),
     };
     if (typeResult.nullable === true) field.nullable = true;
     if (defaultValue !== undefined) field.default = defaultValue;
-    if (form !== undefined) field.form = form;
+    // `@FormField` presentational metadata is UI-domain data — it rides in the field's
+    // `extensions['ui']` slice, not on the domain-neutral core IRField.
+    setFieldForm(field, form);
     if (deprecated !== undefined) field.deprecated = deprecated;
     // Stash the binary tag hints. `tag` (the @Tag pin) is a real IRField property; the
     // assignTags pass reinterprets a pre-existing `tag` as a manual pin. `renamedFrom` is a
@@ -477,12 +478,16 @@ function extractField(
     if (tagPin !== undefined) field.tag = tagPin;
     if (renamedFrom !== undefined) (field as RawTaggedField).renamedFrom = renamedFrom;
 
-    // Schema-domain per-field metadata (indexes + ephemeral) rides in the field's
-    // `extensions['schema']` slice. `extractSchema`'s composite-index pass later re-filters
-    // the index list (keyed entries are hoisted to schema-level indexes).
+    // Schema-domain per-field metadata (indexes + ephemeral + validator/formatter
+    // attachments) rides in the field's `extensions['schema']` slice — "which function
+    // validates/formats this field, in which phase" is irreducibly schema-semantic, so it
+    // is not part of the domain-neutral core IRField. `extractSchema`'s composite-index pass
+    // later re-filters the index list (keyed entries are hoisted to schema-level indexes).
     const fExt: FieldExtData = {};
     if (fieldIndexes.length > 0) fExt.indexes = fieldIndexes;
     if (ephemeral) fExt.ephemeral = true;
+    if (validators.length > 0) fExt.validators = validators;
+    if (formatters.length > 0) fExt.formatters = formatters;
     setFieldExtSlice(field, fExt);
 
     return field;

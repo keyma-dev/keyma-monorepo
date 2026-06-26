@@ -5,6 +5,7 @@ import { fileURLToPath } from "node:url";
 import ts from "typescript";
 import { compileVirtual, type CompileResult } from "./harness.js";
 import { createKeymaNodeSystem } from "@keyma/compiler/frontend-ts/node";
+import { fieldValidators, fieldFormatters } from "@keyma/schema/ir";
 
 const __dirname = path.dirname(fileURLToPath(import.meta.url));
 // Package src dir — used only by the Node-overlay control case for real-fs dep resolution.
@@ -61,15 +62,15 @@ describe("fully-virtual compile via @typescript/vfs", () => {
             `Unexpected errors: ${JSON.stringify(result.diagnostics)}`,
         );
 
-        const user = result.ir.schemas.find((s) => s.sourceName === "User");
+        const user = result.ir.classes.find((s) => s.sourceName === "User");
         assert.ok(user, "User schema expected");
         const name = user.fields.find((f) => f.name === "name");
         assert.ok(name, "name field expected");
-        assert.ok(name.validators.some((v) => v.name === "minLength"), "minLength validator expected");
-        assert.ok(name.formatters.some((fmt) => fmt.spec.name === "trim"), "trim formatter expected");
-        // The library factory bodies are lowered into the IR (re-emitted into the bundle).
-        assert.ok(result.ir.validatorDeclarations?.some((d) => d.name === "minLength"), "minLength lowered");
-        assert.ok(result.ir.formatterDeclarations?.some((d) => d.name === "trim"), "trim lowered");
+        assert.ok(fieldValidators(name).some((v) => v.name === "minLength"), "minLength validator expected");
+        assert.ok(fieldFormatters(name).some((fmt) => fmt.spec.name === "trim"), "trim formatter expected");
+        // The library factory bodies collapse to ordinary functions lowered into the IR.
+        assert.ok(result.ir.functionDeclarations?.some((d) => d.name === "minLength"), "minLength lowered");
+        assert.ok(result.ir.functionDeclarations?.some((d) => d.name === "trim"), "trim lowered");
     });
 
     it("the ts.sys tripwire is meaningful — the Node overlay path does touch the real filesystem", () => {

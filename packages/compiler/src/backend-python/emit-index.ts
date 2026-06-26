@@ -1,4 +1,4 @@
-import type { IRSchema } from "@keyma/core/ir";
+import type { IRClassDeclaration } from "@keyma/core/ir";
 import { pythonRelImport } from "./module-path.js";
 
 type IndexEmitOptions = {
@@ -11,7 +11,7 @@ type IndexEmitOptions = {
  * validators/formatters/defaults ride directly in the schema metadata.
  */
 export function emitIndexPython(
-    schemas: readonly IRSchema[],
+    schemas: readonly IRClassDeclaration[],
     schemaModule: ReadonlyMap<string, string>,
     opts: IndexEmitOptions,
 ): string {

@@ -23,7 +23,7 @@ function hasError(result: ReturnType<typeof cv>, code: string): boolean {
 }
 
 function methodsOf(result: ReturnType<typeof cv>, sourceName: string): IRMethod[] {
-    const s = result.ir.schemas.find((s) => s.sourceName === sourceName);
+    const s = result.ir.classes.find((s) => s.sourceName === sourceName);
     assert.ok(s !== undefined, `schema ${sourceName} not found`);
     return s!.methods ?? [];
 }

@@ -13,7 +13,7 @@ function cv(source: string, extra: Record<string, unknown> = {}) {
 }
 
 function tagsOf(result: ReturnType<typeof cv>, sourceName: string): Record<string, number | undefined> {
-    const s = result.ir.schemas.find((x) => x.sourceName === sourceName)!;
+    const s = result.ir.classes.find((x) => x.sourceName === sourceName)!;
     const o: Record<string, number | undefined> = {};
     for (const f of s.fields) o[f.name] = f.tag;
     return o;

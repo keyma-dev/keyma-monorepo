@@ -19,7 +19,7 @@ const FIXTURES = path.join(__dirname, "..", "..", "..", "test", "driver", "fixtu
 // ─── Mock helpers ─────────────────────────────────────────────────────────────
 
 function emptyIR(): KeymaIR {
-    return { irVersion: "1.0.0", compilerVersion: "0.1.0", schemas: [], diagnostics: [] };
+    return { irVersion: "1.0.0", compilerVersion: "0.1.0", classes: [], diagnostics: [] };
 }
 
 function mockFrontend(overrides?: Partial<{
@@ -203,7 +203,7 @@ describe("drive — backend orchestration", () => {
 
 describe("drive — IR validation", () => {
     it("catches structurally invalid IR from the frontend", async () => {
-        const badIR = { irVersion: 123, schemas: "not-an-array" } as unknown as KeymaIR;
+        const badIR = { irVersion: 123, classes: "not-an-array" } as unknown as KeymaIR;
         const result = await drive(resolveConfig({}), mockFrontend({ ir: badIR }), []);
         assert.equal(result.hasErrors, true);
         assert.ok(

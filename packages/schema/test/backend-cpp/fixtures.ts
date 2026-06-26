@@ -1,8 +1,11 @@
 import type {
-    KeymaIR, IRSchema, IRField, IRType, IRExpression,
-    IRValidatorDeclaration, IRFormatterDeclaration, IREnumDeclaration, IRService,
+    KeymaIR, IRClassDeclaration, IRField, IRType, IRExpression,
+    IRFunctionDeclaration, IREnumDeclaration, IRService,
 } from "@keyma/core/ir";
-import { setFieldExtSlice, type IRFieldIndex, type FieldExtData } from "../../src/ir/extensions.js";
+import {
+    setFieldExtSlice,
+    type IRFieldIndex, type FieldExtData, type IRValidator, type IRFormatter,
+} from "../../src/ir/extensions.js";
 
 // Small builders for constructing IR inline in tests.
 const src = (file: string) => ({ file: `/proj/src/${file}`, line: 1, column: 1 });
@@ -13,58 +16,84 @@ export const intr = (op: string, receiver: IRExpression | null, args: IRExpressi
     ({ kind: "intrinsic", op, receiver, args });
 export const tmpl = (...parts: IRExpression[]): IRExpression => ({ kind: "template", parts });
 
-type FExtra = Partial<IRField> & { indexes?: IRFieldIndex[]; ephemeral?: boolean };
+type FExtra = Partial<IRField> & {
+    indexes?: IRFieldIndex[]; ephemeral?: boolean; validators?: IRValidator[]; formatters?: IRFormatter[];
+};
 function f(name: string, type: IRType, extra: FExtra = {}): IRField {
-    const { indexes, ephemeral, ...rest } = extra;
-    const field: IRField = { name, type, visibility: "public", readonly: false, required: true, validators: [], formatters: [], source: src("user.ts"), ...rest };
+    const { indexes, ephemeral, validators, formatters, ...rest } = extra;
+    const field: IRField = { name, type, visibility: "public", readonly: false, required: true, source: src("user.ts"), ...rest };
     const ext: FieldExtData = {};
     if (indexes !== undefined && indexes.length > 0) ext.indexes = indexes;
     if (ephemeral === true) ext.ephemeral = true;
+    if (validators !== undefined) ext.validators = validators;
+    if (formatters !== undefined) ext.formatters = formatters;
     setFieldExtSlice(field, ext);
     return field;
 }
 
-export const minLengthDecl: IRValidatorDeclaration = {
+// Validator/formatter factories are ordinary `IRFunctionDeclaration`s whose body returns a
+// typed inner arrow (`function f(spec) { return (value, field) => … }`); the schema backend
+// recovers the factory params / inner positional params / input type via `validatorShape`.
+export const minLengthDecl: IRFunctionDeclaration = {
     name: "minLength",
-    factoryParams: [{ name: "value" }],
-    inputType: { kind: "string" },
-    body: {
-        params: [{ name: "raw", role: "value" }, { name: "field", role: "field" }],
-        statements: [{
-            kind: "return",
-            value: {
-                kind: "conditional",
-                condition: { kind: "binary", op: "<", left: intr("string.length", id("raw")), right: id("value") },
-                whenTrue: { kind: "object", properties: [
-                    { key: "field", value: id("field") },
-                    { key: "code", value: lit("minLength") },
-                    { key: "message", value: tmpl(id("field"), lit(" must be at least "), id("value"), lit(" characters")) },
-                ] },
-                whenFalse: lit(null),
-            },
-        }],
+    params: [{ name: "value", type: { kind: "integer" } }],
+    returnType: {
+        kind: "function",
+        params: [{ name: "raw", type: { kind: "string" } }, { name: "field", type: { kind: "string" } }],
+        returns: { kind: "json" },
     },
+    statements: [{
+        kind: "return",
+        value: {
+            kind: "arrow",
+            params: [{ name: "raw", type: { kind: "string" } }, "field"],
+            statements: [{
+                kind: "return",
+                value: {
+                    kind: "conditional",
+                    condition: { kind: "binary", op: "<", left: intr("string.length", id("raw")), right: id("value") },
+                    whenTrue: { kind: "object", properties: [
+                        { key: "field", value: id("field") },
+                        { key: "code", value: lit("minLength") },
+                        { key: "message", value: tmpl(id("field"), lit(" must be at least "), id("value"), lit(" characters")) },
+                    ] },
+                    whenFalse: lit(null),
+                },
+            }],
+        },
+    }],
     source: src("validators.ts"),
 };
 
-export const trimDecl: IRFormatterDeclaration = {
+export const trimDecl: IRFunctionDeclaration = {
     name: "trim",
-    factoryParams: [],
-    inputType: { kind: "string" },
-    body: { params: [{ name: "value", role: "value" }], statements: [{ kind: "return", value: intr("string.trim", id("value")) }] },
+    params: [],
+    returnType: {
+        kind: "function",
+        params: [{ name: "value", type: { kind: "string" } }],
+        returns: { kind: "json" },
+    },
+    statements: [{
+        kind: "return",
+        value: {
+            kind: "arrow",
+            params: [{ name: "value", type: { kind: "string" } }],
+            statements: [{ kind: "return", value: intr("string.trim", id("value")) }],
+        },
+    }],
     source: src("formatters.ts"),
 };
 
-const Address: IRSchema = {
-    id: "Address", name: "address", sourceName: "Address", visibility: "public",
+const Address: IRClassDeclaration = {
+    name: "address", sourceName: "Address", visibility: "public",
     fields: [f("street", { kind: "string" }), f("zip", { kind: "string" })],
     source: src("address.ts"),
 };
 
 // Tag.owner → user creates a reference CYCLE with User.primaryTag → tag (legal:
 // references store only an id, so the by-value embedded-cycle ban does not apply).
-const Tag: IRSchema = {
-    id: "Tag", name: "tag", sourceName: "Tag", visibility: "public",
+const Tag: IRClassDeclaration = {
+    name: "tag", sourceName: "Tag", visibility: "public",
     fields: [
         f("id", { kind: "id" }),
         f("label", { kind: "string" }),
@@ -96,14 +125,14 @@ export const accountService: IRService = {
     source: src("services.ts"),
 };
 
-const Secret: IRSchema = {
-    id: "Secret", name: "secret", sourceName: "Secret", visibility: "private",
+const Secret: IRClassDeclaration = {
+    name: "secret", sourceName: "Secret", visibility: "private",
     fields: [f("token", { kind: "string" })],
     source: src("secret.ts"),
 };
 
-const User: IRSchema = {
-    id: "User", name: "user", sourceName: "User", visibility: "public",
+const User: IRClassDeclaration = {
+    name: "user", sourceName: "User", visibility: "public",
     fields: [
         f("id", { kind: "id" }, { readonly: true }),
         f("firstName", { kind: "string" }, {
@@ -146,8 +175,8 @@ const User: IRSchema = {
 export function sampleIR(): KeymaIR {
     return {
         irVersion: "4.0.0", compilerVersion: "0.1.0", sourceRoot: "/proj/src",
-        schemas: [Address, Tag, Secret, User],
-        validatorDeclarations: [minLengthDecl], formatterDeclarations: [trimDecl], functionDeclarations: [],
+        classes: [Address, Tag, Secret, User],
+        functionDeclarations: [minLengthDecl, trimDecl],
         enums: [statusEnum], services: [accountService],
         diagnostics: [],
     };

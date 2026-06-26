@@ -44,7 +44,7 @@ function compileWith(schemaPrefix: string) {
 
 /** sourceName → schema (the class name is stable regardless of prefix). */
 function bySourceName(result: ReturnType<typeof compileWith>, sourceName: string) {
-    const s = result.ir.schemas.find((x) => x.sourceName === sourceName);
+    const s = result.ir.classes.find((x) => x.sourceName === sourceName);
     assert.ok(s !== undefined, `schema ${sourceName} not found`);
     return s;
 }
@@ -84,7 +84,6 @@ describe("schemaPrefix — name normalization", () => {
         const user = bySourceName(r, "User");
         assert.equal(user.name, "blog_user");
         assert.equal(user.sourceName, "User");
-        assert.equal(user.id, "schema:blog_user");
 
         // Reference target is rewritten to the prefixed name of its target.
         const post = bySourceName(r, "Post");

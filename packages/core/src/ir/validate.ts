@@ -146,6 +146,27 @@ export function checkType(type: unknown, path: string): IRValidationError[] {
                 return [e(`${path}.schema`, "must be a non-empty string")];
             }
             return [];
+        case "instance":
+            if (!isStr(type["name"]) || type["name"] === "") {
+                return [e(`${path}.name`, "must be a non-empty string")];
+            }
+            return [];
+        case "function": {
+            const errors: IRValidationError[] = [];
+            if (!isArr(type["params"])) {
+                errors.push(e(`${path}.params`, "must be an array"));
+            } else {
+                type["params"].forEach((p, i) => {
+                    if (!isObj(p)) { errors.push(e(`${path}.params[${i}]`, "must be an object")); return; }
+                    if (!isStr(p["name"]) || p["name"] === "") errors.push(e(`${path}.params[${i}].name`, "must be a non-empty string"));
+                    errors.push(...checkType(p["type"], `${path}.params[${i}].type`));
+                });
+            }
+            if ("returns" in type && type["returns"] !== undefined) {
+                errors.push(...checkType(type["returns"], `${path}.returns`));
+            }
+            return errors;
+        }
         default:
             return [e(`${path}.kind`, `unknown type kind "${kind}"`)];
     }
@@ -231,7 +252,16 @@ export function checkExpression(expr: unknown, path: string): IRValidationError[
                 errors.push(e(`${path}.params`, "must be an array"));
             } else {
                 expr["params"].forEach((p, i) => {
-                    if (!isStr(p) || p === "") errors.push(e(`${path}.params[${i}]`, "must be a non-empty string"));
+                    // A param is either a bare name (string) or a typed `{ name, type?, optional? }`.
+                    if (isStr(p)) {
+                        if (p === "") errors.push(e(`${path}.params[${i}]`, "must be a non-empty string"));
+                    } else if (isObj(p)) {
+                        if (!isStr(p["name"]) || p["name"] === "") errors.push(e(`${path}.params[${i}].name`, "must be a non-empty string"));
+                        if ("type" in p && p["type"] !== undefined) errors.push(...checkType(p["type"], `${path}.params[${i}].type`));
+                        if ("optional" in p && p["optional"] !== undefined && !isBool(p["optional"])) errors.push(e(`${path}.params[${i}].optional`, "must be a boolean when present"));
+                    } else {
+                        errors.push(e(`${path}.params[${i}]`, "must be a non-empty string or a typed param object"));
+                    }
                 });
             }
             // Exactly one of `body` (concise) or `statements` (block) must be present.
@@ -262,6 +292,8 @@ export function checkExpression(expr: unknown, path: string): IRValidationError[
             }
             return errors;
         }
+        case "await":
+            return checkExpression(expr["operand"], `${path}.operand`);
         case "intrinsic": {
             const errors: IRValidationError[] = [];
             if (!isStr(expr["op"]) || expr["op"] === "") {
@@ -322,6 +354,51 @@ export function checkStatement(stmt: unknown, path: string): IRValidationError[]
         case "assign": {
             const errors = checkExpression(stmt["target"], `${path}.target`);
             errors.push(...checkExpression(stmt["value"], `${path}.value`));
+            return errors;
+        }
+        case "forOf": {
+            const errors: IRValidationError[] = [];
+            if (!isStr(stmt["name"]) || stmt["name"] === "") errors.push(e(`${path}.name`, "must be a non-empty string"));
+            errors.push(...checkExpression(stmt["iterable"], `${path}.iterable`));
+            if (!isArr(stmt["body"])) {
+                errors.push(e(`${path}.body`, "must be an array"));
+            } else {
+                stmt["body"].forEach((s, i) => errors.push(...checkStatement(s, `${path}.body[${i}]`)));
+            }
+            return errors;
+        }
+        case "while": {
+            const errors = checkExpression(stmt["condition"], `${path}.condition`);
+            if (!isArr(stmt["body"])) {
+                errors.push(e(`${path}.body`, "must be an array"));
+            } else {
+                stmt["body"].forEach((s, i) => errors.push(...checkStatement(s, `${path}.body[${i}]`)));
+            }
+            return errors;
+        }
+        case "break":
+        case "continue":
+            return [];
+        case "switch": {
+            const errors = checkExpression(stmt["discriminant"], `${path}.discriminant`);
+            if (!isArr(stmt["cases"])) {
+                errors.push(e(`${path}.cases`, "must be an array"));
+            } else {
+                stmt["cases"].forEach((c, i) => {
+                    if (!isObj(c)) { errors.push(e(`${path}.cases[${i}]`, "must be an object")); return; }
+                    // `test` must be present: an expression for a case label, or `null` for `default`.
+                    if (!("test" in c)) {
+                        errors.push(e(`${path}.cases[${i}].test`, "must be present (an expression, or null for default)"));
+                    } else if (c["test"] !== null) {
+                        errors.push(...checkExpression(c["test"], `${path}.cases[${i}].test`));
+                    }
+                    if (!isArr(c["body"])) {
+                        errors.push(e(`${path}.cases[${i}].body`, "must be an array"));
+                    } else {
+                        c["body"].forEach((s, j) => errors.push(...checkStatement(s, `${path}.cases[${i}].body[${j}]`)));
+                    }
+                });
+            }
             return errors;
         }
         default:

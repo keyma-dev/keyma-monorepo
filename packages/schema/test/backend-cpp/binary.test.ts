@@ -26,7 +26,6 @@ function fld(
         name, type, visibility: "public", readonly: false,
         required: opts.required ?? true,
         ...(opts.nullable ? { nullable: true } : {}),
-        validators: [], formatters: [],
         ...(opts.tag !== undefined ? { tag: opts.tag } : {}),
         source: loc(file),
     };
@@ -43,9 +42,9 @@ function fld(
 function binaryIR(): KeymaIR {
     return {
         irVersion: "7.1.0", compilerVersion: "0.1.0", sourceRoot: "/proj/src",
-        schemas: [
+        classes: [
             {
-                id: "Person", name: "person", sourceName: "Person", visibility: "public",
+                name: "person", sourceName: "Person", visibility: "public",
                 fields: [
                     fld(DOC_TS, "id", { kind: "id" }, { tag: 1 }),
                     fld(DOC_TS, "name", { kind: "string" }, { tag: 2 }),
@@ -53,7 +52,7 @@ function binaryIR(): KeymaIR {
                 source: loc(DOC_TS),
             },
             {
-                id: "Doc", name: "doc", sourceName: "Doc", visibility: "public",
+                name: "doc", sourceName: "Doc", visibility: "public",
                 fields: [
                     fld(DOC_TS, "id", { kind: "id" }, { tag: 1 }),
                     fld(DOC_TS, "name", { kind: "string" }, { tag: 2 }),
@@ -69,7 +68,7 @@ function binaryIR(): KeymaIR {
                 source: loc(DOC_TS),
             },
             {
-                id: "Addr", name: "addr", sourceName: "Addr", visibility: "public",
+                name: "addr", sourceName: "Addr", visibility: "public",
                 fields: [
                     fld(RICH_TS, "city", { kind: "string" }, { tag: 1 }),
                     fld(RICH_TS, "zip", { kind: "bigint" }, { tag: 2 }),
@@ -77,7 +76,7 @@ function binaryIR(): KeymaIR {
                 source: loc(RICH_TS),
             },
             {
-                id: "Cat", name: "cat", sourceName: "Cat", visibility: "public",
+                name: "cat", sourceName: "Cat", visibility: "public",
                 fields: [
                     fld(RICH_TS, "id", { kind: "integer" }, { tag: 1 }),
                     fld(RICH_TS, "label", { kind: "string" }, { tag: 2 }),
@@ -85,7 +84,7 @@ function binaryIR(): KeymaIR {
                 source: loc(RICH_TS),
             },
             {
-                id: "Rich", name: "rich", sourceName: "Rich", visibility: "public",
+                name: "rich", sourceName: "Rich", visibility: "public",
                 fields: [
                     fld(RICH_TS, "id", { kind: "id" }, { tag: 1 }),
                     fld(RICH_TS, "addr", { kind: "embedded", schema: "addr" }, { tag: 2 }),
@@ -99,7 +98,7 @@ function binaryIR(): KeymaIR {
                 source: loc(RICH_TS),
             },
         ],
-        validatorDeclarations: [], formatterDeclarations: [], functionDeclarations: [],
+        functionDeclarations: [],
         enums: [{ name: "Color", members: [{ name: "Red", value: "red" }, { name: "Green", value: "green" }], source: loc(RICH_TS) }],
         diagnostics: [],
     };

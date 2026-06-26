@@ -1,4 +1,4 @@
-import type { IRSchema } from "@keyma/core/ir";
+import type { IRClassDeclaration } from "@keyma/core/ir";
 import { filterVisibleFields } from "@keyma/core/util";
 import { exprToPython, withHoist, type Hoist } from "./emit-expression.js";
 
@@ -7,7 +7,7 @@ import { exprToPython, withHoist, type Hoist } from "./emit-expression.js";
  * field defaults, referenced from the schema metadata dict. Returns the function
  * name + its source, or null when the schema has no expression defaults.
  */
-export function buildApplyDefaults(schema: IRSchema, includePrivate: boolean): { name: string; def: string } | null {
+export function buildApplyDefaults(schema: IRClassDeclaration, includePrivate: boolean): { name: string; def: string } | null {
     const fields = filterVisibleFields(schema, includePrivate).filter(
         (f) => f.default !== undefined && f.default.kind === "expression",
     );
@@ -28,6 +28,6 @@ export function buildApplyDefaults(schema: IRSchema, includePrivate: boolean): {
     return { name, def: lines.join("\n") };
 }
 
-export function schemaHasExpressionDefault(schema: IRSchema, includePrivate: boolean): boolean {
+export function schemaHasExpressionDefault(schema: IRClassDeclaration, includePrivate: boolean): boolean {
     return filterVisibleFields(schema, includePrivate).some((f) => f.default !== undefined && f.default.kind === "expression");
 }

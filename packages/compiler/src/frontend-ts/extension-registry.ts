@@ -1,11 +1,9 @@
 import type ts from "typescript";
 import type {
     IRDiagnostic,
-    IRSchema,
+    IRClassDeclaration,
     IRService,
     IREnumDeclaration,
-    IRValidatorDeclaration,
-    IRFormatterDeclaration,
     IRFunctionDeclaration,
     TagManifest,
 } from "@keyma/core/ir";
@@ -36,10 +34,11 @@ export type FrontendDomainContext = {
  * single domain — schema — so a contribution maps 1:1 onto today's IR.
  */
 export type FrontendContribution = {
-    schemas: IRSchema[];
+    schemas: IRClassDeclaration[];
     enums: IREnumDeclaration[];
-    validatorDeclarations: IRValidatorDeclaration[];
-    formatterDeclarations: IRFormatterDeclaration[];
+    /** Project-local functions: utility helpers AND validator/formatter factories (now
+     *  ordinary functions). A domain attaches per-field validator/formatter references via
+     *  `field.extensions` rather than separate declaration lists. */
     functionDeclarations: IRFunctionDeclaration[];
     services: IRService[];
     /** Present only when the domain ran binary tag assignment (schema, when binaryTags). */

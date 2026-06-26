@@ -262,12 +262,12 @@ describe("emitCpp — sized numeric member types", async () => {
     const loc = { file: "/proj/src/nums.ts", line: 1, column: 1 };
     const f = (name: string, type: IRType): IRField => ({
         name, type, visibility: "public", readonly: false, required: true,
-        validators: [], formatters: [], source: loc,
+        source: loc,
     });
     const ir: KeymaIR = {
         irVersion: "7.1.0", compilerVersion: "0.1.0", sourceRoot: "/proj/src",
-        schemas: [{
-            id: "Nums", name: "nums", sourceName: "Nums", visibility: "public",
+        classes: [{
+            name: "nums", sourceName: "Nums", visibility: "public",
             fields: [
                 f("i8", { kind: "integer", bits: 8 }),
                 f("i16", { kind: "integer", bits: 16 }),
@@ -281,7 +281,7 @@ describe("emitCpp — sized numeric member types", async () => {
             ],
             source: loc,
         }],
-        validatorDeclarations: [], formatterDeclarations: [], functionDeclarations: [],
+        functionDeclarations: [],
         enums: [], diagnostics: [],
     };
     const { files } = await emitCpp(ir, { language: "cpp", outDir: "out", library: true }, CFG);

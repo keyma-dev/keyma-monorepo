@@ -50,9 +50,12 @@ describe("services — remote call contracts", () => {
         assert.equal(svc.visibility, "public");
         assert.equal(svc.methods.length, 4);
 
+        // A bare class in a param/return position lowers to a live `instance` of the
+        // class (its canonical `name`), not a `reference` (an id handle would be a lie
+        // for a value-of-class-T position).
         const greet = svc.methods.find((m) => m.name === "greet")!;
-        assert.deepEqual(greet.params, [{ name: "input", type: { kind: "reference", schema: "in" } }]);
-        assert.deepEqual(greet.returnType, { kind: "reference", schema: "out" });
+        assert.deepEqual(greet.params, [{ name: "input", type: { kind: "instance", name: "in" } }]);
+        assert.deepEqual(greet.returnType, { kind: "instance", name: "out" });
 
         const shout = svc.methods.find((m) => m.name === "shout")!;
         assert.deepEqual(shout.params, [{ name: "text", type: { kind: "string" } }]);
@@ -62,7 +65,7 @@ describe("services — remote call contracts", () => {
         assert.equal(ping.returnType, undefined); // void → no return type
 
         const list = svc.methods.find((m) => m.name === "list")!;
-        assert.deepEqual(list.returnType, { kind: "array", of: { kind: "reference", schema: "out" } });
+        assert.deepEqual(list.returnType, { kind: "array", of: { kind: "instance", name: "out" } });
     });
 
     it("allows async-shaped contracts (no KEYMA082)", () => {

@@ -12,9 +12,8 @@ const NESTED_IR: KeymaIR = {
     irVersion: "1.0.0",
     compilerVersion: "0.1.0",
     sourceRoot: SRC_DIR,
-    schemas: [
+    classes: [
         {
-            id: "schema:user",
             name: "user",
             sourceName: "User",
             visibility: "public",
@@ -25,15 +24,12 @@ const NESTED_IR: KeymaIR = {
                     visibility: "public",
                     readonly: false,
                     required: true,
-                    validators: [],
-                    formatters: [],
                     source: { file: path.join(SRC_DIR, "auth", "User.ts"), line: 5, column: 5 }
                 }
             ],
             source: { file: path.join(SRC_DIR, "auth", "User.ts"), line: 1, column: 1 }
         },
         {
-            id: "schema:profile",
             name: "profile",
             sourceName: "Profile",
             visibility: "public",

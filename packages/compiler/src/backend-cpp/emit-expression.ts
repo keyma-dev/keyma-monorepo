@@ -92,6 +92,9 @@ export function exprToCpp(expr: IRExpression, opts: ExprOpts = TYPED): string {
 
         case "intrinsic":
             return intrinsicToCpp(expr, opts);
+        default:
+            // Additive IR vocabulary (e.g. `await`) whose C++ emission lands in a later slice.
+            throw new Error(`exprToCpp: unsupported IR expression kind "${(expr as { kind: string }).kind}"`);
     }
 }
 

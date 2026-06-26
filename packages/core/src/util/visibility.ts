@@ -1,4 +1,4 @@
-import type { IRSchema, IRField, IRMethod } from "../ir/index.js";
+import type { IRClassDeclaration, IRField, IRMethod } from "../ir/index.js";
 
 /**
  * Filter a list of visibility-bearing items (fields, methods, service methods) down to
@@ -11,11 +11,11 @@ export function filterVisible<T extends { visibility: string }>(items: readonly 
 }
 
 /** A schema's fields filtered by visibility (public-only unless `includePrivate`). */
-export function filterVisibleFields(schema: IRSchema, includePrivate: boolean): IRField[] {
+export function filterVisibleFields(schema: IRClassDeclaration, includePrivate: boolean): IRField[] {
     return filterVisible(schema.fields, includePrivate);
 }
 
 /** A schema's methods filtered by visibility (public-only unless `includePrivate`). */
-export function filterVisibleMethods(schema: IRSchema, includePrivate: boolean): IRMethod[] {
+export function filterVisibleMethods(schema: IRClassDeclaration, includePrivate: boolean): IRMethod[] {
     return filterVisible(schema.methods ?? [], includePrivate);
 }

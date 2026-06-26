@@ -1,6 +1,5 @@
 import type {
-    IRSchema, IRField,
-    IRValidatorDeclaration, IRFormatterDeclaration,
+    IRClassDeclaration, IRField, IRFunctionDeclaration,
 } from "@keyma/core/ir";
 import { collectRefTargets, collectFunctionRefs, filterVisibleFields, filterVisibleMethods } from "@keyma/core/util";
 import { stmtToJs } from "./emit-expression.js";
@@ -25,9 +24,9 @@ export type ModuleEmitDeps = {
     /** Reference/embedded/edge target `name` → emitted class symbol (`sourceName`).
      *  Resolves a target's identity to the TS type / class binding to import. */
     embeddedTypeNames: ReadonlyMap<string, string>;
-    /** Validator/formatter declarations keyed by name (for factory-call arg ordering). */
-    validatorDecls: ReadonlyMap<string, IRValidatorDeclaration>;
-    formatterDecls: ReadonlyMap<string, IRFormatterDeclaration>;
+    /** Every project-local function declaration keyed by name (a domain pack reads a
+     *  validator/formatter factory's params for factory-call arg ordering). */
+    functionDecls: ReadonlyMap<string, IRFunctionDeclaration>;
     /** Known utility-function names (for import collection from the functions module). */
     functionNames: ReadonlySet<string>;
     /** Bundle-relative refs for the shared factory modules. */
@@ -41,7 +40,7 @@ export type ModuleEmitDeps = {
     /** Domain hook to override a schema's `.d.ts` class declaration (the schema domain uses
      *  it for edges). From the primary pack; absent for plain schema sets / core-only builds,
      *  in which case every schema emits the default `export declare class`. */
-    shapeSchemaDts?: (schema: IRSchema, ctx: SchemaDtsContext) => SchemaDtsShape | undefined;
+    shapeSchemaDts?: (schema: IRClassDeclaration, ctx: SchemaDtsContext) => SchemaDtsShape | undefined;
 };
 
 const CLIENT_PHASES = new Set(["change", "blur", "submit"]);
@@ -49,13 +48,13 @@ const CLIENT_PHASES = new Set(["change", "blur", "submit"]);
 // ─── JS module ─────────────────────────────────────────────────────────────────
 
 /** Emit one model module `.js` containing every schema authored in a source file. */
-export function emitModuleJs(moduleRef: string, schemas: readonly IRSchema[], deps: ModuleEmitDeps): string {
+export function emitModuleJs(moduleRef: string, schemas: readonly IRClassDeclaration[], deps: ModuleEmitDeps): string {
     const importLines = buildImports(moduleRef, schemas, deps, false);
     const bodies = schemas.map((s) => emitSchemaClassJs(s, deps));
     return [...importLines, ...(importLines.length > 0 ? [""] : []), bodies.join("\n")].join("\n");
 }
 
-function emitSchemaClassJs(schema: IRSchema, deps: ModuleEmitDeps): string {
+function emitSchemaClassJs(schema: IRClassDeclaration, deps: ModuleEmitDeps): string {
     const fields = filterVisibleFields(schema, deps.includePrivate);
     const lines: string[] = [];
 
@@ -91,8 +90,7 @@ function emitSchemaClassJs(schema: IRSchema, deps: ModuleEmitDeps): string {
         includeIndexes: deps.includeIndexes,
         formPhasesOnly: deps.formPhasesOnly,
         includeDefaults: deps.includeDefaults,
-        validatorDecls: deps.validatorDecls,
-        formatterDecls: deps.formatterDecls,
+        functionDecls: deps.functionDecls,
         refs,
     });
     lines.push(`${schema.sourceName}.schema = Object.freeze(${emitLiteral(schemaData)});`);
@@ -104,7 +102,7 @@ function emitSchemaClassJs(schema: IRSchema, deps: ModuleEmitDeps): string {
 // ─── .d.ts module ──────────────────────────────────────────────────────────────
 
 /** Emit one model module `.d.ts` declaring every schema authored in a source file. */
-export function emitModuleDts(moduleRef: string, schemas: readonly IRSchema[], deps: ModuleEmitDeps): string {
+export function emitModuleDts(moduleRef: string, schemas: readonly IRClassDeclaration[], deps: ModuleEmitDeps): string {
     const lines: string[] = [];
     lines.push(`import type { SchemaMetadata } from "${relModuleSpecifier(moduleRef, TYPES_REF)}";`);
     lines.push(...buildImports(moduleRef, schemas, deps, true));
@@ -115,7 +113,7 @@ export function emitModuleDts(moduleRef: string, schemas: readonly IRSchema[], d
     return lines.join("\n");
 }
 
-function emitSchemaClassDts(schema: IRSchema, deps: ModuleEmitDeps): string {
+function emitSchemaClassDts(schema: IRClassDeclaration, deps: ModuleEmitDeps): string {
     const fields = filterVisibleFields(schema, deps.includePrivate);
     const lines: string[] = [];
 
@@ -174,7 +172,7 @@ function emitSchemaClassDts(schema: IRSchema, deps: ModuleEmitDeps): string {
  * referenced by its getter/method/setter/default bodies. Same-module refs
  * are skipped (the binding is declared in this very file).
  */
-function buildImports(moduleRef: string, schemas: readonly IRSchema[], deps: ModuleEmitDeps, typeOnly: boolean): string[] {
+function buildImports(moduleRef: string, schemas: readonly IRClassDeclaration[], deps: ModuleEmitDeps, typeOnly: boolean): string[] {
     const bySpec = new Map<string, Set<string>>();
     const add = (spec: string, binding: string): void => {
         if (!bySpec.has(spec)) bySpec.set(spec, new Set());
@@ -234,13 +232,26 @@ function schemaRefs(
         .map((name) => ({ name, symbol: embeddedTypeNames.get(name)! }));
 }
 
+// Validator/formatter attachments now ride in the field's `extensions['schema']` slice
+// (a schema-domain concern). The generic module emitter still needs the referenced factory
+// names to wire the model file's imports from validators.js/formatters.js — a transitional
+// read of the well-known slice keeps that import wiring here without depending on `@keyma/schema`.
+type SchemaFieldSlice = {
+    validators?: { name: string }[];
+    formatters?: { phase: string; spec: { name: string } }[];
+};
+function schemaSlice(field: IRField): SchemaFieldSlice | undefined {
+    return field.extensions?.["schema"] as SchemaFieldSlice | undefined;
+}
+
 function collectFactoryNames(fields: IRField[], which: "validators" | "formatters", formPhasesOnly: boolean): Set<string> {
     const out = new Set<string>();
     for (const f of fields) {
+        const slice = schemaSlice(f);
         if (which === "validators") {
-            for (const v of f.validators) out.add(v.name);
+            for (const v of slice?.validators ?? []) out.add(v.name);
         } else {
-            for (const fmt of f.formatters) {
+            for (const fmt of slice?.formatters ?? []) {
                 if (formPhasesOnly && !CLIENT_PHASES.has(fmt.phase)) continue;
                 out.add(fmt.spec.name);
             }
@@ -253,8 +264,6 @@ function collectFactoryNames(fields: IRField[], which: "validators" | "formatter
 
 function fieldJsDoc(field: IRField): string[] {
     const body: string[] = [];
-    if (field.form?.title) body.push(field.form.title);
-    if (field.form?.hint) body.push(field.form.hint);
     if (field.deprecated !== undefined) {
         body.push(typeof field.deprecated === "string" ? `@deprecated ${field.deprecated}` : "@deprecated");
     }

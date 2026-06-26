@@ -4,7 +4,7 @@ import type { IRField, IRType } from "@keyma/core/ir";
 import { irTypeToCpp, memberType, typeTag, valueBinding, irTypeGuard } from "@keyma/compiler/backend-cpp";
 
 const field = (type: IRType, extra: Partial<IRField> = {}): IRField => ({
-    name: "x", type, visibility: "public", readonly: false, required: true, validators: [], formatters: [],
+    name: "x", type, visibility: "public", readonly: false, required: true,
     source: { file: "x.ts", line: 1, column: 1 }, ...extra,
 });
 

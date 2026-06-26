@@ -7,10 +7,10 @@ export { EmitterRegistry } from "./emitter-registry.js";
 export type { JsEmitterPack, BuildSchemaData, SchemaDataOptions, ServiceEmitDeps, BundleEmitContext, SchemaDtsContext, SchemaDtsShape } from "./emitter-registry.js";
 
 // ── Generic emission helpers, exported so domain emitter packs build on the same engine ──
-export { irTypeToTs } from "./ir-type-to-ts.js";
-export { exprToJs } from "./emit-expression.js";
+export { irTypeToTs, jsTypeGuard, irTypeLabel } from "./ir-type-to-ts.js";
+export { exprToJs, stmtToJs } from "./emit-expression.js";
 export { emitTypesJs, emitTypesDts } from "./emit-types.js";
 export { emitLiteral, mkRaw } from "./emit-literal.js";
-export { buildFactoryCall } from "./emit-validators.js";
+export { factoryIdent } from "./emit-validators.js";
 export { buildApplyDefaults } from "./emit-defaults.js";
 export { relModuleSpecifier } from "./module-path.js";

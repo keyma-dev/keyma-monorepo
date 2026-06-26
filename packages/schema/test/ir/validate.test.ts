@@ -16,13 +16,13 @@ const minimalField = {
     visibility: "public" as const,
     readonly: true,
     required: true,
-    validators: [] as unknown[],
-    formatters: [] as unknown[],
     source: minimalSource,
 };
 
+/** Wrap validator/formatter attachments in the field's `extensions['schema']` slice. */
+const fieldExt = (slice: Record<string, unknown>) => ({ ...minimalField, extensions: { schema: slice } });
+
 const minimalSchema = {
-    id: "schema:user",
     name: "user",
     sourceName: "User",
     visibility: "public" as const,
@@ -33,7 +33,7 @@ const minimalSchema = {
 const goldenIR = {
     irVersion: "1.0.0",
     compilerVersion: "0.1.0",
-    schemas: [minimalSchema],
+    classes: [minimalSchema],
     diagnostics: [] as unknown[],
 };
 
@@ -58,16 +58,16 @@ describe("validateIR", () => {
     });
 
     it("rejects missing schemas array", () => {
-        const doc = { ...goldenIR, schemas: "nope" };
+        const doc = { ...goldenIR, classes: "nope" };
         const result = validateIR(doc);
         assert.equal(result.valid, false);
-        assert.ok(result.errors.some(e => e.path === "schemas"));
+        assert.ok(result.errors.some(e => e.path === "classes"));
     });
 
     it("accepts an ephemeral schema and an ephemeral field", () => {
         const doc = {
             ...goldenIR,
-            schemas: [
+            classes: [
                 {
                     ...minimalSchema,
                     extensions: { schema: { ephemeral: true } },
@@ -83,7 +83,7 @@ describe("validateIR", () => {
     it("rejects invalid schema visibility", () => {
         const doc = {
             ...goldenIR,
-            schemas: [{ ...minimalSchema, visibility: "maybe" }],
+            classes: [{ ...minimalSchema, visibility: "maybe" }],
         };
         const result = validateIR(doc);
         assert.equal(result.valid, false);
@@ -93,7 +93,7 @@ describe("validateIR", () => {
     it("rejects invalid field type kind", () => {
         const doc = {
             ...goldenIR,
-            schemas: [{
+            classes: [{
                 ...minimalSchema,
                 fields: [{ ...minimalField, type: { kind: "unknownKind" } }],
             }],
@@ -111,7 +111,7 @@ describe("validateIR", () => {
         for (const kind of scalarKinds) {
             const doc = {
                 ...goldenIR,
-                schemas: [{
+                classes: [{
                     ...minimalSchema,
                     fields: [{ ...minimalField, type: { kind } }],
                 }],
@@ -133,7 +133,7 @@ describe("validateIR", () => {
         for (const type of validTypes) {
             const doc = {
                 ...goldenIR,
-                schemas: [{ ...minimalSchema, fields: [{ ...minimalField, type }] }],
+                classes: [{ ...minimalSchema, fields: [{ ...minimalField, type }] }],
             };
             const result = validateIR(doc);
             assert.equal(result.valid, true, `Expected valid for ${JSON.stringify(type)}, got: ${JSON.stringify(result.errors)}`);
@@ -151,7 +151,7 @@ describe("validateIR", () => {
         for (const type of invalidTypes) {
             const doc = {
                 ...goldenIR,
-                schemas: [{ ...minimalSchema, fields: [{ ...minimalField, type }] }],
+                classes: [{ ...minimalSchema, fields: [{ ...minimalField, type }] }],
             };
             assert.equal(validateIR(doc).valid, false, `Expected invalid for ${JSON.stringify(type)}`);
         }
@@ -160,7 +160,7 @@ describe("validateIR", () => {
     it("accepts enum type with values", () => {
         const doc = {
             ...goldenIR,
-            schemas: [{
+            classes: [{
                 ...minimalSchema,
                 fields: [{ ...minimalField, type: { kind: "enum", values: ["draft", "published"] } }],
             }],
@@ -171,7 +171,7 @@ describe("validateIR", () => {
     it("rejects enum type with empty values", () => {
         const doc = {
             ...goldenIR,
-            schemas: [{
+            classes: [{
                 ...minimalSchema,
                 fields: [{ ...minimalField, type: { kind: "enum", values: [] } }],
             }],
@@ -185,7 +185,7 @@ describe("validateIR", () => {
         for (const type of [array, nullableElems]) {
             const doc = {
                 ...goldenIR,
-                schemas: [{ ...minimalSchema, fields: [{ ...minimalField, type }] }],
+                classes: [{ ...minimalSchema, fields: [{ ...minimalField, type }] }],
             };
             assert.equal(validateIR(doc).valid, true);
         }
@@ -194,7 +194,7 @@ describe("validateIR", () => {
     it("accepts a field-level nullable flag", () => {
         const doc = {
             ...goldenIR,
-            schemas: [{ ...minimalSchema, fields: [{ ...minimalField, nullable: true }] }],
+            classes: [{ ...minimalSchema, fields: [{ ...minimalField, nullable: true }] }],
         };
         assert.equal(validateIR(doc).valid, true);
     });
@@ -203,7 +203,7 @@ describe("validateIR", () => {
         for (const kind of ["reference", "embedded"]) {
             const doc = {
                 ...goldenIR,
-                schemas: [{
+                classes: [{
                     ...minimalSchema,
                     fields: [{ ...minimalField, type: { kind, schema: "Address" } }],
                 }],
@@ -215,7 +215,7 @@ describe("validateIR", () => {
     it("rejects an unknown intrinsic op in a getter behavior", () => {
         const doc = {
             ...goldenIR,
-            schemas: [{
+            classes: [{
                 ...minimalSchema,
                 methods: [{
                     name: "bad", kind: "getter", params: [] as unknown[], returnType: { kind: "string" },
@@ -232,7 +232,7 @@ describe("validateIR", () => {
     it("accepts a known intrinsic op in a getter behavior", () => {
         const doc = {
             ...goldenIR,
-            schemas: [{
+            classes: [{
                 ...minimalSchema,
                 methods: [{
                     name: "good", kind: "getter", params: [] as unknown[], returnType: { kind: "integer" },
@@ -247,13 +247,13 @@ describe("validateIR", () => {
     it('accepts a "text" direction on a field index but rejects a bad one', () => {
         const ok = {
             ...goldenIR,
-            schemas: [{ ...minimalSchema, fields: [{ ...minimalField, extensions: { schema: { indexes: [{ direction: "text" }] } } }] }],
+            classes: [{ ...minimalSchema, fields: [{ ...minimalField, extensions: { schema: { indexes: [{ direction: "text" }] } } }] }],
         };
         assert.equal(validateIR(ok).valid, true);
 
         const bad = {
             ...goldenIR,
-            schemas: [{ ...minimalSchema, fields: [{ ...minimalField, extensions: { schema: { indexes: [{ direction: 5 }] } } }] }],
+            classes: [{ ...minimalSchema, fields: [{ ...minimalField, extensions: { schema: { indexes: [{ direction: 5 }] } } }] }],
         };
         assert.equal(validateIR(bad).valid, false);
     });
@@ -261,7 +261,7 @@ describe("validateIR", () => {
     it('accepts a "text" direction on a composite index', () => {
         const doc = {
             ...goldenIR,
-            schemas: [{
+            classes: [{
                 ...minimalSchema,
                 extensions: { schema: { indexes: [{ fields: [{ name: "x", direction: "text" }] }] } },
             }],
@@ -277,9 +277,9 @@ describe("validateIR", () => {
         ];
         const doc = {
             ...goldenIR,
-            schemas: [{
+            classes: [{
                 ...minimalSchema,
-                fields: [{ ...minimalField, validators: scalarValidators }],
+                fields: [fieldExt({ validators: scalarValidators })],
             }],
         };
         assert.equal(validateIR(doc).valid, true);
@@ -294,9 +294,9 @@ describe("validateIR", () => {
         ];
         const doc = {
             ...goldenIR,
-            schemas: [{
+            classes: [{
                 ...minimalSchema,
-                fields: [{ ...minimalField, validators: numericValidators }],
+                fields: [fieldExt({ validators: numericValidators })],
             }],
         };
         assert.equal(validateIR(doc).valid, true);
@@ -305,10 +305,10 @@ describe("validateIR", () => {
     it("rejects unknown validator kind", () => {
         const doc = {
             ...goldenIR,
-            schemas: [{
+            classes: [{
                 ...minimalSchema,
-                // eslint-disable-next-line @typescript-eslint/no-explicit-any
-                fields: [{ ...minimalField, validators: [{ kind: "madeUp" }] as any }],
+                // A validator attachment references a factory by `name`; one without a name is malformed.
+                fields: [fieldExt({ validators: [{ kind: "madeUp" }] })],
             }],
         };
         assert.equal(validateIR(doc).valid, false);
@@ -323,9 +323,9 @@ describe("validateIR", () => {
         ];
         const doc = {
             ...goldenIR,
-            schemas: [{
+            classes: [{
                 ...minimalSchema,
-                fields: [{ ...minimalField, formatters }],
+                fields: [fieldExt({ formatters })],
             }],
         };
         assert.equal(validateIR(doc).valid, true);
@@ -334,13 +334,9 @@ describe("validateIR", () => {
     it("rejects invalid formatter phase", () => {
         const doc = {
             ...goldenIR,
-            schemas: [{
+            classes: [{
                 ...minimalSchema,
-                fields: [{
-                    ...minimalField,
-                    // eslint-disable-next-line @typescript-eslint/no-explicit-any
-                    formatters: [{ phase: "midnight", spec: { name: "trim" } }] as any,
-                }],
+                fields: [fieldExt({ formatters: [{ phase: "midnight", spec: { name: "trim" } }] })],
             }],
         };
         assert.equal(validateIR(doc).valid, false);
@@ -349,12 +345,9 @@ describe("validateIR", () => {
     it("accepts truncate formatter with maxLength", () => {
         const doc = {
             ...goldenIR,
-            schemas: [{
+            classes: [{
                 ...minimalSchema,
-                fields: [{
-                    ...minimalField,
-                    formatters: [{ phase: "save", spec: { name: "truncate", params: { maxLength: 50 } } }],
-                }],
+                fields: [fieldExt({ formatters: [{ phase: "save", spec: { name: "truncate", params: { maxLength: 50 } } }] })],
             }],
         };
         assert.equal(validateIR(doc).valid, true);
@@ -363,7 +356,7 @@ describe("validateIR", () => {
     it("accepts composite index", () => {
         const doc = {
             ...goldenIR,
-            schemas: [{
+            classes: [{
                 ...minimalSchema,
                 extensions: { schema: { indexes: [{ fields: [{ name: "email", direction: 1 }, { name: "createdAt", direction: -1 }], unique: true }] } },
             }],
@@ -374,7 +367,7 @@ describe("validateIR", () => {
     it("accepts a getter behavior with a portable expression body", () => {
         const doc = {
             ...goldenIR,
-            schemas: [{
+            classes: [{
                 ...minimalSchema,
                 methods: [{
                     name: "fullName", kind: "getter", params: [] as unknown[], returnType: { kind: "string" },
@@ -426,52 +419,49 @@ describe("validateIR", () => {
 });
 
 describe("validateIR — intrinsics & declarations", () => {
-    const validatorDecl = {
+    // A collapsed validator/formatter factory is an ordinary `IRFunctionDeclaration` whose
+    // body returns an intrinsic/arrow — exercises the portable expression/statement checks
+    // reachable from `functionDeclarations`.
+    const validatorFn = {
         name: "v",
-        factoryParams: [] as unknown[],
-        inputType: { kind: "string" as const },
-        body: {
-            params: [{ name: "value", role: "value" as const }],
-            statements: [{
-                kind: "return" as const,
-                value: {
-                    kind: "intrinsic" as const, op: "string.includes",
-                    receiver: { kind: "field" as const, name: "value" },
-                    args: [{ kind: "literal" as const, value: "x" }],
-                },
-            }],
-        },
+        params: [] as unknown[],
+        returnType: { kind: "json" as const },
+        statements: [{
+            kind: "return" as const,
+            value: {
+                kind: "intrinsic" as const, op: "string.includes",
+                receiver: { kind: "field" as const, name: "value" },
+                args: [{ kind: "literal" as const, value: "x" }],
+            },
+        }],
         source: minimalSource,
     };
 
     it("accepts an intrinsic expression node", () => {
-        const doc = { ...goldenIR, validatorDeclarations: [validatorDecl] };
+        const doc = { ...goldenIR, functionDeclarations: [validatorFn] };
         const result = validateIR(doc);
         assert.equal(result.valid, true, JSON.stringify(result.errors));
     });
 
     it("rejects an intrinsic with a missing op", () => {
-        const bad = structuredClone(validatorDecl);
-        (bad.body.statements[0] as any).value.op = "";
-        const doc = { ...goldenIR, validatorDeclarations: [bad] };
+        const bad = structuredClone(validatorFn);
+        (bad.statements[0] as any).value.op = "";
+        const doc = { ...goldenIR, functionDeclarations: [bad] };
         assert.equal(validateIR(doc).valid, false);
     });
 
     // ── Arrow node: exactly one of body|statements, optional returnType ──────────
-    const arrowValidator = (arrow: unknown) => ({
+    const arrowFn = (arrow: unknown) => ({
         name: "v",
-        factoryParams: [] as unknown[],
-        inputType: { kind: "array" as const, of: { kind: "string" as const } },
-        body: {
-            params: [{ name: "value", role: "value" as const }],
-            statements: [{
-                kind: "return" as const,
-                value: { kind: "intrinsic" as const, op: "array.filter", receiver: { kind: "field" as const, name: "value" }, args: [arrow] },
-            }],
-        },
+        params: [] as unknown[],
+        returnType: { kind: "json" as const },
+        statements: [{
+            kind: "return" as const,
+            value: { kind: "intrinsic" as const, op: "array.filter", receiver: { kind: "field" as const, name: "value" }, args: [arrow] },
+        }],
         source: minimalSource,
     });
-    const validateArrow = (arrow: unknown) => validateIR({ ...goldenIR, validatorDeclarations: [arrowValidator(arrow)] });
+    const validateArrow = (arrow: unknown) => validateIR({ ...goldenIR, functionDeclarations: [arrowFn(arrow)] });
 
     it("accepts a concise-body arrow", () => {
         const r = validateArrow({ kind: "arrow", params: ["x"], body: { kind: "binary", op: ">", left: { kind: "identifier", name: "x" }, right: { kind: "literal", value: 0 } } });
@@ -496,15 +486,6 @@ describe("validateIR — intrinsics & declarations", () => {
     it("rejects an arrow with an invalid returnType", () => {
         const r = validateArrow({ kind: "arrow", params: ["x"], body: { kind: "identifier", name: "x" }, returnType: { kind: "bogus" } });
         assert.equal(r.valid, false);
-    });
-
-    it("requires inputType on a validator declaration", () => {
-        const bad = structuredClone(validatorDecl) as any;
-        delete bad.inputType;
-        const doc = { ...goldenIR, validatorDeclarations: [bad] };
-        const result = validateIR(doc);
-        assert.equal(result.valid, false);
-        assert.ok(result.errors.some(e => e.path.includes("inputType")));
     });
 
     it("accepts functionDeclarations", () => {
@@ -546,7 +527,7 @@ describe("validateIR — intrinsics & declarations", () => {
     it("accepts a schema with method and setter behaviors (incl. assign statement)", () => {
         const doc = {
             ...goldenIR,
-            schemas: [{
+            classes: [{
                 ...minimalSchema,
                 fields: [minimalField, { ...minimalField, name: "email", type: { kind: "string" } }],
                 methods: [
@@ -581,7 +562,7 @@ describe("validateIR — intrinsics & declarations", () => {
     it("rejects a method with an invalid kind", () => {
         const doc = {
             ...goldenIR,
-            schemas: [{
+            classes: [{
                 ...minimalSchema,
                 methods: [{
                     name: "m",
@@ -601,7 +582,7 @@ describe("validateIR — intrinsics & declarations", () => {
     it("rejects an assign statement with a malformed target", () => {
         const doc = {
             ...goldenIR,
-            schemas: [{
+            classes: [{
                 ...minimalSchema,
                 methods: [{
                     name: "s",
@@ -673,6 +654,156 @@ describe("validateIR — intrinsics & declarations", () => {
                 visibility: "public",
                 methods: [{ name: "m", params: [], source: minimalSource }],
                 source: minimalSource,
+            }],
+        };
+        assert.equal(validateIR(doc).valid, false);
+    });
+});
+
+// ─── Additive IR vocabulary (issue #001) ────────────────────────────────────────
+// The prefactor adds new node kinds/flags the later semantic slices consume. Validation
+// must ACCEPT the new shapes (and still reject malformed ones); nothing produces them yet.
+describe("validateIR — additive IR vocabulary", () => {
+    // Drive core checkType through a function declaration's param/return positions, and
+    // core checkStatement/checkExpression through its statement body.
+    const fnDecl = (over: Record<string, unknown>) => ({
+        ...goldenIR,
+        functionDeclarations: [{
+            name: "f",
+            params: [{ name: "x", type: { kind: "string" } }],
+            returnType: { kind: "boolean" },
+            statements: [],
+            source: minimalSource,
+            ...over,
+        }],
+    });
+
+    it("accepts the `instance` type in a param/return position", () => {
+        const r = validateIR(fnDecl({
+            params: [{ name: "u", type: { kind: "instance", name: "User" } }],
+            returnType: { kind: "instance", name: "User" },
+        }));
+        assert.equal(r.valid, true, JSON.stringify(r.errors));
+    });
+
+    it("rejects an `instance` type with an empty name", () => {
+        const r = validateIR(fnDecl({ returnType: { kind: "instance", name: "" } }));
+        assert.equal(r.valid, false);
+    });
+
+    it("accepts the `function` (HOF) type with typed params and a return", () => {
+        const r = validateIR(fnDecl({
+            params: [{ name: "cb", type: { kind: "function", params: [{ name: "v", type: { kind: "string" } }], returns: { kind: "boolean" } } }],
+        }));
+        assert.equal(r.valid, true, JSON.stringify(r.errors));
+    });
+
+    it("accepts a `function` type with no `returns` (void)", () => {
+        const r = validateIR(fnDecl({
+            params: [{ name: "cb", type: { kind: "function", params: [] } }],
+        }));
+        assert.equal(r.valid, true, JSON.stringify(r.errors));
+    });
+
+    it("rejects a `function` type with a bad param type", () => {
+        const r = validateIR(fnDecl({
+            params: [{ name: "cb", type: { kind: "function", params: [{ name: "v", type: { kind: "nope" } }] } }],
+        }));
+        assert.equal(r.valid, false);
+    });
+
+    it("accepts typed arrow params (name + type + optional)", () => {
+        const r = validateIR(fnDecl({
+            statements: [{ kind: "expression", expr: { kind: "arrow", params: [{ name: "v", type: { kind: "string" }, optional: true }, "rest"], body: { kind: "identifier", name: "v" } } }],
+        }));
+        assert.equal(r.valid, true, JSON.stringify(r.errors));
+    });
+
+    it("rejects a typed arrow param with a bad type", () => {
+        const r = validateIR(fnDecl({
+            statements: [{ kind: "expression", expr: { kind: "arrow", params: [{ name: "v", type: { kind: "nope" } }], body: { kind: "identifier", name: "v" } } }],
+        }));
+        assert.equal(r.valid, false);
+    });
+
+    it("accepts an `await` expression", () => {
+        const r = validateIR(fnDecl({
+            statements: [{ kind: "expression", expr: { kind: "await", operand: { kind: "identifier", name: "p" } } }],
+        }));
+        assert.equal(r.valid, true, JSON.stringify(r.errors));
+    });
+
+    it("accepts forOf / while / break / continue statements", () => {
+        const r = validateIR(fnDecl({
+            statements: [
+                { kind: "forOf", name: "x", iterable: { kind: "identifier", name: "xs" }, body: [{ kind: "break" }] },
+                { kind: "while", condition: { kind: "literal", value: true }, body: [{ kind: "continue" }] },
+            ],
+        }));
+        assert.equal(r.valid, true, JSON.stringify(r.errors));
+    });
+
+    it("rejects a forOf with an empty loop-variable name", () => {
+        const r = validateIR(fnDecl({
+            statements: [{ kind: "forOf", name: "", iterable: { kind: "identifier", name: "xs" }, body: [] }],
+        }));
+        assert.equal(r.valid, false);
+    });
+
+    it("accepts a switch with a case (fallthrough) and a default arm", () => {
+        const r = validateIR(fnDecl({
+            statements: [{
+                kind: "switch",
+                discriminant: { kind: "identifier", name: "d" },
+                cases: [
+                    { test: { kind: "literal", value: "a" }, body: [{ kind: "break" }] },
+                    { test: { kind: "literal", value: "b" }, body: [] },
+                    { test: null, body: [{ kind: "break" }] },
+                ],
+            }],
+        }));
+        assert.equal(r.valid, true, JSON.stringify(r.errors));
+    });
+
+    it("rejects a switch case missing `test`", () => {
+        const r = validateIR(fnDecl({
+            statements: [{ kind: "switch", discriminant: { kind: "identifier", name: "d" }, cases: [{ body: [] }] }],
+        }));
+        assert.equal(r.valid, false);
+    });
+
+    it("accepts the `async` flag on a function declaration", () => {
+        const r = validateIR(fnDecl({ async: true }));
+        assert.equal(r.valid, true, JSON.stringify(r.errors));
+    });
+
+    it("rejects a non-boolean `async` flag on a function declaration", () => {
+        const r = validateIR(fnDecl({ async: "yes" }));
+        assert.equal(r.valid, false);
+    });
+
+    it("accepts constructor / destructor methods and an async method", () => {
+        const doc = {
+            ...goldenIR,
+            classes: [{
+                ...minimalSchema,
+                methods: [
+                    { name: "constructor", kind: "constructor", params: [{ name: "v", type: { kind: "string" } }], statements: [], visibility: "public", source: minimalSource },
+                    { name: "destructor", kind: "destructor", params: [], statements: [], visibility: "public", source: minimalSource },
+                    { name: "load", kind: "method", async: true, params: [], returnType: { kind: "instance", name: "user" }, statements: [{ kind: "return", value: { kind: "literal", value: null } }], visibility: "public", source: minimalSource },
+                ],
+            }],
+        };
+        const r = validateIR(doc);
+        assert.equal(r.valid, true, JSON.stringify(r.errors));
+    });
+
+    it("rejects an unknown method kind", () => {
+        const doc = {
+            ...goldenIR,
+            classes: [{
+                ...minimalSchema,
+                methods: [{ name: "m", kind: "finalizer", params: [], statements: [], visibility: "public", source: minimalSource }],
             }],
         };
         assert.equal(validateIR(doc).valid, false);

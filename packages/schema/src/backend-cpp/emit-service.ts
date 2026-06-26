@@ -68,8 +68,9 @@ function buildIncludes(services: readonly IRService[], deps: ServiceEmitDeps): s
 
 function addTypeIncludes(type: IRType, deps: ServiceEmitDeps, out: Set<string>): void {
     const t = type.kind === "array" ? type.of : type;
-    if (t.kind === "embedded" || t.kind === "reference") {
-        const cls = deps.classNameByName.get(t.schema);
+    if (t.kind === "embedded" || t.kind === "reference" || t.kind === "instance") {
+        const targetName = t.kind === "instance" ? t.name : t.schema;
+        const cls = deps.classNameByName.get(targetName);
         const ref = cls !== undefined ? deps.schemaModule.get(cls) : undefined;
         if (ref !== undefined) out.add(includePath(ref));
     } else if (t.kind === "enum" && t.name !== undefined) {

@@ -44,12 +44,13 @@ type TypeMapContext = {
     /** Named TS enum declarations, keyed by name (optional — field paths supply it). */
     enums?: ReadonlyMap<string, EnumInfo>;
     /**
-     * When true, a bare `@Schema` class lowers to a `reference` (legacy behaviour),
-     * used for validator/utility `value` parameter types where "the whole record"
-     * is meant. Schema FIELD paths leave this false so bare classes are rejected
-     * (KEYMA071) in favour of explicit `Reference<T>`/`Embedded<T>`.
+     * When true, a bare `@Schema` class is a value-of-class-T position
+     * (function/method/validator param or return) and lowers to an `instance` —
+     * "a live value of class T," distinct from the ownership types. Schema FIELD
+     * paths leave this false so bare classes are rejected (KEYMA071) in favour of
+     * explicit `Reference<T>` (foreign key) / `Embedded<T>` (inline copy).
      */
-    bareClassReference?: boolean;
+    bareClassInstance?: boolean;
     diagnostics: IRDiagnostic[];
     sourceFile: ts.SourceFile;
 };
@@ -296,11 +297,11 @@ function mapTypeReference(node: ts.TypeReferenceNode, ctx: TypeMapContext): MapT
     }
 
     // A bare @Schema class in a FIELD is no longer an implicit reference —
-    // relationship intent must be explicit. In validator/utility `value` positions
-    // (bareClassReference) it still means "the whole record" → a reference.
+    // relationship intent must be explicit. In value positions (param/return,
+    // `bareClassInstance`) it lowers to a live `instance` of the class.
     if (ctx.schemaClassNames.has(name)) {
-        if (ctx.bareClassReference === true) {
-            return { type: { kind: "reference", schema: name } };
+        if (ctx.bareClassInstance === true) {
+            return { type: { kind: "instance", name } };
         }
         const diag = mkError(
             KEYMA071,

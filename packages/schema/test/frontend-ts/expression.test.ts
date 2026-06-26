@@ -5,7 +5,7 @@ import { fileURLToPath, pathToFileURL } from "node:url";
 import { readFileSync } from "node:fs";
 import { compile, compileVirtual } from "./harness.js";
 import * as CODES from "../../src/frontend-ts/diagnostics.js";
-import type { IRExpression, IRSchema, IRStatement } from "@keyma/core/ir";
+import type { IRExpression, IRClassDeclaration, IRStatement } from "@keyma/core/ir";
 
 const __filename = fileURLToPath(import.meta.url);
 const __dirname = path.dirname(__filename);
@@ -35,14 +35,14 @@ function hasError(result: ReturnType<typeof compile>, code: string): boolean {
  * is a single `return <expr>` — and lives in `schema.methods`, not `schema.fields`.
  * Return the lowered expression of a getter behavior by name.
  */
-function getterExpr(schema: IRSchema | undefined, name: string): IRExpression | undefined {
+function getterExpr(schema: IRClassDeclaration | undefined, name: string): IRExpression | undefined {
     const m = (schema?.methods ?? []).find((mm) => mm.kind === "getter" && mm.name === name);
     const stmt = m?.statements[0];
     return stmt !== undefined && stmt.kind === "return" ? (stmt.value ?? undefined) : undefined;
 }
 
 /** Return the full lowered statement list of a getter behavior by name. */
-function getterStatements(schema: IRSchema | undefined, name: string): IRStatement[] | undefined {
+function getterStatements(schema: IRClassDeclaration | undefined, name: string): IRStatement[] | undefined {
     return (schema?.methods ?? []).find((mm) => mm.kind === "getter" && mm.name === name)?.statements;
 }
 
@@ -65,7 +65,7 @@ describe("expression lowering — snapshot", () => {
         assert.deepEqual(errorCodes(result), [], `Unexpected errors: ${JSON.stringify(result.diagnostics)}`);
     });
 
-    const schema = result.ir.schemas.find((s) => s.sourceName === "Product");
+    const schema = result.ir.classes.find((s) => s.sourceName === "Product");
 
     for (const [getterName, expectedExpr] of Object.entries(snapshots)) {
         it(`lowers "${getterName}" to the correct IRExpression`, () => {
@@ -164,7 +164,7 @@ describe("getters — multi-statement portable bodies", () => {
             `,
         });
         assert.deepEqual(errorCodes(result), [], JSON.stringify(result.diagnostics));
-        const foo = result.ir.schemas.find((s) => s.sourceName === "Foo");
+        const foo = result.ir.classes.find((s) => s.sourceName === "Foo");
         assert.deepEqual(getterStatements(foo, "doubled"), [
             { kind: "const", name: "x", init: { kind: "field", name: "n" } },
             {
@@ -194,7 +194,7 @@ describe("getters — multi-statement portable bodies", () => {
             `,
         });
         assert.deepEqual(errorCodes(result), [], JSON.stringify(result.diagnostics));
-        const foo = result.ir.schemas.find((s) => s.sourceName === "Foo");
+        const foo = result.ir.classes.find((s) => s.sourceName === "Foo");
         assert.deepEqual(getterStatements(foo, "sign"), [
             {
                 kind: "if",
@@ -235,7 +235,7 @@ describe("getters — multi-statement portable bodies", () => {
             `,
         });
         assert.deepEqual(errorCodes(result), [], JSON.stringify(result.diagnostics));
-        const foo = result.ir.schemas.find((s) => s.sourceName === "Foo");
+        const foo = result.ir.classes.find((s) => s.sourceName === "Foo");
         assert.deepEqual(getterExpr(foo, "shortTags"), {
             kind: "intrinsic", op: "array.filter",
             receiver: { kind: "field", name: "tags" },
@@ -259,7 +259,7 @@ describe("getters — newly-supported portable expressions", () => {
     function lowered(src: string, getter: string): IRExpression | undefined {
         const result = cv({ "schema.ts": src });
         assert.deepEqual(errorCodes(result), [], `Unexpected errors: ${JSON.stringify(result.diagnostics)}`);
-        const schema = result.ir.schemas.find((s) => s.sourceName === "Foo");
+        const schema = result.ir.classes.find((s) => s.sourceName === "Foo");
         return getterExpr(schema, getter);
     }
 
@@ -362,7 +362,7 @@ describe("intrinsics — Math, coercion, array map/some/every", () => {
     function lowered(src: string, getter: string): IRExpression | undefined {
         const result = cv({ "schema.ts": src });
         assert.deepEqual(errorCodes(result), [], `Unexpected errors: ${JSON.stringify(result.diagnostics)}`);
-        return getterExpr(result.ir.schemas.find((s) => s.sourceName === "Foo"), getter);
+        return getterExpr(result.ir.classes.find((s) => s.sourceName === "Foo"), getter);
     }
 
     it("lowers Math.round(...) to a free-standing math.round intrinsic", () => {
@@ -474,7 +474,7 @@ describe("arrows — block bodies & return-type inference", () => {
     function lowered(src: string, getter: string): IRExpression | undefined {
         const result = cv({ "schema.ts": src });
         assert.deepEqual(errorCodes(result), [], `Unexpected errors: ${JSON.stringify(result.diagnostics)}`);
-        return getterExpr(result.ir.schemas.find((s) => s.sourceName === "Foo"), getter);
+        return getterExpr(result.ir.classes.find((s) => s.sourceName === "Foo"), getter);
     }
 
     it("lowers a genuinely multi-statement block-arrow predicate to `statements`", () => {
@@ -546,7 +546,7 @@ describe("getters lower to behaviors, not schema fields", () => {
             `,
         });
         assert.equal(errorCodes(result).length, 0, JSON.stringify(result.diagnostics));
-        const foo = result.ir.schemas.find((s) => s.sourceName === "Foo");
+        const foo = result.ir.classes.find((s) => s.sourceName === "Foo");
         assert.equal(foo?.fields.find((f) => f.name === "shout"), undefined, "getter must not become a field");
         const m = (foo?.methods ?? []).find((mm) => mm.name === "shout");
         assert.ok(m !== undefined && m.kind === "getter", "getter should become a getter behavior");
@@ -565,7 +565,7 @@ describe("getters lower to behaviors, not schema fields", () => {
             `,
         });
         assert.equal(errorCodes(result).length, 0, JSON.stringify(result.diagnostics));
-        const foo = result.ir.schemas.find((s) => s.sourceName === "Foo");
+        const foo = result.ir.classes.find((s) => s.sourceName === "Foo");
         assert.equal(foo?.fields.find((f) => f.name === "shout"), undefined, "@Computed getter must not be a field");
         const m = (foo?.methods ?? []).find((mm) => mm.name === "shout");
         assert.ok(m !== undefined && m.kind === "getter");
@@ -618,7 +618,7 @@ describe("getter/setter pair — both are behaviors", () => {
         });
         assert.equal(errorCodes(result).length, 0, JSON.stringify(result.diagnostics));
 
-        const foo = result.ir.schemas.find((s) => s.sourceName === "Foo")!;
+        const foo = result.ir.classes.find((s) => s.sourceName === "Foo")!;
         assert.equal(foo.fields.find((f) => f.name === "name"), undefined, "getter must not be a field");
 
         const getter = (foo.methods ?? []).find((m) => m.name === "name" && m.kind === "getter");
@@ -684,7 +684,7 @@ describe("expression lowering — null literal", () => {
                 }
             `,
         });
-        const schema = result.ir.schemas.find((s) => s.sourceName === "Foo");
+        const schema = result.ir.classes.find((s) => s.sourceName === "Foo");
         assert.ok(schema !== undefined);
         assert.deepEqual(getterExpr(schema, "nothing"), { kind: "literal", value: null });
     });

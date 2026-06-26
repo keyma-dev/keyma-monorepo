@@ -1,12 +1,12 @@
 import { path } from "@keyma/core/util";
 import type {
-    KeymaIR, IRSchema, IREnumDeclaration, IRService, IRType,
-    IRValidatorDeclaration, IRFormatterDeclaration, IRFunctionDeclaration,
+    KeymaIR, IRClassDeclaration, IREnumDeclaration, IRService, IRType,
+    IRFunctionDeclaration,
 } from "@keyma/core/ir";
 import type { KeymaBackend, KeymaTargetConfig, ResolvedConfig, EmitFile, EmitResult } from "../driver/index.js";
 import { emitModuleCpp, type ModuleEmitDeps } from "./emit-module.js";
 import { emitIndexCpp } from "./emit-index.js";
-import { emitValidatorsCpp, emitFormattersCpp, emitFunctionsCpp } from "./emit-validators.js";
+import { emitFunctionsCpp } from "./emit-validators.js";
 import { emitSupportHpp } from "./emit-support.js";
 import { moduleOf, namespaceOf, cppSanitizer } from "./module-path.js";
 import { resolveCppTarget, VENDOR_RUNTIME_HEADER, type CppTargetConfig } from "./types.js";
@@ -34,14 +34,12 @@ export function createCppBackend(packs: Iterable<CppEmitterPack>): KeymaBackend 
 type SharedDeps = Pick<
     ModuleEmitDeps,
     "nsRoot" | "schemaModule" | "classNameByName" | "cppTypeByName" | "enumTypeByName" | "enumModuleByName"
-    | "idFieldByName" | "validatorDecls" | "formatterDecls" | "functionNames"
+    | "idFieldByName" | "functionDecls" | "functionNames"
     | "validatorsModuleRef" | "formattersModuleRef" | "functionsModuleRef"
     | "runtimeInclude" | "referenceTargetNames" | "binary"
 >;
 
 type Decls = {
-    validators: readonly IRValidatorDeclaration[];
-    formatters: readonly IRFormatterDeclaration[];
     functions: readonly IRFunctionDeclaration[];
     enums: readonly IREnumDeclaration[];
     services: readonly IRService[];
@@ -64,8 +62,6 @@ export async function emitCpp(
     const packs = registry.list();
 
     const decls: Decls = {
-        validators: ir.validatorDeclarations ?? [],
-        formatters: ir.formatterDeclarations ?? [],
         functions: ir.functionDeclarations ?? [],
         enums: ir.enums ?? [],
         services: ir.services ?? [],
@@ -73,7 +69,7 @@ export async function emitCpp(
 
     // sourceName → bundle-relative module ref under models/, from the SOURCE file.
     const schemaModule = new Map<string, string>(
-        ir.schemas.map((s) => [s.sourceName, path.posix.join("models", moduleOf(s.source.file, ir.sourceRoot))]),
+        ir.classes.map((s) => [s.sourceName, path.posix.join("models", moduleOf(s.source.file, ir.sourceRoot))]),
     );
     // Named enum `name` → its declaring file's module ref (enums follow source-file layout).
     const enumModuleByName = new Map<string, string>(
@@ -81,7 +77,7 @@ export async function emitCpp(
     );
     // Reference/embedded/edge target `name` → fully-qualified emitted C++ struct type.
     const cppTypeByName = new Map<string, string>(
-        ir.schemas.map((s) => {
+        ir.classes.map((s) => {
             const ref = schemaModule.get(s.sourceName)!;
             return [s.name, `${namespaceOf(ref, nsRoot)}::${s.sourceName}`];
         }),
@@ -92,7 +88,7 @@ export async function emitCpp(
     );
     // Schema `name` → its id field's name (for reference id-stubs). Defaults to "id".
     const idFieldByName = new Map<string, string>(
-        ir.schemas.map((s) => [s.name, s.fields.find((f) => f.type.kind === "id")?.name ?? "id"]),
+        ir.classes.map((s) => [s.name, s.fields.find((f) => f.type.kind === "id")?.name ?? "id"]),
     );
     // Schema `name`s that are the target of some reference field (recursing arrays). The
     // value_traits of these schemas carry id-stub helpers (set_id / id_value).
@@ -101,18 +97,17 @@ export async function emitCpp(
         if (t.kind === "reference") referenceTargetNames.add(t.schema);
         else if (t.kind === "array") collectRefTargets(t.of);
     };
-    for (const s of ir.schemas) for (const f of s.fields) collectRefTargets(f.type);
+    for (const s of ir.classes) for (const f of s.fields) collectRefTargets(f.type);
 
     const shared: SharedDeps = {
         nsRoot,
         schemaModule,
-        classNameByName: new Map(ir.schemas.map((s) => [s.name, s.sourceName])),
+        classNameByName: new Map(ir.classes.map((s) => [s.name, s.sourceName])),
         cppTypeByName,
         enumTypeByName,
         enumModuleByName,
         idFieldByName,
-        validatorDecls: new Map(decls.validators.map((d) => [d.name, d])),
-        formatterDecls: new Map(decls.formatters.map((d) => [d.name, d])),
+        functionDecls: new Map(decls.functions.map((d) => [d.name, d])),
         functionNames: new Set(decls.functions.map((d) => d.name)),
         validatorsModuleRef: VALIDATORS_REF,
         formattersModuleRef: FORMATTERS_REF,
@@ -170,12 +165,12 @@ function emitBundle(
         files.push({ path: path.posix.join(bundleDir, VENDOR_RUNTIME_HEADER), content: emitSupportHpp() });
     }
 
-    const visibleSchemas: IRSchema[] = opts.includePrivate
-        ? ir.schemas
-        : ir.schemas.filter((s) => s.visibility === "public");
+    const visibleSchemas: IRClassDeclaration[] = opts.includePrivate
+        ? ir.classes
+        : ir.classes.filter((s) => s.visibility === "public");
 
     // Group schemas AND enums by module (a file may declare either or both).
-    const schemaGroups = new Map<string, IRSchema[]>();
+    const schemaGroups = new Map<string, IRClassDeclaration[]>();
     for (const s of visibleSchemas) {
         const ref = shared.schemaModule.get(s.sourceName)!;
         (schemaGroups.get(ref) ?? schemaGroups.set(ref, []).get(ref)!).push(s);
@@ -205,15 +200,17 @@ function emitBundle(
         }
     }
 
-    const hasFunctions = decls.functions.length > 0;
-    if (hasFunctions) {
-        files.push({ path: path.posix.join(bundleDir, `${FUNCTIONS_REF}.hpp`), content: emitFunctionsCpp(decls.functions, shared.nsRoot, shared.runtimeInclude) });
+    // Shared `functions.hpp` at the bundle root — the project-local utility functions. Names a
+    // domain pack claims (e.g. the schema pack's validator/formatter factories, which it emits
+    // as `ValidatorFn`/`FormatterFn` wrappers into validators.hpp/formatters.hpp via
+    // `emitBundleFiles`) are excluded here so they are emitted once, by their owner.
+    const claimed = new Set<string>();
+    for (const p of packs) {
+        if (p.claimFunctions !== undefined) for (const n of p.claimFunctions(ir)) claimed.add(n);
     }
-    if (decls.validators.length > 0) {
-        files.push({ path: path.posix.join(bundleDir, `${VALIDATORS_REF}.hpp`), content: emitValidatorsCpp(decls.validators, hasFunctions, shared.nsRoot, shared.runtimeInclude) });
-    }
-    if (decls.formatters.length > 0) {
-        files.push({ path: path.posix.join(bundleDir, `${FORMATTERS_REF}.hpp`), content: emitFormattersCpp(decls.formatters, hasFunctions, shared.nsRoot, shared.runtimeInclude) });
+    const utilityFunctions = decls.functions.filter((d) => !claimed.has(d.name));
+    if (utilityFunctions.length > 0) {
+        files.push({ path: path.posix.join(bundleDir, `${FUNCTIONS_REF}.hpp`), content: emitFunctionsCpp(utilityFunctions, shared.nsRoot, shared.runtimeInclude) });
     }
 
     const visibleServices = opts.includePrivate
@@ -265,7 +262,10 @@ function emitBundle(
     // single-domain bundle is byte-identical.
     for (const p of packs) {
         if (p.emitBundleFiles !== undefined) {
-            files.push(...p.emitBundleFiles(ir, { bundle, bundleDir, includePrivate: opts.includePrivate }));
+            files.push(...p.emitBundleFiles(ir, {
+                bundle, bundleDir, includePrivate: opts.includePrivate,
+                nsRoot: shared.nsRoot, runtimeInclude: shared.runtimeInclude,
+            }));
         }
     }
 

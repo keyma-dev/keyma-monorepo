@@ -1,7 +1,7 @@
 import { describe, it } from "node:test";
 import assert from "node:assert/strict";
 import { assignTags, stripTagHints, type RawTaggedField } from "../../src/frontend-ts/assign-tags.js";
-import type { IRSchema } from "@keyma/core/ir";
+import type { IRClassDeclaration } from "@keyma/core/ir";
 
 const loc = { file: "t.ts", line: 1, column: 1 };
 
@@ -12,18 +12,16 @@ function field(name: string, extra: Partial<RawTaggedField> = {}): RawTaggedFiel
         visibility: "public",
         readonly: false,
         required: true,
-        validators: [],
-        formatters: [],
         source: loc,
         ...extra,
     };
 }
 
-function schema(name: string, fields: RawTaggedField[]): IRSchema {
-    return { id: `schema:${name}`, name, sourceName: name, visibility: "public", fields, source: loc };
+function schema(name: string, fields: RawTaggedField[]): IRClassDeclaration {
+    return { name, sourceName: name, visibility: "public", fields, source: loc };
 }
 
-function tagsOf(s: IRSchema): Record<string, number | undefined> {
+function tagsOf(s: IRClassDeclaration): Record<string, number | undefined> {
     const o: Record<string, number | undefined> = {};
     for (const f of s.fields) o[f.name] = f.tag;
     return o;

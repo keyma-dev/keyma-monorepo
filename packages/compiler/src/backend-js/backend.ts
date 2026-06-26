@@ -1,13 +1,9 @@
 import { path } from "@keyma/core/util";
-import type { KeymaIR, IRSchema, IRValidatorDeclaration, IRFormatterDeclaration, IRFunctionDeclaration } from "@keyma/core/ir";
+import type { KeymaIR, IRClassDeclaration, IRFunctionDeclaration } from "@keyma/core/ir";
 import type { KeymaBackend, KeymaTargetConfig, ResolvedConfig, EmitFile, EmitResult } from "../driver/index.js";
 import { emitModuleJs, emitModuleDts, type ModuleEmitDeps } from "./emit-module.js";
 import { emitIndexJs, emitIndexDts } from "./emit-index.js";
-import {
-    emitValidatorsJs, emitValidatorsDts,
-    emitFormattersJs, emitFormattersDts,
-    emitFunctionFiles,
-} from "./emit-validators.js";
+import { emitFunctionFiles } from "./emit-validators.js";
 import { emitTypesJs, emitTypesDts } from "./emit-types.js";
 import { moduleOf, identitySanitizer } from "./module-path.js";
 import { resolveJsTarget, type JsTargetConfig } from "./types.js";
@@ -35,13 +31,11 @@ export function createJsBackend(packs: Iterable<JsEmitterPack>): KeymaBackend {
 
 type SharedDeps = Pick<
     ModuleEmitDeps,
-    "schemaModule" | "embeddedTypeNames" | "validatorDecls" | "formatterDecls" | "functionNames"
+    "schemaModule" | "embeddedTypeNames" | "functionDecls" | "functionNames"
     | "validatorsModuleRef" | "formattersModuleRef" | "functionsModuleRef"
 >;
 
 type Decls = {
-    validators: readonly IRValidatorDeclaration[];
-    formatters: readonly IRFormatterDeclaration[];
     functions: readonly IRFunctionDeclaration[];
 };
 
@@ -61,15 +55,13 @@ export async function emitJs(
     const packs = registry.list();
 
     const decls: Decls = {
-        validators: ir.validatorDeclarations ?? [],
-        formatters: ir.formatterDeclarations ?? [],
         functions: ir.functionDeclarations ?? [],
     };
 
     // sourceName → bundle-relative module ref under models/ (e.g. "models/user/user"),
     // derived from the SOURCE file — schemas authored in one file share one module.
     const schemaModule = new Map<string, string>(
-        ir.schemas.map((s) => [
+        ir.classes.map((s) => [
             s.sourceName,
             path.posix.join("models", moduleOf(s.source.file, ir.sourceRoot, identitySanitizer)),
         ])
@@ -79,9 +71,8 @@ export async function emitJs(
         schemaModule,
         // A reference/embedded/edge target is the schema's `name`; map it to the
         // emitted class symbol (`sourceName`) for `.d.ts` types and `refs` values.
-        embeddedTypeNames: new Map(ir.schemas.map((s) => [s.name, s.sourceName])),
-        validatorDecls: new Map(decls.validators.map((d) => [d.name, d])),
-        formatterDecls: new Map(decls.formatters.map((d) => [d.name, d])),
+        embeddedTypeNames: new Map(ir.classes.map((s) => [s.name, s.sourceName])),
+        functionDecls: new Map(decls.functions.map((d) => [d.name, d])),
         functionNames: new Set(decls.functions.map((d) => d.name)),
         validatorsModuleRef: VALIDATORS_REF,
         formattersModuleRef: FORMATTERS_REF,
@@ -134,12 +125,12 @@ function emitBundle(
     files.push({ path: path.posix.join(bundleDir, "types.js"), content: emitTypesJs() });
     files.push({ path: path.posix.join(bundleDir, "types.d.ts"), content: emitTypesDts() });
 
-    const visibleSchemas: IRSchema[] = opts.includePrivate
-        ? ir.schemas
-        : ir.schemas.filter((s) => s.visibility === "public");
+    const visibleSchemas: IRClassDeclaration[] = opts.includePrivate
+        ? ir.classes
+        : ir.classes.filter((s) => s.visibility === "public");
 
     // One model file per source module (multiple schemas grouped together).
-    const groups = new Map<string, IRSchema[]>();
+    const groups = new Map<string, IRClassDeclaration[]>();
     for (const s of visibleSchemas) {
         const ref = shared.schemaModule.get(s.sourceName)!;
         const list = groups.get(ref) ?? [];
@@ -162,20 +153,19 @@ function emitBundle(
         }
     }
 
-    // Shared direct-ref factory modules at the bundle root.
-    const functionNames = decls.functions.map((d) => d.name);
-    if (decls.functions.length > 0) {
-        const fn = emitFunctionFiles(decls.functions, shared.embeddedTypeNames);
+    // Shared `functions.js` at the bundle root — the project-local utility functions. Names a
+    // domain pack claims (e.g. the schema pack's validator/formatter factories, which it emits
+    // as `ValidatorFn`/`FormatterFn` wrappers into validators.js/formatters.js via
+    // `emitBundleFiles`) are excluded here so they are emitted once, by their owner.
+    const claimed = new Set<string>();
+    for (const p of packs) {
+        if (p.claimFunctions !== undefined) for (const n of p.claimFunctions(ir)) claimed.add(n);
+    }
+    const utilityFunctions = decls.functions.filter((d) => !claimed.has(d.name));
+    if (utilityFunctions.length > 0) {
+        const fn = emitFunctionFiles(utilityFunctions, shared.embeddedTypeNames);
         files.push({ path: path.posix.join(bundleDir, "functions.js"), content: fn.functionsJs });
         files.push({ path: path.posix.join(bundleDir, "functions.d.ts"), content: fn.functionsDts });
-    }
-    if (decls.validators.length > 0) {
-        files.push({ path: path.posix.join(bundleDir, "validators.js"), content: emitValidatorsJs(decls.validators, functionNames) });
-        files.push({ path: path.posix.join(bundleDir, "validators.d.ts"), content: emitValidatorsDts(decls.validators) });
-    }
-    if (decls.formatters.length > 0) {
-        files.push({ path: path.posix.join(bundleDir, "formatters.js"), content: emitFormattersJs(decls.formatters, functionNames) });
-        files.push({ path: path.posix.join(bundleDir, "formatters.d.ts"), content: emitFormattersDts(decls.formatters) });
     }
 
     // Remotely-callable services (gated by visibility like schemas).

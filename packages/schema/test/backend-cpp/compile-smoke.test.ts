@@ -194,12 +194,12 @@ describe("compile-smoke — generated C++ compiles under -std=c++23", () => {
         const loc = { file: "/proj/src/metrics.ts", line: 1, column: 1 };
         const f = (name: string, type: IRType): IRField => ({
             name, type, visibility: "public", readonly: false, required: true,
-            validators: [], formatters: [], source: loc,
+            source: loc,
         });
         const ir: KeymaIR = {
             irVersion: "7.1.0", compilerVersion: "0.1.0", sourceRoot: "/proj/src",
-            schemas: [{
-                id: "Metrics", name: "metrics", sourceName: "Metrics", visibility: "public",
+            classes: [{
+                name: "metrics", sourceName: "Metrics", visibility: "public",
                 fields: [
                     f("id", { kind: "id" }),
                     f("i8", { kind: "integer", bits: 8 }),
@@ -212,7 +212,7 @@ describe("compile-smoke — generated C++ compiles under -std=c++23", () => {
                 ],
                 source: loc,
             }],
-            validatorDeclarations: [], formatterDeclarations: [], functionDeclarations: [],
+            functionDeclarations: [],
             enums: [], diagnostics: [],
         };
         const consumer = `#include "index.hpp"

@@ -151,8 +151,6 @@ function compileProgram(program: ts.Program, config: FrontendConfig): CompileRes
 
     const schemas = contributions.flatMap((c) => c.schemas);
     const enums = contributions.flatMap((c) => c.enums);
-    const validatorDeclarations = contributions.flatMap((c) => c.validatorDeclarations);
-    const formatterDeclarations = contributions.flatMap((c) => c.formatterDeclarations);
     const functionDeclarations = contributions.flatMap((c) => c.functionDeclarations);
     const services = contributions.flatMap((c) => c.services);
     const tagManifest: TagManifest | undefined = contributions.find((c) => c.tagManifest !== undefined)?.tagManifest;
@@ -169,13 +167,11 @@ function compileProgram(program: ts.Program, config: FrontendConfig): CompileRes
         irVersion: config.irVersion ?? (config.binaryTags === true ? "9.1.0" : "9.0.0"),
         compilerVersion: config.compilerVersion ?? "0.1.0",
         ...(config.baseDir !== undefined ? { sourceRoot: config.baseDir } : {}),
-        schemas,
+        classes: schemas,
         diagnostics,
     };
 
     if (enums.length > 0) ir.enums = enums;
-    if (validatorDeclarations.length > 0) ir.validatorDeclarations = validatorDeclarations;
-    if (formatterDeclarations.length > 0) ir.formatterDeclarations = formatterDeclarations;
     if (functionDeclarations.length > 0) ir.functionDeclarations = functionDeclarations;
     if (services.length > 0) ir.services = services;
     if (Object.keys(extensions).length > 0) ir.extensions = extensions;

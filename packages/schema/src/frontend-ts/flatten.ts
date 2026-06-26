@@ -1,4 +1,4 @@
-import type { IRSchema, IRField, IRType, IRMethod, IRDiagnostic } from "@keyma/core/ir";
+import type { IRClassDeclaration, IRField, IRType, IRMethod, IRDiagnostic } from "@keyma/core/ir";
 import {
     schemaExt, schemaIndexes, setSchemaExtSlice,
     type IRIndex, type SchemaExtData,
@@ -7,7 +7,7 @@ import { mkError, KEYMA032, KEYMA033, KEYMA034 } from "./diagnostics.js";
 
 type FlattenContext = {
     /** Map from sourceName → extracted (pre-flatten) schema. */
-    schemas: ReadonlyMap<string, IRSchema>;
+    schemas: ReadonlyMap<string, IRClassDeclaration>;
     diagnostics: IRDiagnostic[];
 };
 
@@ -16,8 +16,8 @@ type FlattenContext = {
  * Returns a new list of schemas where each schema's field list is the complete
  * flattened set (parent fields first, child fields overriding).
  */
-export function flattenAll(schemas: IRSchema[], ctx: FlattenContext): IRSchema[] {
-    const result: IRSchema[] = [];
+export function flattenAll(schemas: IRClassDeclaration[], ctx: FlattenContext): IRClassDeclaration[] {
+    const result: IRClassDeclaration[] = [];
     for (const schema of schemas) {
         result.push(flattenSchema(schema, ctx, new Set()));
     }
@@ -25,10 +25,10 @@ export function flattenAll(schemas: IRSchema[], ctx: FlattenContext): IRSchema[]
 }
 
 function flattenSchema(
-    schema: IRSchema,
+    schema: IRClassDeclaration,
     ctx: FlattenContext,
     visiting: Set<string>
-): IRSchema {
+): IRClassDeclaration {
     if (!schema.extends) return schema; // no inheritance, already flat
 
     const parentName = schema.extends;
@@ -73,7 +73,7 @@ function flattenSchema(
     // re-apply inheritance (which would double-assign inherited fields), and keep
     // the parent name only as provenance.
     const { extends: _dropped, ...rest } = schema;
-    const out: IRSchema = {
+    const out: IRClassDeclaration = {
         ...rest,
         extendsSource: parentName,
         fields: mergedFields,
@@ -107,7 +107,7 @@ function mergeMethods(parentMethods: IRMethod[], childMethods: IRMethod[]): IRMe
 function mergeFields(
     parentFields: IRField[],
     childFields: IRField[],
-    childSchema: IRSchema,
+    childSchema: IRClassDeclaration,
     ctx: FlattenContext
 ): IRField[] {
     const result = new Map<string, IRField>();

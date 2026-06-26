@@ -1,4 +1,4 @@
-import type { KeymaIR, IRSchema, IRValidatorDeclaration, IRFormatterDeclaration } from "@keyma/core/ir";
+import type { KeymaIR, IRClassDeclaration, IRFunctionDeclaration } from "@keyma/core/ir";
 import type { EmitFile } from "../driver/index.js";
 
 /**
@@ -10,9 +10,9 @@ export type SchemaDataOptions = {
     includePrivate: boolean;
     includeIndexes: boolean;
     formPhasesOnly: boolean;
-    /** Validator/formatter declarations keyed by name — for ordering factory-call args. */
-    validatorDecls: ReadonlyMap<string, IRValidatorDeclaration>;
-    formatterDecls: ReadonlyMap<string, IRFormatterDeclaration>;
+    /** Every project-local function declaration keyed by name — a domain pack reads a
+     *  validator/formatter factory's params from here to order its direct-ref call args. */
+    functionDecls: ReadonlyMap<string, IRFunctionDeclaration>;
     /** Embedded/reference targets this schema needs as a live `refs` dict:
      *  the target's `name` (lookup key) paired with its emitted Python class. */
     refs: readonly { name: string; className: string }[];
@@ -21,7 +21,7 @@ export type SchemaDataOptions = {
 };
 
 /** Builds the per-schema metadata dict attached as `<Class>.schema`. */
-export type BuildSchemaData = (schema: IRSchema, opts: SchemaDataOptions) => Record<string, unknown>;
+export type BuildSchemaData = (schema: IRClassDeclaration, opts: SchemaDataOptions) => Record<string, unknown>;
 
 /**
  * A domain's Python emission contributions. The generic backend keeps the bundle shell (file
@@ -38,6 +38,13 @@ export type PythonEmitterPack = {
     /** Build the per-schema `.schema` metadata dict. Provided by the schema domain (the
      *  primary pack); a domain that only contributes bundle files (e.g. UI) omits it. */
     buildSchemaData?: BuildSchemaData;
+    /**
+     * Names of `functionDeclarations` this domain emits itself (with its own wrapper) via
+     * `emitBundleFiles`, so the generic backend excludes them from `functions.py`. The schema
+     * domain claims its validator/formatter factories (which it re-emits as runtime validator/
+     * formatter wrappers in `validators.py`/`formatters.py`). Omit when the domain claims none.
+     */
+    claimFunctions?: (ir: KeymaIR) => ReadonlySet<string>;
     /**
      * Contribute extra files to each bundle, derived from the domain's own IR slice
      * (e.g. `ir.extensions['ui']`). Runs for **every** registered pack (not just the primary),

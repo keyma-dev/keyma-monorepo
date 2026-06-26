@@ -16,9 +16,8 @@ const IR: KeymaIR = {
     irVersion: "3.1.0",
     compilerVersion: "0.1.0",
     sourceRoot: "/p/src",
-    schemas: [
+    classes: [
         {
-            id: "schema:user",
             name: "user",
             sourceName: "User",
             visibility: "public",
@@ -29,8 +28,6 @@ const IR: KeymaIR = {
                     visibility: "public",
                     readonly: true,
                     required: true,
-                    validators: [],
-                    formatters: [],
                     source: loc,
                 },
             ],

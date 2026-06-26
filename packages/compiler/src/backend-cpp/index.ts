@@ -16,8 +16,11 @@ export type {
 } from "./emitter-registry.js";
 
 // ── Generic emission helpers, exported so domain emitter packs build on the same engine ──
-export { typeTag, irTypeToCpp, memberType, valueBinding, irTypeGuard } from "./ir-type-to-cpp.js";
-export { buildFactoryCall } from "./emit-validators.js";
+export { typeTag, irTypeToCpp, memberType, valueBinding, irTypeGuard, irTypeLabel } from "./ir-type-to-cpp.js";
+// Statement/return lowering + identifier/context helpers — the schema pack reuses these to emit
+// the validator/formatter `ValidatorFn`/`FormatterFn` wrappers it now owns (validators.hpp/formatters.hpp).
+export { factoryIdent, stmtToCpp, plainReturn, rewriteContextAccess } from "./emit-validators.js";
+export type { ReturnLowerer } from "./emit-validators.js";
 export { includePath, cppSanitizer } from "./module-path.js";
 export { exprToCpp } from "./emit-expression.js";
 export { emitSupportHpp } from "./emit-support.js";

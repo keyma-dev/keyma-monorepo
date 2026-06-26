@@ -48,8 +48,6 @@ export const uiFrontendDomain: FrontendDomain = {
         const contribution: FrontendContribution = {
             schemas: [],
             enums: [],
-            validatorDeclarations: [],
-            formatterDeclarations: [],
             functionDeclarations: [],
             services: [],
         };

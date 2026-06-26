@@ -12,7 +12,7 @@ const IR_WITH_UI: KeymaIR = {
     irVersion: "1.0.0",
     compilerVersion: "0.1.0",
     sourceRoot: "/p/src",
-    schemas: [],
+    classes: [],
     diagnostics: [],
     extensions: {
         ui: {
@@ -42,7 +42,7 @@ describe("uiJsEmitterPack.emitBundleFiles", () => {
             irVersion: "1.0.0",
             compilerVersion: "0.1.0",
             sourceRoot: "/p/src",
-            schemas: [],
+            classes: [],
             diagnostics: [],
         };
         const { files } = await backend.emit(irNoUi, target, config);

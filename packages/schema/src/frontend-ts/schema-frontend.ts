@@ -1,13 +1,13 @@
 import ts from "typescript";
 import { unwrapArray } from "@keyma/core/util";
-import type { IRSchema, IRService, IRType, IRDiagnostic, IREnumDeclaration } from "@keyma/core/ir";
+import type { IRClassDeclaration, IRService, IRType, IRDiagnostic, IREnumDeclaration } from "@keyma/core/ir";
 import { schemaEdge, schemaEphemeral, schemaIndexes, fieldIndexes } from "../ir/extensions.js";
 import { assignTags, stripTagHints } from "./assign-tags.js";
 import { discoverSchemas } from "./discover.js";
 import { discoverEnums, type EnumInfo } from "@keyma/compiler/frontend-ts";
-import { createValidatorFormatterCollector } from "@keyma/compiler/frontend-ts";
-import { lowerValidatorDeclaration, lowerFormatterDeclaration, type LowerDeps } from "@keyma/compiler/frontend-ts";
 import { createFunctionCollector } from "@keyma/compiler/frontend-ts";
+import { createValidatorFormatterCollector } from "./discover-validators.js";
+import { lowerValidatorFactory, lowerFormatterFactory, type LowerDeps } from "./lower-validator.js";
 import { extractSchema } from "./extract-schema.js";
 import { discoverServices } from "./discover-services.js";
 import { extractService } from "./extract-service.js";
@@ -122,18 +122,21 @@ export const schemaFrontendDomain: FrontendDomain = {
             classifyFunction: functionCollector.classify,
         };
 
-        // Pass 4: lower the validator factories referenced by @Validate (tree-shaken).
-        const validatorDeclarations = vfCollector.drainValidators().map((c) =>
-            lowerValidatorDeclaration(c, diagnostics, lowerDeps)
+        // Pass 4: lower the validator factories referenced by @Validate (tree-shaken). Each
+        // collapses to an ordinary IRFunctionDeclaration (its body returns a typed arrow).
+        const validatorFns = vfCollector.drainValidators().map((c) =>
+            lowerValidatorFactory(c, diagnostics, lowerDeps)
         );
 
         // Pass 5: lower the formatter factories referenced by @Format (tree-shaken).
-        const formatterDeclarations = vfCollector.drainFormatters().map((c) =>
-            lowerFormatterDeclaration(c, diagnostics, lowerDeps)
+        const formatterFns = vfCollector.drainFormatters().map((c) =>
+            lowerFormatterFactory(c, diagnostics, lowerDeps)
         );
 
         // Pass 6: lower the utility functions referenced (transitively) from the bodies above.
-        const functionDeclarations = functionCollector.drain();
+        // Validator/formatter factories and utility helpers all live in one `functionDeclarations`
+        // list; the schema backend packs partition by which are referenced as validators/formatters.
+        const functionDeclarations = [...validatorFns, ...formatterFns, ...functionCollector.drain()];
 
         // Pass 7: extract @Service contracts (signatures only — no bodies). Runs after
         // schemas so param/return types can resolve schema class names.
@@ -175,8 +178,6 @@ export const schemaFrontendDomain: FrontendDomain = {
         return {
             schemas,
             enums: usedEnums,
-            validatorDeclarations,
-            formatterDeclarations,
             functionDeclarations,
             services,
             ...(tagManifest !== undefined ? { tagManifest } : {}),
@@ -192,7 +193,7 @@ export const schemaFrontendDomain: FrontendDomain = {
  * downstream — addresses schemas by a single canonical identity.
  */
 function normalizeSchemaNames(
-    schemas: IRSchema[],
+    schemas: IRClassDeclaration[],
     services: IRService[],
     prefix: string,
 ): void {
@@ -205,6 +206,10 @@ function normalizeSchemaNames(
             rewrite(type.of);
         } else if (type.kind === "reference" || type.kind === "embedded") {
             type.schema = finalName.get(type.schema) ?? type.schema;
+        } else if (type.kind === "instance") {
+            // `instance` appears in service/behaviour param/return positions; its
+            // target carries the same canonical identity as reference/embedded.
+            type.name = finalName.get(type.name) ?? type.name;
         }
     };
 
@@ -216,7 +221,6 @@ function normalizeSchemaNames(
             edge.to = finalName.get(edge.to) ?? edge.to;
         }
         s.name = prefix + s.name;
-        s.id = `schema:${s.name}`;
         // The traversal label is this edge schema's own (now prefixed) name.
         if (edge !== undefined) edge.label = s.name;
     }
@@ -233,7 +237,7 @@ function normalizeSchemaNames(
 
 /** A public service method must not expose a private schema via a param/return type. */
 function checkServiceVisibilityLeaks(
-    schemas: IRSchema[],
+    schemas: IRClassDeclaration[],
     services: IRService[],
     diagnostics: IRDiagnostic[],
 ): void {
@@ -244,6 +248,9 @@ function checkServiceVisibilityLeaks(
         const inner = t.kind === "array" ? t.of : t;
         if ((inner.kind === "reference" || inner.kind === "embedded") && privateSchemas.has(inner.schema)) {
             return inner.schema;
+        }
+        if (inner.kind === "instance" && privateSchemas.has(inner.name)) {
+            return inner.name;
         }
         return undefined;
     };
@@ -272,7 +279,7 @@ function checkServiceVisibilityLeaks(
 
 /** Service names must be unique and must not collide with a schema name. */
 function checkServiceNameCollisions(
-    schemas: IRSchema[],
+    schemas: IRClassDeclaration[],
     services: IRService[],
     diagnostics: IRDiagnostic[],
 ): void {
@@ -302,7 +309,7 @@ function checkServiceNameCollisions(
     }
 }
 
-function checkDuplicateNames(schemas: IRSchema[], diagnostics: IRDiagnostic[]): void {
+function checkDuplicateNames(schemas: IRClassDeclaration[], diagnostics: IRDiagnostic[]): void {
     const seen = new Map<string, string>(); // name → sourceName
     for (const schema of schemas) {
         const existing = seen.get(schema.name);
@@ -316,7 +323,7 @@ function checkDuplicateNames(schemas: IRSchema[], diagnostics: IRDiagnostic[]): 
     }
 }
 
-function checkVisibilityLeaks(schemas: IRSchema[], diagnostics: IRDiagnostic[]): void {
+function checkVisibilityLeaks(schemas: IRClassDeclaration[], diagnostics: IRDiagnostic[]): void {
     const privateSchemas = new Set(schemas.filter((s) => s.visibility === "private").map((s) => s.sourceName));
 
     for (const schema of schemas) {
@@ -346,7 +353,7 @@ function checkVisibilityLeaks(schemas: IRSchema[], diagnostics: IRDiagnostic[]):
 // public surface whatever its kind — stored, reference, or embedded. Getters are
 // behaviors (re-emitted accessors), not stored/projected data, so they do not
 // count. Fieldless schemas are exempt (nothing to leak and nothing to expose).
-function checkPublicSchemaSurface(schemas: IRSchema[], diagnostics: IRDiagnostic[]): void {
+function checkPublicSchemaSurface(schemas: IRClassDeclaration[], diagnostics: IRDiagnostic[]): void {
     for (const schema of schemas) {
         if (schema.visibility !== "public") continue;
         if (schema.fields.length === 0) continue;
@@ -361,7 +368,7 @@ function checkPublicSchemaSurface(schemas: IRSchema[], diagnostics: IRDiagnostic
     }
 }
 
-function checkEphemeralUsage(schemas: IRSchema[], diagnostics: IRDiagnostic[]): void {
+function checkEphemeralUsage(schemas: IRClassDeclaration[], diagnostics: IRDiagnostic[]): void {
     const ephemeralSchemas = new Set(schemas.filter((s) => schemaEphemeral(s)).map((s) => s.sourceName));
 
     for (const schema of schemas) {
@@ -398,7 +405,7 @@ function checkEphemeralUsage(schemas: IRSchema[], diagnostics: IRDiagnostic[]): 
     }
 }
 
-function checkEdgeSchemas(schemas: IRSchema[], diagnostics: IRDiagnostic[]): void {
+function checkEdgeSchemas(schemas: IRClassDeclaration[], diagnostics: IRDiagnostic[]): void {
     const bySourceName = new Map(schemas.map((s) => [s.sourceName, s]));
     const edgeSourceNames = new Set(schemas.filter((s) => schemaEdge(s) !== undefined).map((s) => s.sourceName));
 
@@ -442,7 +449,7 @@ function checkEdgeSchemas(schemas: IRSchema[], diagnostics: IRDiagnostic[]): voi
     }
 }
 
-function checkReferenceTargetsHaveId(schemas: IRSchema[], diagnostics: IRDiagnostic[]): void {
+function checkReferenceTargetsHaveId(schemas: IRClassDeclaration[], diagnostics: IRDiagnostic[]): void {
     const bySourceName = new Map(schemas.map((s) => [s.sourceName, s]));
 
     for (const schema of schemas) {
@@ -470,7 +477,7 @@ function checkReferenceTargetsHaveId(schemas: IRSchema[], diagnostics: IRDiagnos
 
 /** Collect the IREnumDeclarations for every named enum referenced by a field type. */
 function collectUsedEnums(
-    schemas: IRSchema[],
+    schemas: IRClassDeclaration[],
     enums: ReadonlyMap<string, EnumInfo>,
 ): IREnumDeclaration[] {
     const used = new Set<string>();
@@ -497,7 +504,7 @@ function collectUsedEnums(
  * so embedded targets are still authored `sourceName`s. Uses a 3-colour DFS across
  * schemas.
  */
-function analyzeEmbeddedCycles(schemas: IRSchema[], diagnostics: IRDiagnostic[]): void {
+function analyzeEmbeddedCycles(schemas: IRClassDeclaration[], diagnostics: IRDiagnostic[]): void {
     const known = new Set(schemas.map((s) => s.sourceName));
     const sourceOf = new Map(schemas.map((s) => [s.sourceName, s.source]));
 

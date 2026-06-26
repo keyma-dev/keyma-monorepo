@@ -1,10 +1,9 @@
 import type {
     KeymaIR,
-    IRSchema,
+    IRClassDeclaration,
     IRService,
     IREnumDeclaration,
-    IRValidatorDeclaration,
-    IRFormatterDeclaration,
+    IRFunctionDeclaration,
 } from "@keyma/core/ir";
 import type { EmitFile } from "../driver/index.js";
 
@@ -22,8 +21,9 @@ export type SchemaDataOptions = {
     includePrivate: boolean;
     includeIndexes: boolean;
     formPhasesOnly: boolean;
-    validatorDecls: ReadonlyMap<string, IRValidatorDeclaration>;
-    formatterDecls: ReadonlyMap<string, IRFormatterDeclaration>;
+    /** Every project-local function declaration keyed by name — a domain pack reads a
+     *  validator/formatter factory's params from here to order its direct-ref call args. */
+    functionDecls: ReadonlyMap<string, IRFunctionDeclaration>;
     /** Embedded/reference targets: the target's `name` paired with its fully-qualified C++ struct. */
     refs: readonly { name: string; cppClass: string }[];
     /** Unqualified name of the apply_defaults free function to reference, if any. */
@@ -69,7 +69,7 @@ export type ServiceClientEmitDeps = {
 };
 
 /** Builds the per-schema `keyma::SchemaMeta` accessor body (a C++ code string). */
-export type BuildSchemaMeta = (schema: IRSchema, opts: SchemaDataOptions) => string;
+export type BuildSchemaMeta = (schema: IRClassDeclaration, opts: SchemaDataOptions) => string;
 /** Emit one named enum's `enum class` definition. */
 export type EmitEnumClass = (decl: IREnumDeclaration) => string;
 /** Emit one named enum's keyma:: conversions / traits. */
@@ -100,6 +100,13 @@ export type CppEmitterPack = {
     /** Emit the bundle-root service-client.hpp; omit when the domain has no services. */
     emitServiceClient?: (services: readonly IRService[], deps: ServiceClientEmitDeps) => string;
     /**
+     * Names of `functionDeclarations` this domain emits itself (with its own wrapper) via
+     * `emitBundleFiles`, so the generic backend excludes them from `functions.hpp`. The schema
+     * domain claims its validator/formatter factories (which it re-emits as `ValidatorFn`/
+     * `FormatterFn` wrappers in `validators.hpp`/`formatters.hpp`). Omit when the domain claims none.
+     */
+    claimFunctions?: (ir: KeymaIR) => ReadonlySet<string>;
+    /**
      * Contribute extra files to each bundle, derived from the domain's own IR slice
      * (e.g. `ir.extensions['ui']`). Runs for **every** registered pack (not just the primary),
      * so a non-primary domain alongside schema can emit its own files. Omit when the domain
@@ -110,12 +117,19 @@ export type CppEmitterPack = {
 
 /**
  * The per-bundle context the shell passes to a domain's `emitBundleFiles` hook: the bundle
- * being emitted, its output root, and the private/public split.
+ * being emitted, its output root, and the private/public split. C++ additionally threads the
+ * root namespace and the runtime `#include` token (an asymmetry with JS, whose `emitBundleFiles`
+ * needs neither) so a domain that emits a self-contained translation unit — the schema pack's
+ * validators.hpp/formatters.hpp — can render its `namespace <root>::…` / `#include <runtime>`.
  */
 export type BundleEmitContext = {
     bundle: "client" | "server" | "library";
     bundleDir: string;
     includePrivate: boolean;
+    /** Root namespace (validators/formatters live under `<root>::validators` etc.). */
+    nsRoot: string;
+    /** Complete `#include` token (with delimiters) for the runtime header. */
+    runtimeInclude: string;
 };
 
 /** A per-language registry of domain emitter packs consulted by the generic C++ backend. */

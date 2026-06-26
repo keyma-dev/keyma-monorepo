@@ -12,16 +12,15 @@ const SRC = { file: "schema.ts", line: 1, column: 1 };
 const BASIC_IR: KeymaIR = {
     irVersion: "1.0.0",
     compilerVersion: "0.1.0",
-    schemas: [
+    classes: [
         {
-            id: "schema:user",
             name: "user",
             sourceName: "User",
             visibility: "public",
             fields: [
-                { name: "id", type: { kind: "id" }, visibility: "public", readonly: true, required: true, validators: [], formatters: [], extensions: { schema: { indexes: [{ unique: true }] } }, source: SRC },
-                { name: "firstName", type: { kind: "string" }, visibility: "public", readonly: false, required: true, validators: [], formatters: [], source: SRC },
-                { name: "lastName", type: { kind: "string" }, visibility: "public", readonly: false, required: true, validators: [], formatters: [], source: SRC },
+                { name: "id", type: { kind: "id" }, visibility: "public", readonly: true, required: true, extensions: { schema: { indexes: [{ unique: true }] } }, source: SRC },
+                { name: "firstName", type: { kind: "string" }, visibility: "public", readonly: false, required: true, source: SRC },
+                { name: "lastName", type: { kind: "string" }, visibility: "public", readonly: false, required: true, source: SRC },
             ],
             // `fullName` is a getter behavior (a re-emitted accessor), not a schema field.
             methods: [
@@ -268,11 +267,11 @@ describe("emitPython", () => {
     it("renders a nullable field as Optional via field.nullable", async () => {
         const NULLABLE_IR: KeymaIR = {
             irVersion: "1.0.0", compilerVersion: "0.1.0",
-            schemas: [
+            classes: [
                 {
-                    id: "schema:thing", name: "thing", sourceName: "Thing", visibility: "public",
+                    name: "thing", sourceName: "Thing", visibility: "public",
                     fields: [
-                        { name: "nickname", type: { kind: "string" }, nullable: true, visibility: "public", readonly: false, required: true, validators: [], formatters: [], source: SRC },
+                        { name: "nickname", type: { kind: "string" }, nullable: true, visibility: "public", readonly: false, required: true, source: SRC },
                     ],
                     source: { file: "thing.ts", line: 1, column: 1 },
                 },
@@ -297,11 +296,11 @@ describe("emitPython", () => {
     it("emits schema with fields and refs", async () => {
         const REF_IR: KeymaIR = {
             irVersion: "1.0.0", compilerVersion: "0.1.0", sourceRoot: ".",
-            schemas: [
-                { id: "s1", name: "u", sourceName: "U", visibility: "public", fields: [], source: { file: "u.ts", line: 1, column: 1 } },
+            classes: [
+                { name: "u", sourceName: "U", visibility: "public", fields: [], source: { file: "u.ts", line: 1, column: 1 } },
                 {
-                    id: "s2", name: "p", sourceName: "P", visibility: "public",
-                    fields: [{ name: "a", type: { kind: "reference", schema: "u" }, visibility: "public", readonly: false, required: true, validators: [], formatters: [], source: SRC }],
+                    name: "p", sourceName: "P", visibility: "public",
+                    fields: [{ name: "a", type: { kind: "reference", schema: "u" }, visibility: "public", readonly: false, required: true, source: SRC }],
                     source: { file: "p.ts", line: 1, column: 1 }
                 }
             ],
@@ -321,12 +320,12 @@ describe("emitPython", () => {
     it("emits methods and both setter forms as Python class members", async () => {
         const BEHAVIORS_IR: KeymaIR = {
             irVersion: "2.0.0", compilerVersion: "0.1.0",
-            schemas: [
+            classes: [
                 {
-                    id: "schema:user", name: "user", sourceName: "User", visibility: "public",
+                    name: "user", sourceName: "User", visibility: "public",
                     fields: [
-                        { name: "firstName", type: { kind: "string" }, visibility: "public", readonly: false, required: true, validators: [], formatters: [], source: SRC },
-                        { name: "email", type: { kind: "string" }, visibility: "public", readonly: false, required: true, validators: [], formatters: [], source: SRC },
+                        { name: "firstName", type: { kind: "string" }, visibility: "public", readonly: false, required: true, source: SRC },
+                        { name: "email", type: { kind: "string" }, visibility: "public", readonly: false, required: true, source: SRC },
                     ],
                     methods: [
                         {
@@ -379,20 +378,22 @@ describe("emitPython", () => {
 describe("emitPython — validators module", () => {
     const VALIDATORS_IR: KeymaIR = {
         irVersion: "1.0.0", compilerVersion: "0.1.0",
-        schemas: [
+        classes: [
             {
-                id: "schema:item", name: "item", sourceName: "Item", visibility: "public",
-                fields: [{ name: "name", type: { kind: "string" }, visibility: "public", readonly: false, required: true, validators: [{ name: "minLength", params: { value: 2 } }], formatters: [], source: SRC }],
+                name: "item", sourceName: "Item", visibility: "public",
+                fields: [{ name: "name", type: { kind: "string" }, visibility: "public", readonly: false, required: true, extensions: { schema: { validators: [{ name: "minLength", params: { value: 2 } }] } }, source: SRC }],
                 source: SRC,
             },
         ],
-        validatorDeclarations: [
+        functionDeclarations: [
             {
-                name: "minLength", factoryParams: [{ name: "value" }], inputType: { kind: "string" },
-                body: {
-                    params: [{ name: "raw", role: "value" }, { name: "field", role: "field" }],
+                name: "minLength", params: [{ name: "value", type: { kind: "integer" } }],
+                returnType: { kind: "function", params: [{ name: "raw", type: { kind: "string" } }, { name: "field", type: { kind: "string" } }], returns: { kind: "json" } },
+                statements: [{ kind: "return", value: {
+                    kind: "arrow",
+                    params: [{ name: "raw", type: { kind: "string" } }, "field"],
                     statements: [{ kind: "return", value: { kind: "literal", value: null } }],
-                },
+                } }],
                 source: SRC,
             },
         ],
@@ -412,21 +413,23 @@ describe("emitPython — validators module", () => {
 
     const CTX_VALIDATOR_IR: KeymaIR = {
         irVersion: "1.0.0", compilerVersion: "0.1.0",
-        schemas: [
+        classes: [
             {
-                id: "schema:signup", name: "signup", sourceName: "Signup", visibility: "public",
+                name: "signup", sourceName: "Signup", visibility: "public",
                 fields: [
-                    { name: "password", type: { kind: "string" }, visibility: "public", readonly: false, required: true, validators: [], formatters: [], source: SRC },
-                    { name: "confirm", type: { kind: "string" }, visibility: "public", readonly: false, required: true, validators: [{ name: "matchesPassword", params: {} }], formatters: [], source: SRC },
+                    { name: "password", type: { kind: "string" }, visibility: "public", readonly: false, required: true, source: SRC },
+                    { name: "confirm", type: { kind: "string" }, visibility: "public", readonly: false, required: true, extensions: { schema: { validators: [{ name: "matchesPassword", params: {} }] } }, source: SRC },
                 ],
                 source: SRC,
             },
         ],
-        validatorDeclarations: [
+        functionDeclarations: [
             {
-                name: "matchesPassword", factoryParams: [], inputType: { kind: "json" },
-                body: {
-                    params: [{ name: "value", role: "value" }, { name: "field", role: "field" }, { name: "ctx", role: "context" }],
+                name: "matchesPassword", params: [],
+                returnType: { kind: "function", params: [{ name: "value", type: { kind: "json" } }, { name: "field", type: { kind: "string" } }, { name: "ctx", type: { kind: "json" } }], returns: { kind: "json" } },
+                statements: [{ kind: "return", value: {
+                    kind: "arrow",
+                    params: [{ name: "value", type: { kind: "json" } }, "field", "ctx"],
                     statements: [
                         {
                             kind: "return",
@@ -437,7 +440,7 @@ describe("emitPython — validators module", () => {
                             },
                         },
                     ],
-                },
+                } }],
                 source: SRC,
             },
         ],

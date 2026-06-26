@@ -1,4 +1,4 @@
-import type { IRSchema, IRField, IRMethod, IRValidatorDeclaration, IRFormatterDeclaration } from "@keyma/core/ir";
+import type { IRClassDeclaration, IRField, IRMethod, IRFunctionDeclaration } from "@keyma/core/ir";
 import { collectRefTargets, collectFunctionRefs, filterVisibleFields, filterVisibleMethods } from "@keyma/core/util";
 import { renderStatements, factoryIdent } from "./emit-validators.js";
 import { intrinsicImports } from "./emit-expression.js";
@@ -17,8 +17,9 @@ export type ModuleEmitDeps = {
     schemaModule: ReadonlyMap<string, string>;
     /** Reference/embedded/edge target `name` → emitted Python class (`sourceName`). */
     classNameByName: ReadonlyMap<string, string>;
-    validatorDecls: ReadonlyMap<string, IRValidatorDeclaration>;
-    formatterDecls: ReadonlyMap<string, IRFormatterDeclaration>;
+    /** Every project-local function declaration keyed by name (a domain pack reads a
+     *  validator/formatter factory's params for factory-call arg ordering). */
+    functionDecls: ReadonlyMap<string, IRFunctionDeclaration>;
     functionNames: ReadonlySet<string>;
     validatorsModuleRef: string;
     formattersModuleRef: string;
@@ -30,7 +31,7 @@ export type ModuleEmitDeps = {
 
 const CLIENT_PHASES = new Set(["change", "blur", "submit"]);
 
-export function emitModulePython(moduleRef: string, schemas: readonly IRSchema[], deps: ModuleEmitDeps): string {
+export function emitModulePython(moduleRef: string, schemas: readonly IRClassDeclaration[], deps: ModuleEmitDeps): string {
     // Emit the class bodies first so the header can pull in only the math/coercion-intrinsic
     // imports they actually reference (getter/method/default expressions may use them).
     const body: string[] = [];
@@ -53,7 +54,7 @@ export function emitModulePython(moduleRef: string, schemas: readonly IRSchema[]
     return lines.join("\n");
 }
 
-function emitSchemaClass(schema: IRSchema, deps: ModuleEmitDeps): string[] {
+function emitSchemaClass(schema: IRClassDeclaration, deps: ModuleEmitDeps): string[] {
     const fields = filterVisibleFields(schema, deps.includePrivate);
     const lines: string[] = [];
 
@@ -97,8 +98,7 @@ function emitSchemaClass(schema: IRSchema, deps: ModuleEmitDeps): string[] {
         includePrivate: deps.includePrivate,
         includeIndexes: deps.includeIndexes,
         formPhasesOnly: deps.formPhasesOnly,
-        validatorDecls: deps.validatorDecls,
-        formatterDecls: deps.formatterDecls,
+        functionDecls: deps.functionDecls,
         refs: schemaRefs(fields, deps.classNameByName),
         ...(applyDefaultsRef !== undefined ? { applyDefaultsRef } : {}),
     });
@@ -109,7 +109,7 @@ function emitSchemaClass(schema: IRSchema, deps: ModuleEmitDeps): string[] {
 
 // ─── Imports ──────────────────────────────────────────────────────────────────
 
-function buildImports(moduleRef: string, schemas: readonly IRSchema[], deps: ModuleEmitDeps): string[] {
+function buildImports(moduleRef: string, schemas: readonly IRClassDeclaration[], deps: ModuleEmitDeps): string[] {
     const bySpec = new Map<string, Set<string>>();
     const add = (toRef: string, binding: string): void => {
         if (toRef === moduleRef) return;
@@ -154,11 +154,30 @@ function schemaRefs(
         .map((name) => ({ name, className: classNameByName.get(name)! }));
 }
 
+// Validator/formatter attachments now ride in the field's `extensions['schema']` slice
+// (a schema-domain concern). The generic module emitter still needs the referenced factory
+// names to wire the model file's imports from validators.py/formatters.py — a transitional
+// read of the well-known slice keeps that import wiring here without depending on `@keyma/schema`.
+type SchemaFieldSlice = {
+    validators?: { name: string }[];
+    formatters?: { phase: string; spec: { name: string } }[];
+};
+function schemaSlice(field: IRField): SchemaFieldSlice | undefined {
+    return field.extensions?.["schema"] as SchemaFieldSlice | undefined;
+}
+
 function collectFactoryNames(fields: IRField[], which: "validators" | "formatters", formPhasesOnly: boolean): Set<string> {
     const out = new Set<string>();
     for (const f of fields) {
-        if (which === "validators") for (const v of f.validators) out.add(v.name);
-        else for (const fmt of f.formatters) { if (formPhasesOnly && !CLIENT_PHASES.has(fmt.phase)) continue; out.add(fmt.spec.name); }
+        const slice = schemaSlice(f);
+        if (which === "validators") {
+            for (const v of slice?.validators ?? []) out.add(v.name);
+        } else {
+            for (const fmt of slice?.formatters ?? []) {
+                if (formPhasesOnly && !CLIENT_PHASES.has(fmt.phase)) continue;
+                out.add(fmt.spec.name);
+            }
+        }
     }
     return out;
 }

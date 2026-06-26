@@ -1,9 +1,8 @@
 import type {
     KeymaIR,
-    IRSchema,
+    IRClassDeclaration,
     IRService,
-    IRValidatorDeclaration,
-    IRFormatterDeclaration,
+    IRFunctionDeclaration,
 } from "@keyma/core/ir";
 import type { EmitFile } from "../driver/index.js";
 
@@ -22,17 +21,16 @@ export type SchemaDataOptions = {
     formPhasesOnly: boolean;
     /** Include the per-schema `applyDefaults` arrow (server/library bundles only). */
     includeDefaults: boolean;
-    /** Validator declarations keyed by name — for ordering direct-ref factory-call args. */
-    validatorDecls: ReadonlyMap<string, IRValidatorDeclaration>;
-    /** Formatter declarations keyed by name — for ordering direct-ref factory-call args. */
-    formatterDecls: ReadonlyMap<string, IRFormatterDeclaration>;
+    /** Every project-local function declaration keyed by name — a domain pack reads a
+     *  validator/formatter factory's params from here to order its direct-ref call args. */
+    functionDecls: ReadonlyMap<string, IRFunctionDeclaration>;
     /** Embedded/reference targets this schema needs as a live `refs` Map:
      *  the target's `name` (lookup key) paired with its emitted class symbol. */
     refs: readonly { name: string; symbol: string }[];
 };
 
 /** Builds the per-schema metadata object attached as `<Class>.schema`. */
-export type BuildSchemaData = (schema: IRSchema, opts: SchemaDataOptions) => Record<string, unknown>;
+export type BuildSchemaData = (schema: IRClassDeclaration, opts: SchemaDataOptions) => Record<string, unknown>;
 
 /** Context a domain's `shapeSchemaDts` hook needs to resolve target identities to symbols. */
 export type SchemaDtsContext = {
@@ -104,9 +102,16 @@ export type JsEmitterPack = {
      * to keep the default. Consulted on the primary pack only (like `buildSchemaData`); inert
      * for plain schemas, so single-domain bundles stay byte-identical.
      */
-    shapeSchemaDts?: (schema: IRSchema, ctx: SchemaDtsContext) => SchemaDtsShape | undefined;
+    shapeSchemaDts?: (schema: IRClassDeclaration, ctx: SchemaDtsContext) => SchemaDtsShape | undefined;
     /** Emit the bundle-root services.js/.d.ts; omit when the domain has no services. */
     emitServices?: (services: readonly IRService[], deps: ServiceEmitDeps) => { js: string; dts: string };
+    /**
+     * Names of `functionDeclarations` this domain emits itself (with its own wrapper) via
+     * `emitBundleFiles`, so the generic backend excludes them from `functions.js`. The schema
+     * domain claims its validator/formatter factories (which it re-emits as `ValidatorFn`/
+     * `FormatterFn` wrappers in `validators.js`/`formatters.js`). Omit when the domain claims none.
+     */
+    claimFunctions?: (ir: KeymaIR) => ReadonlySet<string>;
     /**
      * Contribute extra files to each bundle, derived from the domain's own IR slice
      * (e.g. `ir.extensions['ui']`). Unlike `buildSchemaData` (which only the first/primary

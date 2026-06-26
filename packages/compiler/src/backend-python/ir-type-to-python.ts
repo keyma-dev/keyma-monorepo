@@ -39,6 +39,14 @@ export function irTypeToPython(
         case "embedded": {
             return embeddedNames?.get(type.schema) ?? type.schema;
         }
+
+        // A live value of a class T (param/return position) — reference the class.
+        case "instance":
+            return embeddedNames?.get(type.name) ?? type.name;
+
+        default:
+            // `function` (param/return-position vocabulary) gains Python emission in a later slice.
+            throw new Error(`irTypeToPython: unsupported IR type kind "${(type as { kind: string }).kind}"`);
     }
 }
 
@@ -73,7 +81,11 @@ export function irTypeGuard(type: IRType, value: string): string | null {
         case "json":
         case "reference":
         case "embedded":
+        case "instance":
             return null;
+        default:
+            // `function` is never an input-guard type in this slice.
+            throw new Error(`irTypeGuard: unsupported IR type kind "${(type as { kind: string }).kind}"`);
     }
 }
 
@@ -84,6 +96,7 @@ export function irTypeLabel(type: IRType): string {
         case "enum":     return `one of ${type.values.map((v) => JSON.stringify(v)).join(", ")}`;
         case "reference":
         case "embedded": return type.schema;
+        case "instance":  return type.name;
         default:         return type.kind;
     }
 }

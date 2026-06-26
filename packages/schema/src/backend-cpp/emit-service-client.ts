@@ -47,33 +47,44 @@ function emitClientStub(svc: IRService, deps: ServiceClientEmitDeps): string[] {
     return lines;
 }
 
+/** The target class `name` of a shared_ptr-shaped schema type — a `reference`
+ *  (id handle) or an `instance` (a live value of class T). Both lower to
+ *  `std::shared_ptr<T>` and share the client's full-object hydration/serialization. */
+function sharedPtrTarget(t: IRType): string | undefined {
+    if (t.kind === "reference") return t.schema;
+    if (t.kind === "instance") return t.name;
+    return undefined;
+}
+
 /**
  * The CallLeaf element type for a method's return — what `keyma::send` hydrates to. A
- * schema return is modelled in the IR as a `reference`; the client hydrates the FULL wire
- * object to the value type (not a shared_ptr id-stub), so a reference unwraps to its target
- * struct and an array-of-reference to a vector of them. `void` for a no-return method.
+ * schema return is modelled in the IR as a `reference`/`instance`; the client hydrates the
+ * FULL wire object to the value type (not a shared_ptr id-stub), so it unwraps to its target
+ * struct and an array of them to a vector. `void` for a no-return method.
  */
 function returnLeafType(rt: IRType | undefined, deps: ServiceClientEmitDeps): string {
     if (rt === undefined) return "void";
-    if (rt.kind === "reference") return deps.cppTypeByName.get(rt.schema) ?? rt.schema;
-    if (rt.kind === "array" && rt.of.kind === "reference") {
-        return `std::pmr::vector<${deps.cppTypeByName.get(rt.of.schema) ?? rt.of.schema}>`;
+    const direct = sharedPtrTarget(rt);
+    if (direct !== undefined) return deps.cppTypeByName.get(direct) ?? direct;
+    if (rt.kind === "array") {
+        const elem = sharedPtrTarget(rt.of);
+        if (elem !== undefined) return `std::pmr::vector<${deps.cppTypeByName.get(elem) ?? elem}>`;
     }
     return irTypeToCpp(rt, deps.cppTypeByName, deps.enumTypeByName);
 }
 
 /**
- * Serialize one argument into `__args`. A schema-typed (reference) param is a shared_ptr;
- * its FULL object is the payload (a service input is not a stored relation), so it is
- * serialized via the struct's own to_value — never the id-only shared_ptr value_traits.
+ * Serialize one argument into `__args`. A schema-typed (reference/instance) param is a
+ * shared_ptr; its FULL object is the payload (a service input is not a stored relation), so
+ * it is serialized via the struct's own to_value — never the id-only shared_ptr value_traits.
  * Everything else lowers through keyma::to_value.
  */
 function argLines(name: string, type: IRType, deps: ServiceClientEmitDeps): string[] {
     const key = JSON.stringify(name);
-    if (type.kind === "reference") {
+    if (sharedPtrTarget(type) !== undefined) {
         return [`        __args.set(${key}, ${name} ? ${name}->to_value(__alloc) : keyma::Value(nullptr, __alloc));`];
     }
-    if (type.kind === "array" && type.of.kind === "reference") {
+    if (type.kind === "array" && sharedPtrTarget(type.of) !== undefined) {
         return [
             `        { keyma::Value __a = keyma::Value::array(__alloc);`,
             `          for (const auto& __e : ${name}) __a.push(__e ? __e->to_value(__alloc) : keyma::Value(nullptr, __alloc));`,
@@ -117,8 +128,9 @@ function buildIncludes(services: readonly IRService[], deps: ServiceClientEmitDe
 
 function addTypeIncludes(type: IRType, deps: ServiceClientEmitDeps, out: Set<string>): void {
     const t = type.kind === "array" ? type.of : type;
-    if (t.kind === "embedded" || t.kind === "reference") {
-        const cls = deps.classNameByName.get(t.schema);
+    if (t.kind === "embedded" || t.kind === "reference" || t.kind === "instance") {
+        const targetName = t.kind === "instance" ? t.name : t.schema;
+        const cls = deps.classNameByName.get(targetName);
         const ref = cls !== undefined ? deps.schemaModule.get(cls) : undefined;
         if (ref !== undefined) out.add(includePath(ref));
     } else if (t.kind === "enum" && t.name !== undefined) {

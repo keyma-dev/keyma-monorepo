@@ -1,7 +1,8 @@
-import type { IRSchema, IRField } from "@keyma/core/ir";
+import type { IRClassDeclaration, IRField } from "@keyma/core/ir";
 import { filterVisibleFields } from "@keyma/core/util";
-import { typeTag, buildFactoryCall, type SchemaDataOptions } from "@keyma/compiler/backend-cpp";
-import { schemaIndexes, schemaEphemeral, fieldIndexes } from "../ir/extensions.js";
+import { typeTag, type SchemaDataOptions } from "@keyma/compiler/backend-cpp";
+import { buildFactoryCall } from "./emit-validators.js";
+import { schemaIndexes, schemaEphemeral, fieldIndexes, fieldValidators, fieldFormatters } from "../ir/extensions.js";
 
 export type { SchemaDataOptions };
 
@@ -14,24 +15,26 @@ const PHASE: Record<string, string> = { change: "Change", blur: "Blur", submit: 
  * reference return. Designed to be wrapped by emit-module in an out-of-line inline
  * definition once all structs in the module are complete.
  */
-export function buildSchemaMeta(schema: IRSchema, opts: SchemaDataOptions): string {
+export function buildSchemaMeta(schema: IRClassDeclaration, opts: SchemaDataOptions): string {
     const fields = filterVisibleFields(schema, opts.includePrivate);
     const out: string[] = [];
     const I = "    ";
 
     // Per-field validator / formatter arrays.
     for (const f of fields) {
-        if (f.validators.length > 0) {
-            const calls = f.validators.map((v) =>
-                buildFactoryCall(v.name, v.params, opts.validatorDecls.get(v.name)?.factoryParams ?? [], `${opts.nsRoot}::validators`),
+        const validators = fieldValidators(f);
+        if (validators.length > 0) {
+            const calls = validators.map((v) =>
+                buildFactoryCall(v.name, v.params, opts.functionDecls.get(v.name)?.params ?? [], `${opts.nsRoot}::validators`),
             );
             out.push(`${I}static const keyma::ValidatorFn __v_${f.name}[] = { ${calls.join(", ")} };`);
         }
-        const formatters = opts.formPhasesOnly ? f.formatters.filter((fm) => CLIENT_PHASES.has(fm.phase)) : f.formatters;
+        const allFormatters = fieldFormatters(f);
+        const formatters = opts.formPhasesOnly ? allFormatters.filter((fm) => CLIENT_PHASES.has(fm.phase)) : allFormatters;
         if (formatters.length > 0) {
             const items = formatters.map((fm) => {
                 const call = buildFactoryCall(
-                    fm.spec.name, fm.spec.params, opts.formatterDecls.get(fm.spec.name)?.factoryParams ?? [], `${opts.nsRoot}::formatters`,
+                    fm.spec.name, fm.spec.params, opts.functionDecls.get(fm.spec.name)?.params ?? [], `${opts.nsRoot}::formatters`,
                 );
                 return `{ keyma::Phase::${PHASE[fm.phase]}, ${call} }`;
             });
@@ -93,8 +96,9 @@ function buildFieldMeta(field: IRField, opts: SchemaDataOptions): string {
     const core = field.type.kind === "array" ? field.type.of : field.type;
     if (field.type.kind === "array") parts.push(`.element = ${typeTag(core)}`);
     if (core.kind === "embedded" || core.kind === "reference") parts.push(`.target = ${JSON.stringify(core.schema)}`);
-    if (field.validators.length > 0) parts.push(`.validators = std::span<const keyma::ValidatorFn>{__v_${field.name}}`);
-    const formatters = opts.formPhasesOnly ? field.formatters.filter((fm) => CLIENT_PHASES.has(fm.phase)) : field.formatters;
+    if (fieldValidators(field).length > 0) parts.push(`.validators = std::span<const keyma::ValidatorFn>{__v_${field.name}}`);
+    const allFormatters = fieldFormatters(field);
+    const formatters = opts.formPhasesOnly ? allFormatters.filter((fm) => CLIENT_PHASES.has(fm.phase)) : allFormatters;
     if (formatters.length > 0) parts.push(`.formatters = std::span<const keyma::PhasedFormatter>{__f_${field.name}}`);
     // Stable binary wire tag (present only when binary serialization is enabled). Trailing
     // defaulted member, so this stays in declaration order after `.formatters`.

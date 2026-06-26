@@ -3,7 +3,7 @@ import assert from "node:assert/strict";
 import path from "node:path";
 import { fileURLToPath } from "node:url";
 import { compileVirtual } from "./harness.js";
-import type { IRExpression, IRStatement } from "@keyma/core/ir";
+import type { IRExpression, IRStatement, IRType, IRFunctionDeclaration } from "@keyma/core/ir";
 
 const __dirname = path.dirname(fileURLToPath(import.meta.url));
 const VIRTUAL_BASE = path.join(__dirname, "..", "..", "..", "src", "frontend-ts");
@@ -32,10 +32,24 @@ function cvValidator(ret: string, valueType = "string", decls = "") {
     });
 }
 
+/** The inner arrow a validator/formatter factory `return`s (the collapsed-function shape). */
+function innerArrow(d: IRFunctionDeclaration | undefined): Extract<IRExpression, { kind: "arrow" }> {
+    const ret = d?.statements[0];
+    assert.ok(
+        ret && ret.kind === "return" && ret.value && ret.value.kind === "arrow",
+        "validator factory must return an inner arrow",
+    );
+    return ret.value;
+}
 function validatorBody(r: ReturnType<typeof cv>, name: string): IRStatement[] {
-    const d = r.ir.validatorDeclarations?.find((v) => v.name === name);
+    const d = r.ir.functionDeclarations?.find((v) => v.name === name);
     assert.ok(d, `validator "${name}" not found`);
-    return d.body.statements;
+    return innerArrow(d).statements ?? [];
+}
+/** The input type a validator carries — the inner arrow's first param `.type`. */
+function inputTypeOf(d: IRFunctionDeclaration | undefined): IRType | undefined {
+    const p = innerArrow(d).params[0];
+    return p === undefined || typeof p === "string" ? undefined : p.type;
 }
 /** The expression returned by a single-`return` validator body. */
 function returnedExpr(stmts: IRStatement[]): IRExpression {
@@ -48,8 +62,8 @@ describe("intrinsic recognition", () => {
     it("lowers string methods and members to intrinsics, with input type", () => {
         const r = cvValidator(`value.includes("x") && value.length > 3 ? null : "bad"`);
         assert.deepEqual(errorCodes(r), []);
-        const d = r.ir.validatorDeclarations?.find((x) => x.name === "v");
-        assert.deepEqual(d?.inputType, { kind: "string" });
+        const d = r.ir.functionDeclarations?.find((x) => x.name === "v");
+        assert.deepEqual(inputTypeOf(d), { kind: "string" });
         const expr = returnedExpr(validatorBody(r, "v"));
         // conditional → condition is `includes && length>3`
         assert.equal(expr.kind, "conditional");
@@ -106,29 +120,29 @@ describe("validator/formatter input type (from ValidatorFn<T>)", () => {
     it("maps the `ValidatorFn<T>` argument to the input guard type", () => {
         const r = cvValidator(`value.length > 0 ? null : "x"`, "string");
         assert.deepEqual(errorCodes(r), []);
-        const d = r.ir.validatorDeclarations?.find((x) => x.name === "v");
-        assert.deepEqual(d?.inputType, { kind: "string" });
+        const d = r.ir.functionDeclarations?.find((x) => x.name === "v");
+        assert.deepEqual(inputTypeOf(d), { kind: "string" });
     });
 
     it("a bare `ValidatorFn` (no type argument) yields an unguarded `json` input", () => {
         const r = cvValidator(`value === null ? "x" : null`, "");
         assert.deepEqual(errorCodes(r), []);
-        const d = r.ir.validatorDeclarations?.find((x) => x.name === "v");
-        assert.deepEqual(d?.inputType, { kind: "json" });
+        const d = r.ir.functionDeclarations?.find((x) => x.name === "v");
+        assert.deepEqual(inputTypeOf(d), { kind: "json" });
     });
 
     it("`ValidatorFn<unknown>` yields a `json` input (no guard)", () => {
         const r = cvValidator(`value === null ? "x" : null`, "unknown");
         assert.deepEqual(errorCodes(r), []);
-        const d = r.ir.validatorDeclarations?.find((x) => x.name === "v");
-        assert.deepEqual(d?.inputType, { kind: "json" });
+        const d = r.ir.functionDeclarations?.find((x) => x.name === "v");
+        assert.deepEqual(inputTypeOf(d), { kind: "json" });
     });
 
     it("allows the DSL `Json` type as a polymorphic input", () => {
         const r = cvValidator(`value === null ? "x" : null`, "Json");
         assert.deepEqual(errorCodes(r), []);
-        const d = r.ir.validatorDeclarations?.find((x) => x.name === "v");
-        assert.deepEqual(d?.inputType, { kind: "json" });
+        const d = r.ir.functionDeclarations?.find((x) => x.name === "v");
+        assert.deepEqual(inputTypeOf(d), { kind: "json" });
     });
 });
 
@@ -153,8 +167,10 @@ describe("utility-function compilation", () => {
              function atLeast(s: string, n: number): boolean { return s.length >= n; }`,
         );
         assert.deepEqual(errorCodes(r), []);
+        // `v` is the (collapsed) validator factory; `longEnough`/`atLeast` are the utility
+        // functions reached transitively from its body — all are ordinary functionDeclarations.
         const names = (r.ir.functionDeclarations ?? []).map((f) => f.name).sort();
-        assert.deepEqual(names, ["atLeast", "longEnough"], "both functions compiled transitively");
+        assert.deepEqual(names, ["atLeast", "longEnough", "v"], "both utility functions compiled transitively");
         const longEnough = r.ir.functionDeclarations?.find((f) => f.name === "longEnough");
         assert.deepEqual(longEnough?.params, [{ name: "s", type: { kind: "string" } }]);
         assert.deepEqual(longEnough?.returnType, { kind: "boolean" });

@@ -4,7 +4,7 @@ import path from "node:path";
 import { fileURLToPath } from "node:url";
 import { compile, compileVirtual } from "./harness.js";
 import * as CODES from "../../src/frontend-ts/diagnostics.js";
-import { schemaEdge, schemaEphemeral, fieldIndexes } from "../../src/ir/extensions.js";
+import { schemaEdge, schemaEphemeral, fieldIndexes, fieldValidators, fieldFormatters } from "../../src/ir/extensions.js";
 
 const __filename = fileURLToPath(import.meta.url);
 const __dirname = path.dirname(__filename);
@@ -34,8 +34,8 @@ function hasError(result: ReturnType<typeof compile>, code: string): boolean {
 }
 
 function schemaByName(result: ReturnType<typeof compile>, sourceName: string) {
-    const s = result.ir.schemas.find((s) => s.sourceName === sourceName);
-    assert.ok(s !== undefined, `Schema "${sourceName}" not found. Available: ${result.ir.schemas.map((s) => s.sourceName).join(", ")}`);
+    const s = result.ir.classes.find((s) => s.sourceName === sourceName);
+    assert.ok(s !== undefined, `Schema "${sourceName}" not found. Available: ${result.ir.classes.map((s) => s.sourceName).join(", ")}`);
     return s;
 }
 
@@ -64,7 +64,7 @@ describe("compile basic schema", () => {
         assert.equal(id.readonly, true);
         assert.equal(id.required, true);
         assert.equal(id.visibility, "public");
-        assert.ok(id.validators.some((v) => v.name === "required"), "isRequired validator expected");
+        assert.ok(fieldValidators(id).some((v) => v.name === "required"), "isRequired validator expected");
         assert.ok(fieldIndexes(id).some((i) => i.unique === true), "unique index expected");
     });
 
@@ -74,10 +74,10 @@ describe("compile basic schema", () => {
         assert.ok(f, "firstName field not found");
         assert.deepEqual(f.type, { kind: "string" });
         assert.equal(f.required, true);
-        assert.ok(f.validators.some((v) => v.name === "required"), "required validator expected");
-        assert.ok(f.validators.some((v) => v.name === "minLength" && (v.params as any)?.value === 2), "minLength(2) expected");
-        assert.ok(f.validators.some((v) => v.name === "maxLength" && (v.params as any)?.value === 64), "maxLength(64) expected");
-        assert.ok(f.formatters.some((fmt) => fmt.phase === "change" && fmt.spec.name === "trim"), "trim formatter expected");
+        assert.ok(fieldValidators(f).some((v) => v.name === "required"), "required validator expected");
+        assert.ok(fieldValidators(f).some((v) => v.name === "minLength" && (v.params as any)?.value === 2), "minLength(2) expected");
+        assert.ok(fieldValidators(f).some((v) => v.name === "maxLength" && (v.params as any)?.value === 64), "maxLength(64) expected");
+        assert.ok(fieldFormatters(f).some((fmt) => fmt.phase === "change" && fmt.spec.name === "trim"), "trim formatter expected");
     });
 
     it("maps email: string with emailAddress validator and unique index", () => {
@@ -85,7 +85,7 @@ describe("compile basic schema", () => {
         const f = user.fields.find((f) => f.name === "email");
         assert.ok(f, "email field not found");
         assert.deepEqual(f.type, { kind: "string" });
-        assert.ok(f.validators.some((v) => v.name === "emailAddress"), "emailAddress validator expected");
+        assert.ok(fieldValidators(f).some((v) => v.name === "emailAddress"), "emailAddress validator expected");
         assert.ok(fieldIndexes(f).some((i) => i.unique === true), "unique index expected");
     });
 
@@ -457,7 +457,7 @@ describe("getter/setter pair — both are behaviors", () => {
             `,
         });
         assert.deepEqual(errorCodes(result), [], `Errors: ${JSON.stringify(result.diagnostics)}`);
-        const foo = result.ir.schemas.find((s) => s.sourceName === "Foo")!;
+        const foo = result.ir.classes.find((s) => s.sourceName === "Foo")!;
         assert.equal(foo.fields.find((f) => f.name === "name"), undefined, "getter must not be a field");
         assert.ok((foo.methods ?? []).some((m) => m.name === "name" && m.kind === "getter"));
         assert.ok((foo.methods ?? []).some((m) => m.name === "name" && m.kind === "setter"));
@@ -678,12 +678,6 @@ describe("compile IR structure", () => {
         assert.deepEqual(result.ir.diagnostics, result.diagnostics);
     });
 
-    it("schema id follows schema:name convention", () => {
-        const result = cv({ "s.ts": `import { Schema } from "@keyma/schema/dsl"; @Schema({ name: "widget" }) class Widget { declare x: string; }` });
-        const schema = schemaByName(result, "Widget");
-        assert.equal(schema.id, "schema:widget");
-    });
-
     it("resolves validator/formatter factories (functions returning ValidatorFn/FormatterFn) by following the declaration", () => {
         const result = cv({
             "validators.ts": `
@@ -705,12 +699,12 @@ describe("compile IR structure", () => {
         assert.deepEqual(errorCodes(result), [], `Unexpected errors: ${JSON.stringify(result.diagnostics)}`);
         const f = schemaByName(result, "Account").fields.find((f) => f.name === "name");
         assert.ok(f);
-        assert.ok(f.validators.some((v) => v.name === "required"), "required validator expected");
-        assert.ok(f.validators.some((v) => v.name === "minLength" && (v.params as any)?.value === 3), "minLength(3) expected");
-        assert.ok(f.formatters.some((fmt) => fmt.phase === "change" && fmt.spec.name === "trim"), "trim formatter expected");
-        // The referenced factory bodies are lowered into IR declarations (re-emitted into the bundle).
-        assert.ok(result.ir.validatorDeclarations?.some((d) => d.name === "required"), "required declaration lowered");
-        assert.ok(result.ir.formatterDeclarations?.some((d) => d.name === "trim"), "trim declaration lowered");
+        assert.ok(fieldValidators(f).some((v) => v.name === "required"), "required validator expected");
+        assert.ok(fieldValidators(f).some((v) => v.name === "minLength" && (v.params as any)?.value === 3), "minLength(3) expected");
+        assert.ok(fieldFormatters(f).some((fmt) => fmt.phase === "change" && fmt.spec.name === "trim"), "trim formatter expected");
+        // The referenced factory bodies are lowered into IR function declarations (re-emitted into the bundle).
+        assert.ok(result.ir.functionDeclarations?.some((d) => d.name === "required"), "required declaration lowered");
+        assert.ok(result.ir.functionDeclarations?.some((d) => d.name === "trim"), "trim declaration lowered");
     });
 
     it("resolves factory calls imported under an alias", () => {
@@ -731,7 +725,7 @@ describe("compile IR structure", () => {
         assert.deepEqual(errorCodes(result), [], `Unexpected errors: ${JSON.stringify(result.diagnostics)}`);
         const f = schemaByName(result, "Account").fields.find((f) => f.name === "name");
         assert.ok(f);
-        assert.ok(f.validators.some((v) => v.name === "required"), "aliased required validator expected");
+        assert.ok(fieldValidators(f).some((v) => v.name === "required"), "aliased required validator expected");
     });
 
     it("number field with integer validator is promoted to integer type", () => {
@@ -1122,7 +1116,8 @@ describe("authoring features", () => {
         `});
         assert.deepEqual(errorCodes(r), [], JSON.stringify(r.diagnostics));
         const name = schemaByName(r, "Foo").fields.find((f) => f.name === "name");
-        assert.equal(name?.formatters[0]?.phase, "save");
+        assert.ok(name);
+        assert.equal(fieldFormatters(name)[0]?.phase, "save");
     });
 
     it("lowers a literal property-initializer default", () => {
@@ -1205,7 +1200,8 @@ describe("authoring features", () => {
         const foo = schemaByName(r, "Foo");
         const email = foo.fields.find((x) => x.name === "email");
         const username = foo.fields.find((x) => x.name === "username");
-        assert.deepEqual(email?.form, { title: "Email", hint: "kept private", order: 1 });
+        // `@FormField` is UI-domain presentational metadata — it rides in `extensions['ui'].form`.
+        assert.deepEqual(email?.extensions?.["ui"], { form: { title: "Email", hint: "kept private", order: 1 } });
         assert.equal(username?.deprecated, "use email");
     });
 });
@@ -1223,9 +1219,10 @@ describe("validator naming", () => {
             @Schema() class Foo { @Validate(minLen(2)) declare name: string; }
         `});
         assert.deepEqual(errorCodes(r), [], JSON.stringify(r.diagnostics));
-        assert.equal(r.ir.validatorDeclarations?.[0]?.name, "minLen");
+        assert.equal(r.ir.functionDeclarations?.find((d) => d.name === "minLen")?.name, "minLen");
         const name = schemaByName(r, "Foo").fields.find((f) => f.name === "name");
-        assert.deepEqual(name?.validators[0], { name: "minLen", params: { n: 2 } });
+        assert.ok(name);
+        assert.deepEqual(fieldValidators(name)[0], { name: "minLen", params: { n: 2 } });
     });
 
     it("lowers each referenced validator's body once (deduped) regardless of reuse", () => {
@@ -1241,6 +1238,6 @@ describe("validator naming", () => {
             }
         `});
         assert.deepEqual(errorCodes(r), [], JSON.stringify(r.diagnostics));
-        assert.equal(r.ir.validatorDeclarations?.filter((d) => d.name === "nonEmpty").length, 1);
+        assert.equal(r.ir.functionDeclarations?.filter((d) => d.name === "nonEmpty").length, 1);
     });
 });

@@ -18,14 +18,14 @@ const refField = (name: string, schema: string) => ({
 
 const EDGE_IR: KeymaIR = {
     irVersion: "1.0.0", compilerVersion: "0.1.0",
-    schemas: [
+    classes: [
         {
-            id: "s:person", name: "person", sourceName: "Person", visibility: "public",
-            fields: [{ name: "id", type: { kind: "id" }, visibility: "public", readonly: true, required: true, validators: [], formatters: [], source: S("person.ts") }],
+            name: "person", sourceName: "Person", visibility: "public",
+            fields: [{ name: "id", type: { kind: "id" }, visibility: "public", readonly: true, required: true, source: S("person.ts") }],
             source: S("person.ts"),
         },
         {
-            id: "s:knows", name: "knows", sourceName: "Knows", visibility: "public",
+            name: "knows", sourceName: "Knows", visibility: "public",
             fields: [refField("a", "person"), refField("b", "person")],
             extensions: { schema: { edge: { from: "person", fromField: "a", to: "person", toField: "b", label: "knows", directed: true } } },
             source: S("knows.ts"),

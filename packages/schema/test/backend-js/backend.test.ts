@@ -34,17 +34,16 @@ const SRC = { file: "schema.ts", line: 1, column: 1 };
 const BASIC_IR: KeymaIR = {
     irVersion: "1.0.0",
     compilerVersion: "0.1.0",
-    schemas: [
+    classes: [
         {
-            id: "schema:user",
             name: "user",
             sourceName: "User",
             visibility: "public",
             fields: [
-                { name: "id", type: { kind: "id" }, visibility: "public", readonly: true, required: true, validators: [{ name: "required" }], formatters: [], extensions: { schema: { indexes: [{ unique: true }] } }, source: SRC },
-                { name: "firstName", type: { kind: "string" }, visibility: "public", readonly: false, required: true, validators: [{ name: "minLength", params: { value: 2 } }], formatters: [{ phase: "change", spec: { name: "trim" } }], source: SRC },
-                { name: "lastName", type: { kind: "string" }, visibility: "public", readonly: false, required: true, validators: [], formatters: [], source: SRC },
-                { name: "secretNote", type: { kind: "string" }, visibility: "private", readonly: false, required: false, validators: [], formatters: [], source: SRC },
+                { name: "id", type: { kind: "id" }, visibility: "public", readonly: true, required: true, extensions: { schema: { indexes: [{ unique: true }], validators: [{ name: "required" }] } }, source: SRC },
+                { name: "firstName", type: { kind: "string" }, visibility: "public", readonly: false, required: true, extensions: { schema: { validators: [{ name: "minLength", params: { value: 2 } }], formatters: [{ phase: "change", spec: { name: "trim" } }] } }, source: SRC },
+                { name: "lastName", type: { kind: "string" }, visibility: "public", readonly: false, required: true, source: SRC },
+                { name: "secretNote", type: { kind: "string" }, visibility: "private", readonly: false, required: false, source: SRC },
             ],
             // `fullName` is a getter behavior (a re-emitted accessor), not a schema field.
             methods: [
@@ -58,15 +57,22 @@ const BASIC_IR: KeymaIR = {
             source: { file: "user.ts", line: 1, column: 1 },
         },
     ],
-    validatorDeclarations: [
-        { name: "required", factoryParams: [], inputType: { kind: "json" },
-          body: { params: [{ name: "value", role: "value" }], statements: [{ kind: "return", value: { kind: "binary", op: "!=", left: { kind: "field", name: "value" }, right: { kind: "literal", value: null } } }] }, source: SRC },
-        { name: "minLength", factoryParams: [{ name: "value" }], inputType: { kind: "string" },
-          body: { params: [{ name: "raw", role: "value" }, { name: "field", role: "field" }], statements: [{ kind: "return", value: { kind: "literal", value: null } }] }, source: SRC },
-    ],
-    formatterDeclarations: [
-        { name: "trim", factoryParams: [], inputType: { kind: "string" },
-          body: { params: [{ name: "value", role: "value" }], statements: [{ kind: "return", value: { kind: "call", callee: { kind: "member", object: { kind: "field", name: "value" }, member: "trim" }, args: [] } }] }, source: SRC },
+    functionDeclarations: [
+        { name: "required", params: [],
+          returnType: { kind: "function", params: [{ name: "value", type: { kind: "json" } }], returns: { kind: "json" } },
+          statements: [{ kind: "return", value: { kind: "arrow", params: [{ name: "value", type: { kind: "json" } }],
+            statements: [{ kind: "return", value: { kind: "binary", op: "!=", left: { kind: "field", name: "value" }, right: { kind: "literal", value: null } } }] } }],
+          source: SRC },
+        { name: "minLength", params: [{ name: "value", type: { kind: "integer" } }],
+          returnType: { kind: "function", params: [{ name: "raw", type: { kind: "string" } }, { name: "field", type: { kind: "string" } }], returns: { kind: "json" } },
+          statements: [{ kind: "return", value: { kind: "arrow", params: [{ name: "raw", type: { kind: "string" } }, "field"],
+            statements: [{ kind: "return", value: { kind: "literal", value: null } }] } }],
+          source: SRC },
+        { name: "trim", params: [],
+          returnType: { kind: "function", params: [{ name: "value", type: { kind: "string" } }], returns: { kind: "json" } },
+          statements: [{ kind: "return", value: { kind: "arrow", params: [{ name: "value", type: { kind: "string" } }],
+            statements: [{ kind: "return", value: { kind: "call", callee: { kind: "member", object: { kind: "field", name: "value" }, member: "trim" }, args: [] } }] } }],
+          source: SRC },
     ],
     diagnostics: [],
 };
@@ -74,28 +80,26 @@ const BASIC_IR: KeymaIR = {
 const INHERITANCE_IR: KeymaIR = {
     irVersion: "1.0.0",
     compilerVersion: "0.1.0",
-    schemas: [
+    classes: [
         {
-            id: "schema:person",
             name: "person",
             sourceName: "Person",
             visibility: "public",
             fields: [
-                { name: "id", type: { kind: "id" }, visibility: "public", readonly: true, required: true, validators: [], formatters: [], source: SRC },
-                { name: "name", type: { kind: "string" }, visibility: "public", readonly: false, required: true, validators: [], formatters: [], source: SRC },
+                { name: "id", type: { kind: "id" }, visibility: "public", readonly: true, required: true, source: SRC },
+                { name: "name", type: { kind: "string" }, visibility: "public", readonly: false, required: true, source: SRC },
             ],
             source: SRC,
         },
         {
-            id: "schema:employee",
             name: "employee",
             sourceName: "Employee",
             visibility: "public",
             extendsSource: "Person",
             fields: [
-                { name: "id", type: { kind: "id" }, visibility: "public", readonly: true, required: true, validators: [], formatters: [], source: SRC },
-                { name: "name", type: { kind: "string" }, visibility: "public", readonly: false, required: true, validators: [], formatters: [], source: SRC },
-                { name: "department", type: { kind: "string" }, visibility: "public", readonly: false, required: true, validators: [], formatters: [], source: SRC },
+                { name: "id", type: { kind: "id" }, visibility: "public", readonly: true, required: true, source: SRC },
+                { name: "name", type: { kind: "string" }, visibility: "public", readonly: false, required: true, source: SRC },
+                { name: "department", type: { kind: "string" }, visibility: "public", readonly: false, required: true, source: SRC },
             ],
             source: { file: "employee.ts", line: 1, column: 1 },
         },
@@ -106,21 +110,19 @@ const INHERITANCE_IR: KeymaIR = {
 const PRIVATE_SCHEMA_IR: KeymaIR = {
     irVersion: "1.0.0",
     compilerVersion: "0.1.0",
-    schemas: [
+    classes: [
         {
-            id: "schema:public_user",
             name: "public_user",
             sourceName: "PublicUser",
             visibility: "public",
-            fields: [{ name: "email", type: { kind: "string" }, visibility: "public", readonly: false, required: true, validators: [], formatters: [], source: SRC }],
+            fields: [{ name: "email", type: { kind: "string" }, visibility: "public", readonly: false, required: true, source: SRC }],
             source: SRC,
         },
         {
-            id: "schema:credentials",
             name: "credentials",
             sourceName: "Credentials",
             visibility: "private",
-            fields: [{ name: "hash", type: { kind: "string" }, visibility: "public", readonly: false, required: true, validators: [], formatters: [], source: SRC }],
+            fields: [{ name: "hash", type: { kind: "string" }, visibility: "public", readonly: false, required: true, source: SRC }],
             source: { file: "credentials.ts", line: 1, column: 1 },
         },
     ],
@@ -130,13 +132,12 @@ const PRIVATE_SCHEMA_IR: KeymaIR = {
 const EPHEMERAL_SCHEMA_IR: KeymaIR = {
     irVersion: "1.0.0",
     compilerVersion: "0.1.0",
-    schemas: [
+    classes: [
         {
-            id: "schema:login_input",
             name: "login_input",
             sourceName: "LoginInput",
             visibility: "public",
-            fields: [{ name: "email", type: { kind: "string" }, visibility: "public", readonly: false, required: true, validators: [], formatters: [], source: SRC }],
+            fields: [{ name: "email", type: { kind: "string" }, visibility: "public", readonly: false, required: true, source: SRC }],
             extensions: { schema: { ephemeral: true } },
             source: { file: "login_input.ts", line: 1, column: 1 },
         },
@@ -147,25 +148,23 @@ const EPHEMERAL_SCHEMA_IR: KeymaIR = {
 const REFS_IR: KeymaIR = {
     irVersion: "1.0.0",
     compilerVersion: "0.1.0",
-    schemas: [
+    classes: [
         {
-            id: "schema:address",
             name: "address",
             sourceName: "Address",
             visibility: "public",
             fields: [
-                { name: "line1", type: { kind: "string" }, visibility: "public", readonly: false, required: true, validators: [], formatters: [], source: SRC },
+                { name: "line1", type: { kind: "string" }, visibility: "public", readonly: false, required: true, source: SRC },
             ],
             source: { file: "address.ts", line: 1, column: 1 },
         },
         {
-            id: "schema:customer",
             name: "customer",
             sourceName: "Customer",
             visibility: "public",
             fields: [
-                { name: "id", type: { kind: "id" }, visibility: "public", readonly: true, required: true, validators: [], formatters: [], source: SRC },
-                { name: "home", type: { kind: "embedded", schema: "address" }, visibility: "public", readonly: false, required: false, validators: [], formatters: [], source: SRC },
+                { name: "id", type: { kind: "id" }, visibility: "public", readonly: true, required: true, source: SRC },
+                { name: "home", type: { kind: "embedded", schema: "address" }, visibility: "public", readonly: false, required: false, source: SRC },
             ],
             source: { file: "customer.ts", line: 1, column: 1 },
         },
@@ -176,27 +175,27 @@ const REFS_IR: KeymaIR = {
 const VALIDATORS_IR: KeymaIR = {
     irVersion: "1.0.0",
     compilerVersion: "0.1.0",
-    schemas: [
+    classes: [
         {
-            id: "schema:item",
             name: "item",
             sourceName: "Item",
             visibility: "public",
             fields: [
-                { name: "id", type: { kind: "id" }, visibility: "public", readonly: true, required: true, validators: [{ name: "required" }], formatters: [], source: SRC },
+                { name: "id", type: { kind: "id" }, visibility: "public", readonly: true, required: true, extensions: { schema: { validators: [{ name: "required" }] } }, source: SRC },
             ],
             source: { file: "item.ts", line: 1, column: 1 },
         },
     ],
-    validatorDeclarations: [
+    functionDeclarations: [
         {
             name: "required",
-            factoryParams: [],
-            inputType: { kind: "string" },
-            body: {
-                params: [{ name: "value", role: "value" }],
+            params: [],
+            returnType: { kind: "function", params: [{ name: "value", type: { kind: "string" } }], returns: { kind: "json" } },
+            statements: [{ kind: "return", value: {
+                kind: "arrow",
+                params: [{ name: "value", type: { kind: "string" } }],
                 statements: [{ kind: "return", value: { kind: "binary", op: "!=", left: { kind: "field", name: "value" }, right: { kind: "literal", value: null } } }],
-            },
+            } }],
             source: SRC,
         },
     ],
@@ -206,27 +205,27 @@ const VALIDATORS_IR: KeymaIR = {
 const FORMATTERS_IR: KeymaIR = {
     irVersion: "1.0.0",
     compilerVersion: "0.1.0",
-    schemas: [
+    classes: [
         {
-            id: "schema:item",
             name: "item",
             sourceName: "Item",
             visibility: "public",
             fields: [
-                { name: "name", type: { kind: "string" }, visibility: "public", readonly: false, required: true, validators: [], formatters: [{ phase: "change", spec: { name: "trim" } }], source: SRC },
+                { name: "name", type: { kind: "string" }, visibility: "public", readonly: false, required: true, extensions: { schema: { formatters: [{ phase: "change", spec: { name: "trim" } }] } }, source: SRC },
             ],
             source: { file: "item.ts", line: 1, column: 1 },
         },
     ],
-    formatterDeclarations: [
+    functionDeclarations: [
         {
             name: "trim",
-            factoryParams: [],
-            inputType: { kind: "string" },
-            body: {
-                params: [{ name: "value", role: "value" }],
+            params: [],
+            returnType: { kind: "function", params: [{ name: "value", type: { kind: "string" } }], returns: { kind: "json" } },
+            statements: [{ kind: "return", value: {
+                kind: "arrow",
+                params: [{ name: "value", type: { kind: "string" } }],
                 statements: [{ kind: "return", value: { kind: "call", callee: { kind: "member", object: { kind: "field", name: "value" }, member: "trim" }, args: [] } }],
-            },
+            } }],
             source: SRC,
         },
     ],
@@ -836,8 +835,8 @@ describe("emitJs — formatters module", () => {
 
 describe("emitJs — no validator/formatter modules when IR has none", () => {
     it("does not emit validators.js/formatters.js when there are no declarations", async () => {
-        const noDeclIr: KeymaIR = { ...BASIC_IR, validatorDeclarations: [], formatterDeclarations: [],
-            schemas: BASIC_IR.schemas.map((s) => ({ ...s, fields: s.fields.map((f) => ({ ...f, validators: [], formatters: [] })) })) };
+        const noDeclIr: KeymaIR = { ...BASIC_IR, functionDeclarations: [],
+            classes: BASIC_IR.classes.map((s) => ({ ...s, fields: s.fields.map(({ extensions: _ext, ...f }) => f) })) };
         const result = await emitJs(noDeclIr, bothTarget(), RESOLVED_CONFIG);
         const paths = result.files.map((f) => f.path);
         assert.ok(!paths.some((p) => p.endsWith("validators.js")), "no validators.js when none declared");
@@ -906,16 +905,15 @@ describe("emitJs — library mode with validators", () => {
 const BEHAVIORS_IR: KeymaIR = {
     irVersion: "2.0.0",
     compilerVersion: "0.1.0",
-    schemas: [
+    classes: [
         {
-            id: "schema:user",
             name: "user",
             sourceName: "User",
             visibility: "public",
             fields: [
-                { name: "firstName", type: { kind: "string" }, visibility: "public", readonly: false, required: true, validators: [], formatters: [], source: SRC },
-                { name: "email", type: { kind: "string" }, visibility: "public", readonly: false, required: true, validators: [], formatters: [], source: SRC },
-                { name: "secret", type: { kind: "string" }, visibility: "private", readonly: false, required: false, validators: [], formatters: [], source: SRC },
+                { name: "firstName", type: { kind: "string" }, visibility: "public", readonly: false, required: true, source: SRC },
+                { name: "email", type: { kind: "string" }, visibility: "public", readonly: false, required: true, source: SRC },
+                { name: "secret", type: { kind: "string" }, visibility: "private", readonly: false, required: false, source: SRC },
             ],
             methods: [
                 {
@@ -983,12 +981,12 @@ describe("emitJs — method/setter behaviors", () => {
 const SELF_REF_IR: KeymaIR = {
     irVersion: "2.0.0",
     compilerVersion: "0.1.0",
-    schemas: [
+    classes: [
         {
-            id: "schema:node", name: "node", sourceName: "Node", visibility: "public",
+            name: "node", sourceName: "Node", visibility: "public",
             fields: [
-                { name: "id", type: { kind: "id" }, visibility: "public", readonly: true, required: true, validators: [], formatters: [], extensions: { schema: { indexes: [{ unique: true }] } }, source: SRC },
-                { name: "parent", type: { kind: "reference", schema: "node", idType: { kind: "id" } }, visibility: "public", readonly: false, required: false, validators: [], formatters: [], source: SRC },
+                { name: "id", type: { kind: "id" }, visibility: "public", readonly: true, required: true, extensions: { schema: { indexes: [{ unique: true }] } }, source: SRC },
+                { name: "parent", type: { kind: "reference", schema: "node", idType: { kind: "id" } }, visibility: "public", readonly: false, required: false, source: SRC },
             ],
             source: { file: "node.ts", line: 1, column: 1 },
         },

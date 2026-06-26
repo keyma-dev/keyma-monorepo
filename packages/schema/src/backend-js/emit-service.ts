@@ -11,10 +11,13 @@ export type ServiceEmitFiles = { servicesJs: string; servicesDts: string };
 
 // ── shared helpers ───────────────────────────────────────────────────────────
 
-/** Core (array-unwrapped) reference/embedded target `name` of a type. */
+/** Core (array-unwrapped) schema target `name` of a type — the class a
+ *  reference/embedded points at, or the class an `instance` is a value of. */
 function refTargetName(t: IRType): string | undefined {
     const inner = t.kind === "array" ? t.of : t;
-    return inner.kind === "reference" || inner.kind === "embedded" ? inner.schema : undefined;
+    if (inner.kind === "reference" || inner.kind === "embedded") return inner.schema;
+    if (inner.kind === "instance") return inner.name;
+    return undefined;
 }
 
 /** `name`s of every schema referenced by a method list's params/returns
@@ -77,9 +80,13 @@ function methodMetadata(m: IRServiceMethod): Record<string, unknown> {
     if (m.visibility === "private") out["visibility"] = "private";
     out["params"] = m.params.map((p) => {
         // Only direct (non-array) schema params are validated server-side against a
-        // single record — record the schema's runtime `name`.
+        // single record — record the schema's runtime `name`. A bare-class param is
+        // an `instance` of the class (its `name`); reference/embedded carry `schema`.
         if (p.type.kind === "reference" || p.type.kind === "embedded") {
             return { name: p.name, schema: p.type.schema };
+        }
+        if (p.type.kind === "instance") {
+            return { name: p.name, schema: p.type.name };
         }
         return { name: p.name };
     });

@@ -42,8 +42,8 @@ describe("keyma gen", () => {
             `unexpected errors: ${JSON.stringify(errorDiagnostics)}`
         );
         assert.equal(result.hasErrors, false);
-        assert.equal(result.ir.schemas.length, 1);
-        assert.equal(result.ir.schemas[0]?.name, "user");
+        assert.equal(result.ir.classes.length, 1);
+        assert.equal(result.ir.classes[0]?.name, "user");
 
         // The JS backend writes both client and server bundles by default.
         const expectedFiles = [

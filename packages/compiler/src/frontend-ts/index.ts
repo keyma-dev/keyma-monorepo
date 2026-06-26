@@ -32,17 +32,6 @@ export type { EnumInfo } from "./discover-enums.js";
 export { mapTypeNode, inferIRTypeFromType } from "./map-type.js";
 export type { TypeMapContext, MapTypeResult } from "./map-type.js";
 
-export { createValidatorFormatterCollector } from "./discover-validators.js";
-export type {
-    ResolvedFactory,
-    CollectedFactory,
-    CollectorDeps,
-    ValidatorFormatterCollector,
-} from "./discover-validators.js";
-
-export { lowerValidatorDeclaration, lowerFormatterDeclaration } from "./lower-validator.js";
-export type { LowerDeps } from "./lower-validator.js";
-
 export { createFunctionCollector } from "./lower-function.js";
 export type { FunctionCollector, FunctionCollectorDeps } from "./lower-function.js";
 

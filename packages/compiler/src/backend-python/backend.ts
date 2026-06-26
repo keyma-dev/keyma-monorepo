@@ -1,9 +1,9 @@
 import { path } from "@keyma/core/util";
-import type { KeymaIR, IRSchema, IRValidatorDeclaration, IRFormatterDeclaration, IRFunctionDeclaration } from "@keyma/core/ir";
+import type { KeymaIR, IRClassDeclaration, IRFunctionDeclaration } from "@keyma/core/ir";
 import type { KeymaBackend, KeymaTargetConfig, ResolvedConfig, EmitFile, EmitResult } from "../driver/index.js";
 import { emitModulePython, type ModuleEmitDeps } from "./emit-module.js";
 import { emitIndexPython } from "./emit-index.js";
-import { emitValidatorsPy, emitFormattersPy, emitFunctionsPy } from "./emit-validators.js";
+import { emitFunctionsPy } from "./emit-validators.js";
 import { moduleOf } from "./module-path.js";
 import { resolvePythonTargetJSStyle as resolvePythonTarget, type PythonTargetConfig } from "./types.js";
 import { EmitterRegistry, type PythonEmitterPack } from "./emitter-registry.js";
@@ -29,13 +29,11 @@ export function createPythonBackend(packs: Iterable<PythonEmitterPack>): KeymaBa
 
 type SharedDeps = Pick<
     ModuleEmitDeps,
-    "schemaModule" | "classNameByName" | "validatorDecls" | "formatterDecls" | "functionNames"
+    "schemaModule" | "classNameByName" | "functionDecls" | "functionNames"
     | "validatorsModuleRef" | "formattersModuleRef" | "functionsModuleRef"
 >;
 
 type Decls = {
-    validators: readonly IRValidatorDeclaration[];
-    formatters: readonly IRFormatterDeclaration[];
     functions: readonly IRFunctionDeclaration[];
 };
 
@@ -55,23 +53,20 @@ export async function emitPython(
     const packs = registry.list();
 
     const decls: Decls = {
-        validators: ir.validatorDeclarations ?? [],
-        formatters: ir.formatterDeclarations ?? [],
         functions: ir.functionDeclarations ?? [],
     };
 
     // sourceName → bundle-relative module ref under models/, from the SOURCE file
     // (Python-sanitized: `user-credentials.ts` → models/user_credentials).
     const schemaModule = new Map<string, string>(
-        ir.schemas.map((s) => [s.sourceName, path.posix.join("models", moduleOf(s.source.file, ir.sourceRoot))])
+        ir.classes.map((s) => [s.sourceName, path.posix.join("models", moduleOf(s.source.file, ir.sourceRoot))])
     );
 
     const shared: SharedDeps = {
         schemaModule,
         // Reference/embedded/edge target `name` → emitted Python class (`sourceName`).
-        classNameByName: new Map(ir.schemas.map((s) => [s.name, s.sourceName])),
-        validatorDecls: new Map(decls.validators.map((d) => [d.name, d])),
-        formatterDecls: new Map(decls.formatters.map((d) => [d.name, d])),
+        classNameByName: new Map(ir.classes.map((s) => [s.name, s.sourceName])),
+        functionDecls: new Map(decls.functions.map((d) => [d.name, d])),
         functionNames: new Set(decls.functions.map((d) => d.name)),
         validatorsModuleRef: VALIDATORS_REF,
         formattersModuleRef: FORMATTERS_REF,
@@ -117,11 +112,11 @@ function emitBundle(
     // CAPABILITY, not registration order. Undefined only in a core-only build (no schemas).
     const pack = packs.find((p) => p.buildSchemaData !== undefined);
 
-    const visibleSchemas: IRSchema[] = opts.includePrivate
-        ? ir.schemas
-        : ir.schemas.filter((s) => s.visibility === "public");
+    const visibleSchemas: IRClassDeclaration[] = opts.includePrivate
+        ? ir.classes
+        : ir.classes.filter((s) => s.visibility === "public");
 
-    const groups = new Map<string, IRSchema[]>();
+    const groups = new Map<string, IRClassDeclaration[]>();
     for (const s of visibleSchemas) {
         const ref = shared.schemaModule.get(s.sourceName)!;
         const list = groups.get(ref) ?? [];
@@ -140,15 +135,17 @@ function emitBundle(
         }
     }
 
-    const hasFunctions = decls.functions.length > 0;
-    if (hasFunctions) {
-        files.push({ path: path.posix.join(bundleDir, "functions.py"), content: emitFunctionsPy(decls.functions) });
+    // Shared `functions.py` at the bundle root — the project-local utility functions. Names a
+    // domain pack claims (e.g. the schema pack's validator/formatter factories, which it emits
+    // as runtime validator/formatter wrappers into validators.py/formatters.py via
+    // `emitBundleFiles`) are excluded here so they are emitted once, by their owner.
+    const claimed = new Set<string>();
+    for (const p of packs) {
+        if (p.claimFunctions !== undefined) for (const n of p.claimFunctions(ir)) claimed.add(n);
     }
-    if (decls.validators.length > 0) {
-        files.push({ path: path.posix.join(bundleDir, "validators.py"), content: emitValidatorsPy(decls.validators, hasFunctions) });
-    }
-    if (decls.formatters.length > 0) {
-        files.push({ path: path.posix.join(bundleDir, "formatters.py"), content: emitFormattersPy(decls.formatters, hasFunctions) });
+    const utilityFunctions = decls.functions.filter((d) => !claimed.has(d.name));
+    if (utilityFunctions.length > 0) {
+        files.push({ path: path.posix.join(bundleDir, "functions.py"), content: emitFunctionsPy(utilityFunctions) });
     }
 
     const indexContent = emitIndexPython(visibleSchemas, shared.schemaModule, {
