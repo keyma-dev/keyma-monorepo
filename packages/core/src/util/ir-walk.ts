@@ -1,4 +1,4 @@
-import type { IRExpression, IRStatement, IRField, IRType, IRClassDeclaration } from "../ir/index.js";
+import type { IRExpression, IRStatement, IRField, IRType, IRClassDeclaration, IRFunctionDeclaration } from "../ir/index.js";
 import { filterVisibleFields, filterVisibleMethods } from "./visibility.js";
 
 /** Recursively unwrap array layers from an IRType to get the innermost element type. */
@@ -104,4 +104,33 @@ export function collectFunctionRefs(schemas: readonly IRClassDeclaration[], deps
         }
     }
     return new Set([...ids].filter((id) => deps.functionNames.has(id)));
+}
+
+/**
+ * Transitive closure of declared function names reachable from `seeds`, following
+ * function→function references through each declaration's body. `seeds` are the function
+ * names a bundle's visible roots reference directly (method/default bodies + the
+ * validator/formatter factories attached to visible fields); the closure pulls in the
+ * helpers those functions call in turn. The result drives **per-bundle pruning**: only the
+ * reachable functions are emitted, so a helper reachable solely from a private class's
+ * server method never lands in the client bundle. A seed naming no declaration (an
+ * undeclared/vendor-only ref) contributes nothing and is dropped from the result.
+ */
+export function reachableFunctions(
+    seeds: Iterable<string>,
+    functionsByName: ReadonlyMap<string, IRFunctionDeclaration>,
+): Set<string> {
+    const reached = new Set<string>();
+    const stack = [...seeds];
+    while (stack.length > 0) {
+        const name = stack.pop()!;
+        if (reached.has(name)) continue;
+        const decl = functionsByName.get(name);
+        if (decl === undefined) continue; // an undeclared/vendor-only ref — nothing to recurse into
+        reached.add(name);
+        const ids = new Set<string>();
+        for (const stmt of decl.statements) collectStatementIdentifiers(stmt, ids);
+        for (const id of ids) if (functionsByName.has(id) && !reached.has(id)) stack.push(id);
+    }
+    return reached;
 }

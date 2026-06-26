@@ -54,14 +54,14 @@ export type Knows = InstanceType<typeof _Knows>;
 describe("emitJs — edge .d.ts shaping (schema pack shapeSchemaDts hook)", () => {
     it("privatizes the edge class and re-exports a branded const with the __edge phantom", async () => {
         const { files } = await emitJs(EDGE_IR, LIBRARY_TARGET, CONFIG);
-        const dts = files.find((x) => x.path === "dist/models/knows.d.ts");
+        const dts = files.find((x) => x.path === "dist/src/knows.d.ts");
         assert.ok(dts !== undefined, "edge model .d.ts was emitted");
         assert.equal(dts.content, EXPECTED_KNOWS_DTS);
     });
 
     it("a plain (non-edge) schema keeps the default `export declare class`", async () => {
         const { files } = await emitJs(EDGE_IR, LIBRARY_TARGET, CONFIG);
-        const personDts = files.find((x) => x.path === "dist/models/person.d.ts");
+        const personDts = files.find((x) => x.path === "dist/src/person.d.ts");
         assert.ok(personDts !== undefined);
         assert.ok((personDts.content as string).includes("export declare class Person {"), "plain schema unchanged");
         assert.ok(!(personDts.content as string).includes("__edge"), "no edge phantom on a plain schema");

@@ -59,17 +59,17 @@ describe("JS Backend Structure", () => {
         
         const filePaths = files.map(f => f.path);
         
-        // Output file names mirror the SOURCE file stems (User.ts → User.js), faithfully
-        // replicating the source structure — not the schema name (which fixed the case bug).
-        assert.ok(filePaths.includes("dist/models/auth/User.js"), "Should have auth/User.js");
-        assert.ok(filePaths.includes("dist/models/core/Profile.js"), "Should have core/Profile.js");
+        // Output file names mirror the SOURCE file stems (User.ts → User.js) under the `src/`
+        // prefix, faithfully replicating the source structure — not the schema name.
+        assert.ok(filePaths.includes("dist/src/auth/User.js"), "Should have src/auth/User.js");
+        assert.ok(filePaths.includes("dist/src/core/Profile.js"), "Should have src/core/Profile.js");
 
-        const userJs = files.find(f => f.path === "dist/models/auth/User.js")!.content as string;
+        const userJs = files.find(f => f.path === "dist/src/auth/User.js")!.content as string;
         // The import path should always use forward slashes.
         assert.ok(userJs.includes('import { Profile } from "../core/Profile.js"'), "Should have relative import to profile");
 
         const indexJs = files.find(f => f.path === "dist/index.js")!.content as string;
-        assert.ok(indexJs.includes('export { User } from "./models/auth/User.js"'), "Index should export User from auth/User.js");
-        assert.ok(indexJs.includes('export { Profile } from "./models/core/Profile.js"'), "Index should export Profile from core/Profile.js");
+        assert.ok(indexJs.includes('export { User } from "./src/auth/User.js"'), "Index should export User from src/auth/User.js");
+        assert.ok(indexJs.includes('export { Profile } from "./src/core/Profile.js"'), "Index should export Profile from src/core/Profile.js");
     });
 });

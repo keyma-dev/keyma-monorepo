@@ -1,4 +1,4 @@
-import { moduleOf as moduleOfWith } from "@keyma/core/util";
+import { moduleOf as moduleOfWith, moduleRefOf as moduleRefOfWith } from "@keyma/core/util";
 
 export { isLocal } from "@keyma/core/util";
 
@@ -37,6 +37,15 @@ export function cppSanitizer(segment: string): string {
  */
 export function moduleOf(sourceFile: string, sourceRoot: string | undefined): string {
     return moduleOfWith(sourceFile, sourceRoot, cppSanitizer);
+}
+
+/**
+ * The bundle-relative module ref a declaration emits into: project-local declarations under
+ * `src/` (mirroring their source layout), out-of-project (library) declarations into the
+ * single shared `vendor` module. Segments are sanitized to valid C++ identifiers.
+ */
+export function moduleRefOf(sourceFile: string, sourceRoot: string | undefined): string {
+    return moduleRefOfWith(sourceFile, sourceRoot, cppSanitizer);
 }
 
 /**

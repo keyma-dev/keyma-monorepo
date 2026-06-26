@@ -65,7 +65,7 @@ describe("inlined dependency-free types", () => {
         assert.ok(paths.includes("dist/client/types.js") && paths.includes("dist/client/types.d.ts"));
         assert.ok(paths.includes("dist/server/types.js") && paths.includes("dist/server/types.d.ts"));
 
-        const model = files.find((f) => f.path === "dist/client/models/user.d.ts")!.content as string;
+        const model = files.find((f) => f.path === "dist/client/src/user.d.ts")!.content as string;
         assert.ok(model.includes('from "../types.js"'), "model should import its types locally");
 
         // No generated file may import from a @keyma/* package (comments are fine).

@@ -8,6 +8,6 @@ export type { PythonEmitterPack, BuildSchemaData, SchemaDataOptions, BundleEmitC
 
 // ── Generic emission helpers, exported so domain emitter packs build on the same engine ──
 export { mkRaw, emitLiteral } from "./emit-literal.js";
-export { factoryIdent, moduleHeader, renderStatements } from "./emit-validators.js";
+export { factoryIdent, renderStatements } from "./emit-validators.js";
 export { exprToPython, intrinsicImports } from "./emit-expression.js";
 export { irTypeToPython, irTypeGuard, irTypeLabel } from "./ir-type-to-python.js";

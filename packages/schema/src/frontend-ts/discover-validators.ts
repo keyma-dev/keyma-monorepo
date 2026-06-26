@@ -122,6 +122,25 @@ export function createValidatorFormatterCollector(deps: CollectorDeps): Validato
     };
 }
 
+/**
+ * Whether a function's declared return type marks it as a validator/formatter factory (its
+ * return type is the DSL's `ValidatorFn`/`FormatterFn`, possibly via re-export). Used by the
+ * full-local-surface seeding to exclude factories from the plain utility-function set — they are
+ * lowered separately, only where referenced, via the use-driven collector above.
+ */
+export function isFactoryReturnType(
+    returnTypeNode: ts.TypeNode | undefined,
+    deps: CollectorDeps,
+): boolean {
+    const { checker, dslModuleName, markerNames = DEFAULT_MARKERS, markerModuleName = DEFAULT_MARKER_MODULE } = deps;
+    if (returnTypeNode === undefined || !ts.isTypeReferenceNode(returnTypeNode)) return false;
+    const sym = checker.getSymbolAtLocation(returnTypeNode.typeName);
+    if (sym === undefined) return false;
+    const name = resolveAlias(sym, checker).getName();
+    if (name !== markerNames.validator && name !== markerNames.formatter) return false;
+    return isFromModule(sym, checker, dslModuleName) || isFromModule(sym, checker, markerModuleName);
+}
+
 /** Find the factory declaration (function/arrow with a body) among a symbol's declarations. */
 function findFactory(
     decls: readonly ts.Declaration[],

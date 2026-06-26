@@ -6,7 +6,7 @@ import { assignTags, stripTagHints } from "./assign-tags.js";
 import { discoverSchemas } from "./discover.js";
 import { discoverEnums, type EnumInfo } from "@keyma/compiler/frontend-ts";
 import { createFunctionCollector } from "@keyma/compiler/frontend-ts";
-import { createValidatorFormatterCollector } from "./discover-validators.js";
+import { createValidatorFormatterCollector, isFactoryReturnType } from "./discover-validators.js";
 import { lowerValidatorFactory, lowerFormatterFactory, type LowerDeps } from "./lower-validator.js";
 import { extractSchema } from "./extract-schema.js";
 import { discoverServices } from "./discover-services.js";
@@ -133,9 +133,17 @@ export const schemaFrontendDomain: FrontendDomain = {
             lowerFormatterFactory(c, diagnostics, lowerDeps)
         );
 
-        // Pass 6: lower the utility functions referenced (transitively) from the bodies above.
-        // Validator/formatter factories and utility helpers all live in one `functionDeclarations`
-        // list; the schema backend packs partition by which are referenced as validators/formatters.
+        // Pass 6: enqueue the COMPLETE local utility-function surface — every project-local
+        // top-level function, referenced or not — so the IR is a complete import surface and
+        // tree-shaking is a backend (per-bundle) concern. Validator/formatter factories are
+        // excluded here (identified by their `ValidatorFn`/`FormatterFn` return type); they are
+        // lowered above, only where referenced, by the use-driven collector. Vendor functions stay
+        // reference-driven (only those reached transitively from the bodies above are kept). The
+        // drain then lowers every queued function (which may reference further functions) until the
+        // worklist is empty.
+        functionCollector.enqueueLocalSurface(program, (returnType) =>
+            isFactoryReturnType(returnType, { checker, dslModuleName, markerNames: SCHEMA_MARKERS }),
+        );
         const functionDeclarations = [...validatorFns, ...formatterFns, ...functionCollector.drain()];
 
         // Pass 7: extract @Service contracts (signatures only — no bodies). Runs after
@@ -172,12 +180,12 @@ export const schemaFrontendDomain: FrontendDomain = {
             stripTagHints(schemas);
         }
 
-        // Collect named enums actually referenced by schema fields.
-        const usedEnums = collectUsedEnums(schemas, enums);
+        // Collect the complete local enum surface (plus any referenced vendor enum).
+        const localEnums = collectLocalAndUsedEnums(schemas, enums);
 
         return {
             schemas,
-            enums: usedEnums,
+            enums: localEnums,
             functionDeclarations,
             services,
             ...(tagManifest !== undefined ? { tagManifest } : {}),
@@ -475,11 +483,31 @@ function checkReferenceTargetsHaveId(schemas: IRClassDeclaration[], diagnostics:
     }
 }
 
-/** Collect the IREnumDeclarations for every named enum referenced by a field type. */
-function collectUsedEnums(
+/**
+ * The complete local enum surface: every project-local portable enum (referenced or not, so the
+ * IR is a complete import surface), plus any referenced enum regardless of origin. A non-portable
+ * enum (`members === null`) is skipped — it only errors where referenced (the type mapper reports
+ * KEYMA025 there). Library enums ship as declaration files (already filtered by `discoverEnums`),
+ * so a non-declaration source under `node_modules` is the only vendor case to exclude from the
+ * eager pass; referenced vendor enums still come in via the use-driven pass below.
+ */
+function collectLocalAndUsedEnums(
     schemas: IRClassDeclaration[],
     enums: ReadonlyMap<string, EnumInfo>,
 ): IREnumDeclaration[] {
+    const result: IREnumDeclaration[] = [];
+    const added = new Set<string>();
+    const push = (info: EnumInfo): void => {
+        if (info.members == null || added.has(info.name)) return;
+        added.add(info.name);
+        result.push({ name: info.name, members: info.members, source: info.source });
+    };
+
+    // Eager: every project-local portable enum.
+    for (const info of enums.values()) {
+        if (!info.source.file.replace(/\\/g, "/").includes("/node_modules/")) push(info);
+    }
+    // Use-driven: any enum a field references (covers a vendor enum reached by reference).
     const used = new Set<string>();
     const visit = (t: IRType): void => {
         if (t.kind === "array") visit(t.of);
@@ -488,10 +516,9 @@ function collectUsedEnums(
     for (const schema of schemas) {
         for (const field of schema.fields) visit(field.type);
     }
-    const result: IREnumDeclaration[] = [];
     for (const name of used) {
         const info = enums.get(name);
-        if (info?.members != null) result.push({ name: info.name, members: info.members, source: info.source });
+        if (info !== undefined) push(info);
     }
     return result;
 }

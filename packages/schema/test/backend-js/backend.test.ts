@@ -430,51 +430,51 @@ describe("emitJs — client model", () => {
     });
 
     it("emits the client model .js file", () => {
-        const content = fileContent(files, "dist/js/client/models/user.js");
+        const content = fileContent(files, "dist/js/client/src/user.js");
         assert.ok(content.includes("export class User {"), "missing class declaration");
     });
 
     it("client model assigns public fields in constructor", () => {
-        const content = fileContent(files, "dist/js/client/models/user.js");
+        const content = fileContent(files, "dist/js/client/src/user.js");
         assert.ok(content.includes("this.id = value.id"), "missing id assignment");
         assert.ok(content.includes("this.firstName = value.firstName"), "missing firstName");
         assert.ok(content.includes("this.lastName = value.lastName"), "missing lastName");
     });
 
     it("client model excludes private fields from constructor", () => {
-        const content = fileContent(files, "dist/js/client/models/user.js");
+        const content = fileContent(files, "dist/js/client/src/user.js");
         assert.ok(!content.includes("secretNote"), "private field should be excluded");
     });
 
     it("client model includes the getter accessor (behavior)", () => {
-        const content = fileContent(files, "dist/js/client/models/user.js");
+        const content = fileContent(files, "dist/js/client/src/user.js");
         assert.ok(content.includes("get fullName()"), "missing getter accessor");
         assert.ok(content.includes("`${this.firstName} ${this.lastName}`"), "wrong getter expression");
     });
 
     it("client model .js snapshot", () => {
-        const content = fileContent(files, "dist/js/client/models/user.js");
+        const content = fileContent(files, "dist/js/client/src/user.js");
         matchSnap(content, "client-model-user.js");
     });
 
     it("client model .d.ts snapshot", () => {
-        const content = fileContent(files, "dist/js/client/models/user.d.ts");
+        const content = fileContent(files, "dist/js/client/src/user.d.ts");
         matchSnap(content, "client-model-user.d.ts");
     });
 
     it("client model attaches schema as a frozen static", () => {
-        const content = fileContent(files, "dist/js/client/models/user.js");
+        const content = fileContent(files, "dist/js/client/src/user.js");
         assert.ok(content.includes("User.schema = Object.freeze({"), "missing inline schema literal");
     });
 
     it("client schema literal excludes private fields", () => {
-        const content = fileContent(files, "dist/js/client/models/user.js");
+        const content = fileContent(files, "dist/js/client/src/user.js");
         // secretNote should not appear in the constructor *or* the schema metadata
         assert.ok(!content.includes("secretNote"), "private field should be excluded from client model");
     });
 
     it("client schema literal excludes index metadata", () => {
-        const content = fileContent(files, "dist/js/client/models/user.js");
+        const content = fileContent(files, "dist/js/client/src/user.js");
         const data = content.match(/\"indexes\":\s*\[([^\]]*)\]/g) ?? [];
         for (const indexStr of data) {
             assert.ok(!indexStr.includes("{"), `client schema should have no index entries: ${indexStr}`);
@@ -482,13 +482,13 @@ describe("emitJs — client model", () => {
     });
 
     it("client model does not emit materializer", () => {
-        const content = fileContent(files, "dist/js/client/models/user.js");
+        const content = fileContent(files, "dist/js/client/src/user.js");
         assert.ok(!content.includes("function materialize"), "client should not have materializers");
     });
 
     it("client index.js re-exports model only", () => {
         const content = fileContent(files, "dist/js/client/index.js");
-        assert.ok(content.includes(`from "./models/user.js"`), "missing model export");
+        assert.ok(content.includes(`from "./src/user.js"`), "missing model export");
         assert.ok(content.includes("User"), "missing User export");
         assert.ok(!content.includes("materialize"), "client index should not export materializers");
     });
@@ -505,43 +505,43 @@ describe("emitJs — server model", () => {
     });
 
     it("server model .js snapshot", () => {
-        const content = fileContent(files, "dist/js/server/models/user.js");
+        const content = fileContent(files, "dist/js/server/src/user.js");
         matchSnap(content, "server-model-user.js");
     });
 
     it("server model .d.ts snapshot", () => {
-        const content = fileContent(files, "dist/js/server/models/user.d.ts");
+        const content = fileContent(files, "dist/js/server/src/user.d.ts");
         matchSnap(content, "server-model-user.d.ts");
     });
 
     it("server model includes private field in constructor", () => {
-        const content = fileContent(files, "dist/js/server/models/user.js");
+        const content = fileContent(files, "dist/js/server/src/user.js");
         assert.ok(content.includes("this.secretNote = value.secretNote"), "private field missing from server model");
     });
 
     it("server schema literal includes all fields", () => {
-        const content = fileContent(files, "dist/js/server/models/user.js");
+        const content = fileContent(files, "dist/js/server/src/user.js");
         assert.ok(content.includes("secretNote"), "private field should appear in server schema metadata");
     });
 
     it("server schema literal includes field-level index metadata", () => {
-        const content = fileContent(files, "dist/js/server/models/user.js");
+        const content = fileContent(files, "dist/js/server/src/user.js");
         assert.ok(content.includes('"unique": true'), "unique index missing from server schema");
     });
 
     it("server schema literal includes schema-level index metadata", () => {
-        const content = fileContent(files, "dist/js/server/models/user.js");
+        const content = fileContent(files, "dist/js/server/src/user.js");
         assert.ok(content.includes('"direction": 1'), "schema index missing from server");
     });
 
     it("server model emits the getter accessor and NO materializer", () => {
-        const content = fileContent(files, "dist/js/server/models/user.js");
+        const content = fileContent(files, "dist/js/server/src/user.js");
         assert.ok(content.includes("get fullName()"), "getter accessor missing from server model");
         assert.ok(!content.includes("function materialize"), "materializers are removed — none should be emitted");
     });
 
     it("server schema metadata does not include the getter as a field", () => {
-        const content = fileContent(files, "dist/js/server/models/user.js");
+        const content = fileContent(files, "dist/js/server/src/user.js");
         const literal = content.slice(content.indexOf("User.schema = Object.freeze("));
         assert.ok(!literal.includes(`"name": "fullName"`), "getter must not appear as a schema field");
         assert.ok(!literal.includes('"computed"'), "no computed flag in schema metadata");
@@ -550,7 +550,7 @@ describe("emitJs — server model", () => {
     it("server index.js does not export a materializer", () => {
         const content = fileContent(files, "dist/js/server/index.js");
         assert.ok(!content.includes("materialize"), "materializers are removed — server index must not export one");
-        assert.ok(content.includes(`from "./models/user.js"`), "model should still be re-exported");
+        assert.ok(content.includes(`from "./src/user.js"`), "model should still be re-exported");
     });
 });
 
@@ -565,14 +565,14 @@ describe("emitJs — inheritance", () => {
     });
 
     it("Employee model is a flat class (no extends/super after flattening)", () => {
-        const content = fileContent(files, "dist/js/client/models/employee.js");
+        const content = fileContent(files, "dist/js/client/src/employee.js");
         assert.ok(content.includes("export class Employee {"), "expected a flat class declaration");
         assert.ok(!content.includes("extends Person"), "must not re-emit an extends clause");
         assert.ok(!content.includes("super(value)"), "must not call super — fields are flattened");
     });
 
     it("Employee assigns each inherited field exactly once", () => {
-        const content = fileContent(files, "dist/js/client/models/employee.js");
+        const content = fileContent(files, "dist/js/client/src/employee.js");
         const count = (needle: string) => content.split(needle).length - 1;
         assert.equal(count("this.id = value.id;"), 1);
         assert.equal(count("this.name = value.name;"), 1);
@@ -580,7 +580,7 @@ describe("emitJs — inheritance", () => {
     });
 
     it("Employee .d.ts is a flat class", () => {
-        const content = fileContent(files, "dist/js/client/models/employee.d.ts");
+        const content = fileContent(files, "dist/js/client/src/employee.d.ts");
         assert.ok(content.includes("export declare class Employee {"), "expected a flat declared class");
         assert.ok(!content.includes("extends Person"), "must not re-emit extends in .d.ts");
     });
@@ -612,12 +612,12 @@ describe("emitJs — private schema visibility", () => {
     });
 
     it("private schema metadata appears in server model file", () => {
-        const content = fileContent(files, "dist/js/server/models/credentials.js");
+        const content = fileContent(files, "dist/js/server/src/credentials.js");
         assert.ok(content.includes("Credentials.schema = Object.freeze("), "private schema metadata missing from server");
     });
 
     it("private schema metadata carries visibility flag in server model file", () => {
-        const content = fileContent(files, "dist/js/server/models/credentials.js");
+        const content = fileContent(files, "dist/js/server/src/credentials.js");
         assert.match(
             content,
             /"visibility":\s*"private"/,
@@ -628,7 +628,7 @@ describe("emitJs — private schema visibility", () => {
     it("public schema metadata does not carry a schema-level visibility flag", () => {
         const result = emitJs(BASIC_IR, serverOnlyTarget(), RESOLVED_CONFIG);
         return result.then((r) => {
-            const content = fileContent(r.files, "dist/js/server/models/user.js");
+            const content = fileContent(r.files, "dist/js/server/src/user.js");
             // The field-level visibility for `secretNote` is allowed; the schema literal itself
             // must not declare visibility for a public schema.
             const schemaBlock = content.slice(content.indexOf("User.schema = Object.freeze("));
@@ -642,7 +642,7 @@ describe("emitJs — private schema visibility", () => {
 
     it("private schema model is not emitted in client bundle", () => {
         const clientPaths = files.filter((f) => f.path.startsWith("dist/js/client/")).map((f) => f.path);
-        assert.ok(!clientPaths.includes("dist/js/client/models/credentials.js"), "private schema should not appear in client");
+        assert.ok(!clientPaths.includes("dist/js/client/src/credentials.js"), "private schema should not appear in client");
     });
 });
 
@@ -670,7 +670,7 @@ describe("emitJs — ephemeral schema", () => {
 
     it("ephemeral schema metadata carries the ephemeral flag in both bundles", () => {
         for (const bundle of ["client", "server"]) {
-            const content = fileContent(files, `dist/js/${bundle}/models/login_input.js`);
+            const content = fileContent(files, `dist/js/${bundle}/src/login_input.js`);
             assert.match(
                 content,
                 /"ephemeral":\s*true/,
@@ -691,17 +691,17 @@ describe("emitJs — refs", () => {
     });
 
     it("emits refs as a Map keyed by the referenced name", () => {
-        const content = fileContent(files, "dist/js/client/models/customer.js");
+        const content = fileContent(files, "dist/js/client/src/customer.js");
         assert.ok(content.includes(`"refs": new Map([["address", Address]])`), `refs Map missing or malformed:\n${content}`);
     });
 
     it("model imports the referenced class so the Map entry is bound", () => {
-        const content = fileContent(files, "dist/js/client/models/customer.js");
+        const content = fileContent(files, "dist/js/client/src/customer.js");
         assert.ok(content.includes(`import { Address } from "./address.js"`), "missing Address import");
     });
 
     it("embeds sourceName in the schema literal", () => {
-        const content = fileContent(files, "dist/js/client/models/customer.js");
+        const content = fileContent(files, "dist/js/client/src/customer.js");
         assert.ok(content.includes(`"sourceName": "Customer"`), "sourceName missing from schema metadata");
     });
 });
@@ -718,16 +718,16 @@ describe("emitJs — output structure", () => {
 
     it("emits correct set of client files", () => {
         const paths = files.map((f) => f.path);
-        assert.ok(paths.includes("out/client/models/user.js"), "client model .js");
-        assert.ok(paths.includes("out/client/models/user.d.ts"), "client model .d.ts");
+        assert.ok(paths.includes("out/client/src/user.js"), "client model .js");
+        assert.ok(paths.includes("out/client/src/user.d.ts"), "client model .d.ts");
         assert.ok(paths.includes("out/client/index.js"), "client index.js");
         assert.ok(paths.includes("out/client/index.d.ts"), "client index.d.ts");
     });
 
     it("emits correct set of server files", () => {
         const paths = files.map((f) => f.path);
-        assert.ok(paths.includes("out/server/models/user.js"), "server model .js");
-        assert.ok(paths.includes("out/server/models/user.d.ts"), "server model .d.ts");
+        assert.ok(paths.includes("out/server/src/user.js"), "server model .js");
+        assert.ok(paths.includes("out/server/src/user.d.ts"), "server model .d.ts");
         assert.ok(paths.includes("out/server/index.js"), "server index.js");
         assert.ok(paths.includes("out/server/index.d.ts"), "server index.d.ts");
     });
@@ -761,9 +761,9 @@ describe("emitJs — output structure", () => {
     });
 });
 
-// ─── Validators emitted as a direct-ref module (not via the index/registry) ──
+// ─── Validators emitted into their source module (not a shared bundle/registry) ──
 
-describe("emitJs — validators module", () => {
+describe("emitJs — validators in their source module", () => {
     let files: { path: string; content: string | Uint8Array }[];
 
     before(async () => {
@@ -771,14 +771,14 @@ describe("emitJs — validators module", () => {
         files = result.files;
     });
 
-    it("emits a validators.js with direct-ref factory exports (no registry)", () => {
-        const content = fileContent(files, "dist/js/server/validators.js");
+    it("emits the factory into its source module with a direct-ref export (no registry)", () => {
+        const content = fileContent(files, "dist/js/server/src/schema.js");
         assert.ok(content.includes(`export const required =`), "missing required factory export");
         assert.ok(!content.includes("createValidatorRegistry"), "should not emit a registry");
     });
 
     it("the injected type-guard returns a ValidationError object, not a string", () => {
-        const content = fileContent(files, "dist/js/server/validators.js");
+        const content = fileContent(files, "dist/js/server/src/schema.js");
         // `required` declares no field param, so the field falls back to `undefined`.
         assert.ok(
             content.includes(`return { field: undefined, code: "type_error", message: "expected string" }`),
@@ -787,26 +787,27 @@ describe("emitJs — validators module", () => {
         assert.ok(!content.includes(`return "expected string"`), "must not return a bare string");
     });
 
-    it("does not emit a registry.js", () => {
+    it("does not emit a registry.js or a shared validators.js bundle", () => {
         const paths = files.map((f) => f.path);
         assert.ok(!paths.some((p) => p.endsWith("registry.js")), "registry.js should not be emitted");
+        assert.ok(!paths.some((p) => p.endsWith("/validators.js")), "shared validators.js bundle should not be emitted");
     });
 
-    it("the index does not re-export validators (they are internal)", () => {
+    it("the index does not re-export the validator's function-only module (it is internal)", () => {
         const content = fileContent(files, "dist/js/server/index.js");
-        assert.ok(!content.includes(`from "./validators.js"`), "index must not re-export validators");
+        assert.ok(!content.includes(`from "./src/schema.js"`), "index must not re-export a function-only module");
     });
 
-    it("a field's metadata references the factory call directly", () => {
-        const content = fileContent(files, "dist/js/server/models/item.js");
-        assert.ok(content.includes(`import { required } from "../validators.js"`), "model should import the factory");
+    it("a field's metadata references the factory call directly, imported from its source module", () => {
+        const content = fileContent(files, "dist/js/server/src/item.js");
+        assert.ok(content.includes(`import { required } from "./schema.js"`), "model should import the factory from its source module");
         assert.ok(content.includes(`"validators": [\n                required()\n            ]`) || content.includes(`required()`), "metadata should call the factory");
     });
 });
 
-// ─── Formatters emitted as a direct-ref module ───────────────────────────────
+// ─── Formatters emitted into their source module ─────────────────────────────
 
-describe("emitJs — formatters module", () => {
+describe("emitJs — formatters in their source module", () => {
     let files: { path: string; content: string | Uint8Array }[];
 
     before(async () => {
@@ -814,19 +815,20 @@ describe("emitJs — formatters module", () => {
         files = result.files;
     });
 
-    it("emits a formatters.js with direct-ref factory exports (no registry)", () => {
-        const content = fileContent(files, "dist/js/server/formatters.js");
+    it("emits the factory into its source module with a direct-ref export (no registry)", () => {
+        const content = fileContent(files, "dist/js/server/src/schema.js");
         assert.ok(content.includes(`export const trim =`), "missing trim factory export");
         assert.ok(!content.includes("createFormatterRegistry"), "should not emit a formatter registry");
     });
 
-    it("does not emit a formatter-registry.js", () => {
+    it("does not emit a formatter-registry.js or a shared formatters.js bundle", () => {
         const paths = files.map((f) => f.path);
         assert.ok(!paths.some((p) => p.endsWith("formatter-registry.js")), "formatter-registry.js should not be emitted");
+        assert.ok(!paths.some((p) => p.endsWith("/formatters.js")), "shared formatters.js bundle should not be emitted");
     });
 
     it("a field's metadata references the formatter via { phase, fn }", () => {
-        const content = fileContent(files, "dist/js/server/models/item.js");
+        const content = fileContent(files, "dist/js/server/src/item.js");
         assert.ok(content.includes(`"fn": trim()`), "formatter should be a direct fn call");
     });
 });
@@ -834,13 +836,15 @@ describe("emitJs — formatters module", () => {
 // ─── No validator/formatter modules when IR has none ──────────────────────────
 
 describe("emitJs — no validator/formatter modules when IR has none", () => {
-    it("does not emit validators.js/formatters.js when there are no declarations", async () => {
+    it("emits no function-only module when there are no declarations", async () => {
         const noDeclIr: KeymaIR = { ...BASIC_IR, functionDeclarations: [],
             classes: BASIC_IR.classes.map((s) => ({ ...s, fields: s.fields.map(({ extensions: _ext, ...f }) => f) })) };
         const result = await emitJs(noDeclIr, bothTarget(), RESOLVED_CONFIG);
         const paths = result.files.map((f) => f.path);
         assert.ok(!paths.some((p) => p.endsWith("validators.js")), "no validators.js when none declared");
         assert.ok(!paths.some((p) => p.endsWith("formatters.js")), "no formatters.js when none declared");
+        // The only source module is the schema's own (user.ts); no function-only schema.ts module.
+        assert.ok(!paths.some((p) => p.endsWith("/src/schema.js")), "no function-only module when none declared");
     });
 });
 
@@ -856,8 +860,8 @@ describe("emitJs — library mode", () => {
 
     it("emits model files directly into outDir (no client/ or server/ subdirectory)", () => {
         const paths = files.map((f) => f.path);
-        assert.ok(paths.includes("dist/js/models/user.js"), "library model .js missing");
-        assert.ok(paths.includes("dist/js/models/user.d.ts"), "library model .d.ts missing");
+        assert.ok(paths.includes("dist/js/src/user.js"), "library model .js missing");
+        assert.ok(paths.includes("dist/js/src/user.d.ts"), "library model .d.ts missing");
         assert.ok(paths.includes("dist/js/index.js"), "library index.js missing");
         assert.ok(paths.includes("dist/js/index.d.ts"), "library index.d.ts missing");
     });
@@ -869,12 +873,12 @@ describe("emitJs — library mode", () => {
     });
 
     it("includes private fields (server-like behaviour)", () => {
-        const content = fileContent(files, "dist/js/models/user.js");
+        const content = fileContent(files, "dist/js/src/user.js");
         assert.ok(content.includes("secretNote"), "library mode should include private fields");
     });
 
     it("emits the getter accessor and no materializer", () => {
-        const content = fileContent(files, "dist/js/models/user.js");
+        const content = fileContent(files, "dist/js/src/user.js");
         assert.ok(content.includes("get fullName()"), "library mode should emit the getter accessor");
         assert.ok(!content.includes("function materialize"), "materializers are removed");
     });
@@ -886,17 +890,17 @@ describe("emitJs — library mode", () => {
 });
 
 describe("emitJs — library mode with validators", () => {
-    it("emits a validators.js (no registry) into outDir directly", async () => {
+    it("emits the validator's source module under src/ (no registry)", async () => {
         const result = await emitJs(VALIDATORS_IR, libraryTarget(), RESOLVED_CONFIG);
         const paths = result.files.map((f) => f.path);
-        assert.ok(paths.includes("dist/js/validators.js"), "validators.js missing in library mode");
+        assert.ok(paths.includes("dist/js/src/schema.js"), "validator source module missing in library mode");
         assert.ok(!paths.some((p) => p.endsWith("registry.js")), "registry.js should not be emitted");
     });
 
-    it("the library index does not re-export validators (internal impl)", async () => {
+    it("the library index does not re-export the validator's function-only module (internal impl)", async () => {
         const result = await emitJs(VALIDATORS_IR, libraryTarget(), RESOLVED_CONFIG);
         const content = fileContent(result.files, "dist/js/index.js");
-        assert.ok(!content.includes(`from "./validators.js"`), "validators must not be re-exported from library index");
+        assert.ok(!content.includes(`from "./src/schema.js"`), "function-only module must not be re-exported from library index");
     });
 });
 
@@ -952,7 +956,7 @@ describe("emitJs — method/setter behaviors", () => {
     });
 
     it("emits a method and setter into the server model .js", () => {
-        const content = fileContent(serverFiles, "dist/js/server/models/user.js");
+        const content = fileContent(serverFiles, "dist/js/server/src/user.js");
         assert.ok(content.includes("greeting(prefix) {"), "method missing");
         assert.ok(content.includes("return `${prefix} ${this.firstName}`;"), "method body wrong");
         assert.ok(content.includes("set primaryEmail(value) {"), "setter missing");
@@ -960,19 +964,72 @@ describe("emitJs — method/setter behaviors", () => {
     });
 
     it("emits method/setter declarations into the server .d.ts", () => {
-        const content = fileContent(serverFiles, "dist/js/server/models/user.d.ts");
+        const content = fileContent(serverFiles, "dist/js/server/src/user.d.ts");
         assert.ok(content.includes("greeting(prefix: string): string;"), "method decl missing");
         assert.ok(content.includes("set primaryEmail(value: string);"), "setter decl missing");
         assert.ok(content.includes("stash(v: string): void;"), "void method decl missing");
     });
 
     it("includes a private behavior in the server bundle but not the client", () => {
-        assert.ok(fileContent(serverFiles, "dist/js/server/models/user.js").includes("stash(v) {"), "private method missing from server");
-        const client = fileContent(clientFiles, "dist/js/client/models/user.js");
+        assert.ok(fileContent(serverFiles, "dist/js/server/src/user.js").includes("stash(v) {"), "private method missing from server");
+        const client = fileContent(clientFiles, "dist/js/client/src/user.js");
         assert.ok(!client.includes("stash"), "private method leaked into client bundle");
         // Public behaviors still appear in the client bundle.
         assert.ok(client.includes("greeting(prefix) {"), "public method missing from client");
         assert.ok(client.includes("set primaryEmail(value) {"), "public setter missing from client");
+    });
+});
+
+// ─── Function-level client/server reachability gate (issue 006) ────────────────
+//
+// Tree-shaking is per-bundle reachability from each bundle's visible roots, and that
+// reachability IS the client/server security gate: a utility function reached only from a
+// private (server-only) method must never land in the client bundle.
+
+const FN_GATE_IR: KeymaIR = {
+    irVersion: "2.0.0",
+    compilerVersion: "0.1.0",
+    classes: [
+        {
+            name: "widget", sourceName: "Widget", visibility: "public",
+            fields: [
+                { name: "label", type: { kind: "string" }, visibility: "public", readonly: false, required: true, source: SRC },
+            ],
+            methods: [
+                {
+                    name: "render", kind: "method", params: [], returnType: { kind: "string" },
+                    statements: [{ kind: "return", value: { kind: "call", callee: { kind: "identifier", name: "publicHelper" }, args: [{ kind: "field", name: "label" }] } }],
+                    visibility: "public", source: SRC,
+                },
+                {
+                    name: "audit", kind: "method", params: [], returnType: { kind: "string" },
+                    statements: [{ kind: "return", value: { kind: "call", callee: { kind: "identifier", name: "serverHelper" }, args: [{ kind: "field", name: "label" }] } }],
+                    visibility: "private", source: SRC,
+                },
+            ],
+            source: { file: "widget.ts", line: 1, column: 1 },
+        },
+    ],
+    functionDeclarations: [
+        { name: "publicHelper", params: [{ name: "s", type: { kind: "string" } }], returnType: { kind: "string" }, statements: [{ kind: "return", value: { kind: "identifier", name: "s" } }], source: { file: "widget.ts", line: 2, column: 1 } },
+        { name: "serverHelper", params: [{ name: "s", type: { kind: "string" } }], returnType: { kind: "string" }, statements: [{ kind: "return", value: { kind: "identifier", name: "s" } }], source: { file: "widget.ts", line: 3, column: 1 } },
+    ],
+    diagnostics: [],
+};
+
+describe("emitJs — function-level client/server reachability gate", () => {
+    it("prunes a function reached only from a private method out of the client bundle", async () => {
+        const clientFiles = (await emitJs(FN_GATE_IR, clientOnlyTarget(), RESOLVED_CONFIG)).files;
+        const serverFiles = (await emitJs(FN_GATE_IR, serverOnlyTarget(), RESOLVED_CONFIG)).files;
+        const client = fileContent(clientFiles, "dist/js/client/src/widget.js");
+        const server = fileContent(serverFiles, "dist/js/server/src/widget.js");
+        // A helper reachable from a public method is in both bundles.
+        assert.ok(client.includes("function publicHelper"), "public-reachable helper missing from client");
+        assert.ok(server.includes("function publicHelper"), "public-reachable helper missing from server");
+        // The security gate: a helper reachable only from the private method is on the server,
+        // never the client.
+        assert.ok(server.includes("function serverHelper"), "server-reachable helper missing from server");
+        assert.ok(!client.includes("serverHelper"), "server-only helper leaked into the client bundle");
     });
 });
 
@@ -997,12 +1054,12 @@ const SELF_REF_IR: KeymaIR = {
 describe("emitJs — self-referential reference", () => {
     it("does not emit an import of the class into its own model file", async () => {
         const files = (await emitJs(SELF_REF_IR, serverOnlyTarget(), RESOLVED_CONFIG)).files;
-        const js = fileContent(files, "dist/js/server/models/node.js");
+        const js = fileContent(files, "dist/js/server/src/node.js");
         assert.ok(!/^import \{ Node \} from/m.test(js), "model self-imports its own class");
         // The ref is still resolvable via the embedded refs map.
         assert.ok(js.includes(`["node", Node]`), "self-ref should remain in the refs map");
 
-        const dts = fileContent(files, "dist/js/server/models/node.d.ts");
+        const dts = fileContent(files, "dist/js/server/src/node.d.ts");
         assert.ok(!/^import type \{ Node \} from/m.test(dts), ".d.ts self-imports its own class");
     });
 });

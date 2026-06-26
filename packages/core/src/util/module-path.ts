@@ -10,6 +10,26 @@ function stemOf(file: string): string {
     return path.basename(file).replace(/\.[^.]+$/, "");
 }
 
+/** Bundle-relative path prefix every project-local declaration's module sits under. Keeps
+ *  generated source modules collision-safe against the bundle-root scaffolding
+ *  (`index` / `types` / `vendor`) and gives a clean leading namespace segment. */
+export const LOCAL_MODULE_PREFIX = "src";
+
+/** The single shared module that collects out-of-project (library) declarations re-emitted
+ *  into the output. Unified across declaration kinds and tree-shaken to referenced symbols. */
+export const VENDOR_MODULE = "vendor";
+
+/**
+ * The bundle-relative module ref (no extension) a declaration emits into, derived from its
+ * SOURCE file. Project-local declarations mirror their source layout under `src/`;
+ * out-of-project (`!isLocal`) declarations collapse into the single shared `vendor` module.
+ * The universal emission unit for every declaration kind — classes, enums, and functions.
+ */
+export function moduleRefOf(sourceFile: string, sourceRoot: string | undefined, sanitize: Sanitizer): string {
+    if (!isLocal(sourceFile, sourceRoot)) return sanitize(VENDOR_MODULE);
+    return path.posix.join(sanitize(LOCAL_MODULE_PREFIX), moduleOf(sourceFile, sourceRoot, sanitize));
+}
+
 /**
  * POSIX module path (no extension) mirroring a source file's location relative to
  * `sourceRoot`, with each segment sanitized for the target. Derived from the SOURCE

@@ -82,7 +82,7 @@ describe("JS Backend — services", () => {
         assert.ok(js.includes("export class Greeter {}"));
         assert.ok(js.includes("Greeter.service = Object.freeze("));
         assert.ok(js.includes('new Map([["out", Out]])'), "client carries refs for return hydration");
-        assert.ok(js.includes('import { Out } from "./models/svc.js"'));
+        assert.ok(js.includes('import { Out } from "./src/svc.js"'));
         assert.ok(!js.includes("secret"), "private method excluded from client");
 
         const dts = fileContent(files, "dist/client/services.d.ts");

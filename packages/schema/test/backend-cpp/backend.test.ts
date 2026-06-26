@@ -21,9 +21,9 @@ describe("emitCpp — library bundle", async () => {
 
     it("emits the expected header set (no client/server subdir)", () => {
         for (const p of [
-            "out/models/user.hpp", "out/models/address.hpp",
-            "out/models/tag.hpp", "out/models/secret.hpp", "out/validators.hpp",
-            "out/formatters.hpp", "out/services.hpp", "out/index.hpp",
+            "out/src/user.hpp", "out/src/address.hpp",
+            "out/src/tag.hpp", "out/src/secret.hpp", "out/src/validators.hpp",
+            "out/src/formatters.hpp", "out/services.hpp", "out/index.hpp",
         ]) {
             assert.ok(paths.includes(p), `missing ${p}; got ${paths.join(", ")}`);
         }
@@ -32,13 +32,13 @@ describe("emitCpp — library bundle", async () => {
     it("depends on @keyma/runtime-cpp by default (no vendored runtime header)", () => {
         assert.ok(!paths.some((p) => p.endsWith("keyma_support.hpp")), "stale keyma_support.hpp emitted");
         assert.ok(!paths.some((p) => p.endsWith("keyma_runtime.hpp")), "runtime vendored without vendorRuntime");
-        const u = fileBySuffix(files, "models/user.hpp");
+        const u = fileBySuffix(files, "src/user.hpp");
         assert.ok(u.includes("#include <keyma/runtime.hpp>"));
     });
 
     it("model struct is pmr/allocator-aware with the right member types", () => {
-        const u = fileBySuffix(files, "models/user.hpp");
-        assert.ok(u.includes("namespace app::models::user"));
+        const u = fileBySuffix(files, "src/user.hpp");
+        assert.ok(u.includes("namespace app::src::user"));
         assert.ok(u.includes("struct User {"));
         assert.ok(u.includes("using allocator_type = std::pmr::polymorphic_allocator<std::byte>;"));
         assert.ok(u.includes("explicit User(const allocator_type& a)"));
@@ -46,14 +46,14 @@ describe("emitCpp — library bundle", async () => {
         assert.ok(u.includes("std::pmr::string firstName;"));
         assert.ok(u.includes("std::optional<std::pmr::string> nickname;"));      // optional
         assert.ok(u.includes("keyma::Field<std::pmr::string> alias;"));          // both axes
-        assert.ok(u.includes("app::models::address::Address address;"));          // embedded by value
-        assert.ok(u.includes("std::shared_ptr<app::models::tag::Tag> primaryTag;")); // reference → shared_ptr
-        assert.ok(u.includes("app::models::user::Status status;"));              // named enum → enum class
+        assert.ok(u.includes("app::src::address::Address address;"));          // embedded by value
+        assert.ok(u.includes("std::shared_ptr<app::src::tag::Tag> primaryTag;")); // reference → shared_ptr
+        assert.ok(u.includes("app::src::user::Status status;"));              // named enum → enum class
         assert.ok(u.includes("static_assert(std::uses_allocator_v<User"));
     });
 
     it("emits typed field descriptors (struct f) for the where/projection DSL", () => {
-        const u = fileBySuffix(files, "models/user.hpp");
+        const u = fileBySuffix(files, "src/user.hpp");
         assert.ok(u.includes("    struct f {"), "nested struct f of descriptors");
         // a scalar string field → Ordered, Value is the member type, no ref target
         assert.ok(u.includes(
@@ -61,48 +61,48 @@ describe("emitCpp — library bundle", async () => {
             + ' static constexpr std::string_view key() { return "firstName"; }'
             + ' static constexpr keyma::FieldKind kind = keyma::FieldKind::Ordered; };'));
         // named enum → Enum, Value is the enum class
-        assert.ok(u.includes("using Value = app::models::user::Status; using RefTarget = void;"));
+        assert.ok(u.includes("using Value = app::src::user::Status; using RefTarget = void;"));
         assert.ok(u.includes('return "status"; } static constexpr keyma::FieldKind kind = keyma::FieldKind::Enum;'));
         // reference → Reference, Value is the target's id type, RefTarget is the target struct
-        assert.ok(u.includes("using Value = std::pmr::string; using RefTarget = app::models::tag::Tag;"));
+        assert.ok(u.includes("using Value = std::pmr::string; using RefTarget = app::src::tag::Tag;"));
         assert.ok(u.includes('return "primaryTag"; } static constexpr keyma::FieldKind kind = keyma::FieldKind::Reference;'));
         // a constexpr instance per field so callers write User::f::firstName
         assert.ok(u.includes("static constexpr firstName_ firstName{};"));
     });
 
     it("named enum lowers to an enum class with keyma:: to_string/from_string specializations", () => {
-        const u = fileBySuffix(files, "models/user.hpp");
+        const u = fileBySuffix(files, "src/user.hpp");
         assert.ok(u.includes("enum class Status { Active, Archived };"));
-        assert.ok(u.includes("template <> inline std::string_view to_string<app::models::user::Status>"));
-        assert.ok(u.includes("template <> inline app::models::user::Status from_string<app::models::user::Status>"));
+        assert.ok(u.includes("template <> inline std::string_view to_string<app::src::user::Status>"));
+        assert.ok(u.includes("template <> inline app::src::user::Status from_string<app::src::user::Status>"));
         // from_value converts the dynamic string to the enum class.
-        assert.ok(u.includes("keyma::from_string<app::models::user::Status>"));
+        assert.ok(u.includes("keyma::from_string<app::src::user::Status>"));
     });
 
     it("reference fields use the generic shared_ptr id-stub via value_traits (cycle-safe)", () => {
-        const u = fileBySuffix(files, "models/user.hpp");
+        const u = fileBySuffix(files, "src/user.hpp");
         // The per-field coercion is gone — from_value delegates to the runtime templates.
-        assert.ok(u.includes('keyma::from_value<std::shared_ptr<app::models::tag::Tag>>(v.at("primaryTag"), a)'));
+        assert.ok(u.includes('keyma::from_value<std::shared_ptr<app::src::tag::Tag>>(v.at("primaryTag"), a)'));
         // User is itself a reference target (Tag.owner → user), so its value_traits carries id-stub helpers.
         assert.ok(u.includes("static void set_id(T& t, const keyma::Value& idv, keyma::alloc_t a)"));
         assert.ok(u.includes("static keyma::Value id_value("));
         // The reference target is forward-declared (struct AND value_traits) and its header
         // included AFTER the structs (with #pragma once this breaks the cycle).
-        assert.ok(u.includes("namespace app::models::tag { struct Tag; }"));
-        assert.ok(u.includes("namespace keyma { template <> struct value_traits<app::models::tag::Tag>; }"));
+        assert.ok(u.includes("namespace app::src::tag { struct Tag; }"));
+        assert.ok(u.includes("namespace keyma { template <> struct value_traits<app::src::tag::Tag>; }"));
         const fwdIdx = u.indexOf("struct User {");
-        const incIdx = u.indexOf('#include "models/tag.hpp"');
+        const incIdx = u.indexOf('#include "src/tag.hpp"');
         assert.ok(incIdx > fwdIdx, "reference target include must come after the struct definition");
     });
 
     it("includes private field/schema in library/server bundles", () => {
-        const u = fileBySuffix(files, "models/user.hpp");
+        const u = fileBySuffix(files, "src/user.hpp");
         assert.ok(u.includes("secretNote"));
-        assert.ok(paths.includes("out/models/secret.hpp"));
+        assert.ok(paths.includes("out/src/secret.hpp"));
     });
 
     it("emits getter accessors, method, from_value, schema(), apply_defaults — and NO materializer", () => {
-        const u = fileBySuffix(files, "models/user.hpp");
+        const u = fileBySuffix(files, "src/user.hpp");
         assert.ok(u.includes("auto fullName() const {"));
         assert.ok(u.includes("auto badge() const {"));
         assert.ok(u.includes("auto tagKey() const {"));
@@ -115,9 +115,9 @@ describe("emitCpp — library bundle", async () => {
     });
 
     it("emits a thin value_traits specialization and member forwarders for serialization", () => {
-        const u = fileBySuffix(files, "models/user.hpp");
+        const u = fileBySuffix(files, "src/user.hpp");
         assert.ok(u.includes("keyma::Value to_value(const allocator_type& a) const;")); // member decl
-        assert.ok(u.includes("struct value_traits<app::models::user::User>"));          // the specialization
+        assert.ok(u.includes("struct value_traits<app::src::user::User>"));          // the specialization
         assert.ok(u.includes('__o.firstName = keyma::from_value<std::pmr::string>(v.at("firstName"), a);'));
         assert.ok(u.includes('__o.alias = keyma::from_value_field<std::pmr::string>(v.find("alias"), a);')); // both-axes → find
         assert.ok(u.includes('__v.set("firstName", keyma::to_value(x.firstName, a));'));
@@ -126,17 +126,17 @@ describe("emitCpp — library bundle", async () => {
     });
 
     it("attaches validators/formatters/refs by direct-ref factory call (no registry)", () => {
-        const u = fileBySuffix(files, "models/user.hpp");
-        assert.ok(u.includes("app::validators::minLength(2)"));
-        assert.ok(u.includes("keyma::Phase::Change, app::formatters::trim()"));
+        const u = fileBySuffix(files, "src/user.hpp");
+        assert.ok(u.includes("app::src::validators::minLength(2)"));
+        assert.ok(u.includes("keyma::Phase::Change, app::src::formatters::trim()"));
         assert.ok(u.includes("keyma::Phase::Save"));                              // server/library includes save phase
-        assert.ok(u.includes("&app::models::address::Address::schema"));
-        assert.ok(u.includes("&app::models::tag::Tag::schema"));
+        assert.ok(u.includes("&app::src::address::Address::schema"));
+        assert.ok(u.includes("&app::src::tag::Tag::schema"));
         assert.ok(u.includes(".apply_defaults = &apply_defaults_User"));
     });
 
     it("applies both literal and expression defaults in apply_defaults", () => {
-        const u = fileBySuffix(files, "models/user.hpp");
+        const u = fileBySuffix(files, "src/user.hpp");
         assert.ok(u.includes('value.set("role", keyma::to_value("user", __a))'));   // literal default
         assert.ok(u.includes('value.set("status", keyma::to_value("active", __a))')); // enum literal default
         assert.ok(u.includes('value.set("created"'));                                 // expression default (new Date())
@@ -147,12 +147,12 @@ describe("emitCpp — library bundle", async () => {
         assert.ok(s.includes("namespace app::services {"));
         assert.ok(s.includes("class AccountService {"));
         assert.ok(s.includes("virtual ~AccountService() = default;"));
-        assert.ok(s.includes("virtual std::shared_ptr<app::models::user::User> signup(const app::models::user::User& user) = 0;"));
+        assert.ok(s.includes("virtual std::shared_ptr<app::src::user::User> signup(const app::src::user::User& user) = 0;"));
         assert.ok(s.includes("virtual bool resend(const std::pmr::string& email) = 0;"));
-        assert.ok(s.includes("virtual std::pmr::vector<app::models::tag::Tag> listTags() = 0;"));
+        assert.ok(s.includes("virtual std::pmr::vector<app::src::tag::Tag> listTags() = 0;"));
         assert.ok(s.includes("virtual bool purge() = 0;"));                        // private method present in server/library
-        assert.ok(s.includes('#include "models/user.hpp"'));
-        assert.ok(s.includes('#include "models/tag.hpp"'));
+        assert.ok(s.includes('#include "src/user.hpp"'));
+        assert.ok(s.includes('#include "src/tag.hpp"'));
     });
 
     it("emits typed service-call client stubs (CallLeaf builders) as an opt-in header", () => {
@@ -161,10 +161,10 @@ describe("emitCpp — library bundle", async () => {
         assert.ok(c.includes("namespace app::client {"));
         assert.ok(c.includes("struct AccountService {"));
         // schema return (IR reference) → hydrate the full object to the value type
-        assert.ok(c.includes("static keyma::CallLeaf<app::models::user::User> signup(const app::models::user::User& user, keyma::alloc_t __alloc = {})"));
+        assert.ok(c.includes("static keyma::CallLeaf<app::src::user::User> signup(const app::src::user::User& user, keyma::alloc_t __alloc = {})"));
         assert.ok(c.includes('__args.set("user", keyma::to_value(user, __alloc));'));  // embedded arg → full object
         assert.ok(c.includes("static keyma::CallLeaf<bool> resend(const std::pmr::string& email, keyma::alloc_t __alloc = {})"));
-        assert.ok(c.includes("static keyma::CallLeaf<std::pmr::vector<app::models::tag::Tag>> listTags(keyma::alloc_t __alloc = {})"));  // array return
+        assert.ok(c.includes("static keyma::CallLeaf<std::pmr::vector<app::src::tag::Tag>> listTags(keyma::alloc_t __alloc = {})"));  // array return
         assert.ok(c.includes("keyma::Keyma::call("));
         // the opt-in stub header is NOT pulled into index.hpp (keeps it vendor-safe)
         const idx = fileBySuffix(files, "index.hpp");
@@ -172,8 +172,8 @@ describe("emitCpp — library bundle", async () => {
     });
 
     it("computes cross-header includes from refs and validator/formatter use", () => {
-        const u = fileBySuffix(files, "models/user.hpp");
-        for (const inc of ['#include <keyma/runtime.hpp>', '#include "validators.hpp"', '#include "formatters.hpp"', '#include "models/address.hpp"', '#include "models/tag.hpp"']) {
+        const u = fileBySuffix(files, "src/user.hpp");
+        for (const inc of ['#include <keyma/runtime.hpp>', '#include "src/validators.hpp"', '#include "src/formatters.hpp"', '#include "src/address.hpp"', '#include "src/tag.hpp"']) {
             assert.ok(u.includes(inc), `user.hpp missing ${inc}`);
         }
     });
@@ -181,22 +181,22 @@ describe("emitCpp — library bundle", async () => {
     it("index.hpp hoists schemas, enums, and services into the root namespace", () => {
         const idx = fileBySuffix(files, "index.hpp");
         assert.ok(idx.includes("namespace app {"));
-        assert.ok(idx.includes('#include "models/user.hpp"'));
+        assert.ok(idx.includes('#include "src/user.hpp"'));
         assert.ok(idx.includes('#include "services.hpp"'));
-        assert.ok(idx.includes("using models::user::User;"));
-        assert.ok(idx.includes("using models::user::Status;"));
+        assert.ok(idx.includes("using src::user::User;"));
+        assert.ok(idx.includes("using src::user::Status;"));
         assert.ok(!idx.includes("materialize_User"), "materializers are removed — none should be hoisted");
         assert.ok(idx.includes("using services::AccountService;"));
     });
 
     it("validators/formatters live in the configured namespace and use C++23 std::expected", () => {
         const v = fileBySuffix(files, "validators.hpp");
-        assert.ok(v.includes("namespace app::validators {"));
+        assert.ok(v.includes("namespace app::src::validators {"));
         assert.ok(v.includes("inline keyma::ValidatorFn minLength(auto value)"));
         assert.ok(v.includes("std::expected<void, keyma::ValidationError>"));
         assert.ok(v.includes('std::unexpected(keyma::ValidationError{'));
         const f = fileBySuffix(files, "formatters.hpp");
-        assert.ok(f.includes("namespace app::formatters {"));
+        assert.ok(f.includes("namespace app::src::formatters {"));
         assert.ok(f.includes("inline keyma::FormatterFn trim()"));
     });
 });
@@ -204,10 +204,10 @@ describe("emitCpp — library bundle", async () => {
 describe("emitCpp — client bundle gating", async () => {
     const { files } = await emitCpp(sampleIR(), { language: "cpp", outDir: "out", client: true, server: false }, CFG);
     const paths = files.map((f) => f.path);
-    const u = fileBySuffix(files, "models/user.hpp");
+    const u = fileBySuffix(files, "src/user.hpp");
 
     it("emits into a client/ subdirectory", () => {
-        assert.ok(paths.includes("out/client/models/user.hpp"));
+        assert.ok(paths.includes("out/client/src/user.hpp"));
         assert.ok(paths.includes("out/client/index.hpp"));
     });
 
@@ -226,8 +226,8 @@ describe("emitCpp — client bundle gating", async () => {
     it("still emits public fields, the change-phase formatter, and validators", () => {
         assert.ok(u.includes("std::pmr::string firstName;"));
         assert.ok(u.includes("keyma::Phase::Change"));
-        assert.ok(u.includes("app::validators::minLength(2)"));
-        assert.ok(u.includes("std::shared_ptr<app::models::tag::Tag> primaryTag;")); // references map the same way
+        assert.ok(u.includes("app::src::validators::minLength(2)"));
+        assert.ok(u.includes("std::shared_ptr<app::src::tag::Tag> primaryTag;")); // references map the same way
     });
 
     it("emits public services but omits private methods", () => {
@@ -252,7 +252,7 @@ describe("emitCpp — vendorRuntime (zero-dependency drop)", async () => {
         assert.ok(rt.includes("struct value_traits"));
         assert.ok(rt.includes("from_value"));
         assert.ok(!rt.includes("#include <nlohmann") && !/#include\s+<boost/.test(rt));
-        const u = fileBySuffix(files, "models/user.hpp");
+        const u = fileBySuffix(files, "src/user.hpp");
         assert.ok(u.includes('#include "keyma_runtime.hpp"'));
         assert.ok(!u.includes("#include <keyma/runtime.hpp>"), "angle-bracket runtime include leaked in vendor mode");
     });
@@ -287,7 +287,7 @@ describe("emitCpp — sized numeric member types", async () => {
     const { files } = await emitCpp(ir, { language: "cpp", outDir: "out", library: true }, CFG);
 
     it("emits sized signed/unsigned ints and float/double struct members", () => {
-        const m = fileBySuffix(files, "models/nums.hpp");
+        const m = fileBySuffix(files, "src/nums.hpp");
         assert.ok(m.includes("std::int8_t i8;"), m);
         assert.ok(m.includes("std::int16_t i16;"));
         assert.ok(m.includes("std::int32_t i32;"));

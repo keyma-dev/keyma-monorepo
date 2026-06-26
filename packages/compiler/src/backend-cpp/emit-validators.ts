@@ -1,10 +1,8 @@
 import type {
-    IRFunctionDeclaration,
     IRStatement,
     IRExpression,
 } from "@keyma/core/ir";
 import { exprToCpp, type ExprOpts } from "./emit-expression.js";
-import { irTypeToCpp } from "./ir-type-to-cpp.js";
 
 /** A factory/function name as a valid C++ identifier. */
 export function factoryIdent(name: string): string {
@@ -55,24 +53,4 @@ export function rewriteContextAccess(code: string, ctxParam: string | undefined)
     if (ctxParam === undefined) return code;
     const re = new RegExp(`\\b${ctxParam}\\.object\\.([A-Za-z_][A-Za-z0-9_]*)`, "g");
     return code.replace(re, `${ctxParam}.object.at("$1")`);
-}
-
-// ─── Utility functions (functions.hpp) ────────────────────────────────────────
-//
-// The generic project-local function emitter. After the validator→function collapse this
-// emits every function the bundle keeps in `functions.hpp` — plain utility helpers. The
-// validator/formatter factories (also `IRFunctionDeclaration`s) are CLAIMED by the schema
-// domain pack, which emits them with the runtime `ValidatorFn`/`FormatterFn` wrapper (into
-// validators.hpp/formatters.hpp), so the generic backend excludes their names from this set.
-
-export function emitFunctionsCpp(decls: readonly IRFunctionDeclaration[], nsRoot: string, runtimeInclude: string): string {
-    const lines = ["#pragma once", `#include ${runtimeInclude}`, "", `namespace ${nsRoot}::functions {`, ""];
-    for (const decl of decls) {
-        const params = decl.params.map((p) => `${irTypeToCpp(p.type)} ${p.name}`).join(", ");
-        lines.push(`inline auto ${decl.name}(${params}) {`);
-        for (const stmt of decl.statements) lines.push(stmtToCpp(stmt, "    ", plainReturn));
-        lines.push(`}`, "");
-    }
-    lines.push(`}  // namespace ${nsRoot}::functions`, "");
-    return lines.join("\n");
 }

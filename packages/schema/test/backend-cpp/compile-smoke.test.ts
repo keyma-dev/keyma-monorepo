@@ -217,7 +217,7 @@ describe("compile-smoke — generated C++ compiles under -std=c++23", () => {
         };
         const consumer = `#include "index.hpp"
 #include <cassert>
-namespace m = app::models::metrics;
+namespace m = app::src::metrics;
 int main() {
     std::pmr::monotonic_buffer_resource pool;
     keyma::Value::allocator_type a{&pool};

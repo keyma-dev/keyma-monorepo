@@ -28,8 +28,11 @@ export type SchemaDataOptions = {
     refs: readonly { name: string; cppClass: string }[];
     /** Unqualified name of the apply_defaults free function to reference, if any. */
     applyDefaultsName?: string;
-    /** Root namespace (validators/formatters live under `<root>::validators` etc.). */
+    /** Root namespace. */
     nsRoot: string;
+    /** A validator/formatter factory's fully-qualified namespace (its SOURCE module's namespace,
+     *  e.g. `app::src::validators`) — the schema metadata calls it like a cross-module ref target. */
+    functionNamespace: (name: string) => string;
 };
 
 /** The deps the bundle shell passes to a domain's services emitter. */
@@ -100,12 +103,20 @@ export type CppEmitterPack = {
     /** Emit the bundle-root service-client.hpp; omit when the domain has no services. */
     emitServiceClient?: (services: readonly IRService[], deps: ServiceClientEmitDeps) => string;
     /**
-     * Names of `functionDeclarations` this domain emits itself (with its own wrapper) via
-     * `emitBundleFiles`, so the generic backend excludes them from `functions.hpp`. The schema
-     * domain claims its validator/formatter factories (which it re-emits as `ValidatorFn`/
-     * `FormatterFn` wrappers in `validators.hpp`/`formatters.hpp`). Omit when the domain claims none.
+     * Names of `functionDeclarations` this domain renders itself (with its own wrapper) via
+     * `renderClaimedFunctions`, so the generic backend does not emit them as plain functions.
+     * The schema domain claims its validator/formatter factories (re-emitted with the runtime
+     * `ValidatorFn`/`FormatterFn` guard wrapper). Omit when the domain claims none.
      */
     claimFunctions?: (ir: KeymaIR) => ReadonlySet<string>;
+    /**
+     * Render the claimed functions a single source module owns, with the domain wrapper, for
+     * splicing into that module's namespace. The generic module emitter passes the module's
+     * claimed subset (in order) and `ir` (to classify each as a validator vs formatter). Returns
+     * one `inline keyma::ValidatorFn`/`FormatterFn` definition per input declaration, in order.
+     * Required when `claimFunctions` returns names.
+     */
+    renderClaimedFunctions?: (decls: readonly IRFunctionDeclaration[], ir: KeymaIR) => readonly string[];
     /**
      * Contribute extra files to each bundle, derived from the domain's own IR slice
      * (e.g. `ir.extensions['ui']`). Runs for **every** registered pack (not just the primary),

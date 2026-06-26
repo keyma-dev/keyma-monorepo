@@ -1,20 +1,15 @@
-import { path } from "@keyma/core/util";
+import { path, reachableFunctions, collectFunctionRefs, filterVisibleFields } from "@keyma/core/util";
 import type {
     KeymaIR, IRClassDeclaration, IREnumDeclaration, IRService, IRType,
     IRFunctionDeclaration,
 } from "@keyma/core/ir";
 import type { KeymaBackend, KeymaTargetConfig, ResolvedConfig, EmitFile, EmitResult } from "../driver/index.js";
-import { emitModuleCpp, type ModuleEmitDeps } from "./emit-module.js";
+import { emitModuleCpp, collectFactoryNames, type ModuleEmitDeps } from "./emit-module.js";
 import { emitIndexCpp } from "./emit-index.js";
-import { emitFunctionsCpp } from "./emit-validators.js";
 import { emitSupportHpp } from "./emit-support.js";
-import { moduleOf, namespaceOf, cppSanitizer } from "./module-path.js";
+import { moduleRefOf, namespaceOf, cppSanitizer } from "./module-path.js";
 import { resolveCppTarget, VENDOR_RUNTIME_HEADER, type CppTargetConfig } from "./types.js";
 import { EmitterRegistry, SERVICES_REF, SERVICE_CLIENT_REF, type CppEmitterPack } from "./emitter-registry.js";
-
-const VALIDATORS_REF = "validators";
-const FORMATTERS_REF = "formatters";
-const FUNCTIONS_REF = "functions";
 
 /**
  * Build a C++ backend from the given domain emitter packs. The generic bundle shell here is
@@ -34,8 +29,7 @@ export function createCppBackend(packs: Iterable<CppEmitterPack>): KeymaBackend 
 type SharedDeps = Pick<
     ModuleEmitDeps,
     "nsRoot" | "schemaModule" | "classNameByName" | "cppTypeByName" | "enumTypeByName" | "enumModuleByName"
-    | "idFieldByName" | "functionDecls" | "functionNames"
-    | "validatorsModuleRef" | "formattersModuleRef" | "functionsModuleRef"
+    | "idFieldByName" | "functionDecls" | "functionNames" | "functionModule" | "claimedFunctionNames"
     | "runtimeInclude" | "referenceTargetNames" | "binary"
 >;
 
@@ -56,9 +50,7 @@ export async function emitCpp(
     const files: EmitFile[] = [];
 
     // The registered domain emit packs. The first (primary) supplies the per-schema metadata,
-    // enum, and service emitters; the bundle shell stays domain-agnostic. The full list is
-    // threaded through so every pack's `emitBundleFiles` can contribute its own bundle files.
-    // Empty for a core-only build.
+    // enum, and service emitters; the bundle shell stays domain-agnostic. Empty for a core build.
     const packs = registry.list();
 
     const decls: Decls = {
@@ -67,13 +59,16 @@ export async function emitCpp(
         services: ir.services ?? [],
     };
 
-    // sourceName → bundle-relative module ref under models/, from the SOURCE file.
+    // Every declaration emits into the module derived from its SOURCE file: project-local
+    // declarations under `src/`, out-of-project (library) declarations into the shared `vendor`.
     const schemaModule = new Map<string, string>(
-        ir.classes.map((s) => [s.sourceName, path.posix.join("models", moduleOf(s.source.file, ir.sourceRoot))]),
+        ir.classes.map((s) => [s.sourceName, moduleRefOf(s.source.file, ir.sourceRoot)]),
     );
-    // Named enum `name` → its declaring file's module ref (enums follow source-file layout).
     const enumModuleByName = new Map<string, string>(
-        decls.enums.map((e) => [e.name, path.posix.join("models", moduleOf(e.source.file, ir.sourceRoot))]),
+        decls.enums.map((e) => [e.name, moduleRefOf(e.source.file, ir.sourceRoot)]),
+    );
+    const functionModule = new Map<string, string>(
+        decls.functions.map((d) => [d.name, moduleRefOf(d.source.file, ir.sourceRoot)]),
     );
     // Reference/embedded/edge target `name` → fully-qualified emitted C++ struct type.
     const cppTypeByName = new Map<string, string>(
@@ -99,6 +94,12 @@ export async function emitCpp(
     };
     for (const s of ir.classes) for (const f of s.fields) collectRefTargets(f.type);
 
+    // Functions a domain renders itself (with its own wrapper) rather than as plain functions.
+    const claimedFunctionNames = new Set<string>();
+    for (const p of packs) {
+        if (p.claimFunctions !== undefined) for (const n of p.claimFunctions(ir)) claimedFunctionNames.add(n);
+    }
+
     const shared: SharedDeps = {
         nsRoot,
         schemaModule,
@@ -109,9 +110,8 @@ export async function emitCpp(
         idFieldByName,
         functionDecls: new Map(decls.functions.map((d) => [d.name, d])),
         functionNames: new Set(decls.functions.map((d) => d.name)),
-        validatorsModuleRef: VALIDATORS_REF,
-        formattersModuleRef: FORMATTERS_REF,
-        functionsModuleRef: FUNCTIONS_REF,
+        functionModule,
+        claimedFunctionNames,
         runtimeInclude: cppTarget.runtimeInclude,
         referenceTargetNames,
         // Typed binary codec emission is driven by the project-level `binary` config (the
@@ -169,7 +169,22 @@ function emitBundle(
         ? ir.classes
         : ir.classes.filter((s) => s.visibility === "public");
 
-    // Group schemas AND enums by module (a file may declare either or both).
+    // Per-bundle tree-shaking: keep only the functions reachable from this bundle's visible
+    // roots (class behaviors + defaults + the validator/formatter factories on visible fields,
+    // formatters gated to form phases for the client). Reachability is the client/server gate.
+    const functionsByName = new Map(decls.functions.map((d) => [d.name, d]));
+    const allVisibleFields = visibleSchemas.flatMap((s) => filterVisibleFields(s, opts.includePrivate));
+    const seeds = collectFunctionRefs(visibleSchemas, {
+        includePrivate: opts.includePrivate,
+        includeDefaults: opts.includeDefaults,
+        functionNames: new Set(functionsByName.keys()),
+    });
+    for (const n of collectFactoryNames(allVisibleFields, "validators", opts.formPhasesOnly)) seeds.add(n);
+    for (const n of collectFactoryNames(allVisibleFields, "formatters", opts.formPhasesOnly)) seeds.add(n);
+    const reachable = reachableFunctions(seeds, functionsByName);
+    const reachableFns = decls.functions.filter((d) => reachable.has(d.name));
+
+    // Group schemas, enums, AND functions by module (a file may declare any combination).
     const schemaGroups = new Map<string, IRClassDeclaration[]>();
     for (const s of visibleSchemas) {
         const ref = shared.schemaModule.get(s.sourceName)!;
@@ -180,37 +195,32 @@ function emitBundle(
         const ref = shared.enumModuleByName.get(e.name)!;
         (enumGroups.get(ref) ?? enumGroups.set(ref, []).get(ref)!).push(e);
     }
-    const moduleRefs = new Set([...schemaGroups.keys(), ...enumGroups.keys()]);
+    const fnGroups = new Map<string, IRFunctionDeclaration[]>();
+    for (const d of reachableFns) {
+        const ref = shared.functionModule.get(d.name)!;
+        (fnGroups.get(ref) ?? fnGroups.set(ref, []).get(ref)!).push(d);
+    }
+    const moduleRefs = new Set([...schemaGroups.keys(), ...enumGroups.keys(), ...fnGroups.keys()]);
+    if (schemaGroups.size > 0 && (pack?.buildSchemaMeta === undefined || pack.emitEnumClass === undefined || pack.emitEnumConversions === undefined)) {
+        // Schemas need a domain's metadata + enum emitters (the schema domain). They are absent
+        // only in a core-only build, which produces no schemas — so reaching here is a real error.
+        throw new Error("no C++ emitter pack with schema/enum emitters registered, but the IR has schemas to emit");
+    }
     if (moduleRefs.size > 0) {
-        // Schemas/enums need a domain's metadata + enum emitters (the schema domain, registered
-        // first). They are absent only in a core-only build, which produces neither — so
-        // reaching here without them is a real error.
-        if (pack?.buildSchemaMeta === undefined || pack.emitEnumClass === undefined || pack.emitEnumConversions === undefined) {
-            throw new Error("no C++ emitter pack with schema/enum emitters registered, but the IR has schemas/enums to emit");
-        }
+        const renderClaimedFunctions = pack?.renderClaimedFunctions !== undefined
+            ? (dcls: readonly IRFunctionDeclaration[]) => pack.renderClaimedFunctions!(dcls, ir)
+            : undefined;
         const deps: ModuleEmitDeps = {
             ...opts, ...shared,
-            buildSchemaMeta: pack.buildSchemaMeta,
-            emitEnumClass: pack.emitEnumClass,
-            emitEnumConversions: pack.emitEnumConversions,
+            buildSchemaMeta: pack?.buildSchemaMeta ?? (() => ""),
+            emitEnumClass: pack?.emitEnumClass ?? (() => ""),
+            emitEnumConversions: pack?.emitEnumConversions ?? (() => ""),
+            ...(renderClaimedFunctions !== undefined ? { renderClaimedFunctions } : {}),
         };
         for (const ref of moduleRefs) {
-            const content = emitModuleCpp(ref, schemaGroups.get(ref) ?? [], enumGroups.get(ref) ?? [], deps);
+            const content = emitModuleCpp(ref, schemaGroups.get(ref) ?? [], enumGroups.get(ref) ?? [], fnGroups.get(ref) ?? [], deps);
             files.push({ path: path.posix.join(bundleDir, `${ref}.hpp`), content });
         }
-    }
-
-    // Shared `functions.hpp` at the bundle root — the project-local utility functions. Names a
-    // domain pack claims (e.g. the schema pack's validator/formatter factories, which it emits
-    // as `ValidatorFn`/`FormatterFn` wrappers into validators.hpp/formatters.hpp via
-    // `emitBundleFiles`) are excluded here so they are emitted once, by their owner.
-    const claimed = new Set<string>();
-    for (const p of packs) {
-        if (p.claimFunctions !== undefined) for (const n of p.claimFunctions(ir)) claimed.add(n);
-    }
-    const utilityFunctions = decls.functions.filter((d) => !claimed.has(d.name));
-    if (utilityFunctions.length > 0) {
-        files.push({ path: path.posix.join(bundleDir, `${FUNCTIONS_REF}.hpp`), content: emitFunctionsCpp(utilityFunctions, shared.nsRoot, shared.runtimeInclude) });
     }
 
     const visibleServices = opts.includePrivate
@@ -258,8 +268,7 @@ function emitBundle(
     });
 
     // Every registered pack may contribute its own bundle files from its IR slice (e.g. the
-    // UI domain's view headers under `ui/`). Inert for packs without the hook (schema), so a
-    // single-domain bundle is byte-identical.
+    // UI domain's view headers under `ui/`). Inert for packs without the hook.
     for (const p of packs) {
         if (p.emitBundleFiles !== undefined) {
             files.push(...p.emitBundleFiles(ir, {

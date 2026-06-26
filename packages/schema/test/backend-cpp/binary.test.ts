@@ -115,18 +115,18 @@ describe("cppBackend — typed binary codec emission gating", async () => {
     };
 
     it("emits binary_traits<T> + include + forward-decls when binary is enabled", () => {
-        const doc = file(on.files, "models/doc.hpp");
+        const doc = file(on.files, "src/doc.hpp");
         assert.ok(doc.includes("#include <keyma/binary-typed.hpp>"));
-        assert.ok(doc.includes("namespace keyma { template <> struct binary_traits<app::models::doc::Doc>; }"));
-        assert.ok(doc.includes("struct binary_traits<app::models::doc::Doc> {"));
+        assert.ok(doc.includes("namespace keyma { template <> struct binary_traits<app::src::doc::Doc>; }"));
+        assert.ok(doc.includes("struct binary_traits<app::src::doc::Doc> {"));
         assert.ok(doc.includes("static void encode_record(keyma::ByteBuf& out, const T& x, keyma::alloc_t a)"));
         assert.ok(doc.includes("static T decode_record(keyma::binary_detail::Reader& r, keyma::alloc_t a)"));
         // reference target forward-declared as binary_traits too
-        assert.ok(doc.includes("namespace keyma { template <> struct binary_traits<app::models::doc::Person>; }"));
+        assert.ok(doc.includes("namespace keyma { template <> struct binary_traits<app::src::doc::Person>; }"));
     });
 
     it("frames each field per the IR required/nullable flags", () => {
-        const doc = file(on.files, "models/doc.hpp");
+        const doc = file(on.files, "src/doc.hpp");
         // required scalar → always write key + payload
         assert.ok(doc.includes("keyma::binary_detail::write_key(out, 2, keyma::binary_traits<std::pmr::string>::wiretype); keyma::encode_payload<std::pmr::string>(out, x.name, a);"));
         // optional-only → omit when absent (has_value guard, no else)
@@ -138,36 +138,36 @@ describe("cppBackend — typed binary codec emission gating", async () => {
         // json → WIRE_NULL when the Value itself is null
         assert.ok(doc.includes("if ((x.meta).is_null()) {"));
         // reference → id_wiretype + encode_id_payload
-        assert.ok(doc.includes("keyma::binary_traits<app::models::doc::Person>::id_wiretype"));
-        assert.ok(doc.includes("keyma::binary_traits<app::models::doc::Person>::encode_id_payload(out, *x.owner, a)"));
+        assert.ok(doc.includes("keyma::binary_traits<app::src::doc::Person>::id_wiretype"));
+        assert.ok(doc.includes("keyma::binary_traits<app::src::doc::Person>::encode_id_payload(out, *x.owner, a)"));
     });
 
     it("emits reference-target id helpers and enum binary_traits", () => {
-        const doc = file(on.files, "models/doc.hpp");
+        const doc = file(on.files, "src/doc.hpp");
         assert.ok(doc.includes("static constexpr std::uint8_t id_wiretype = keyma::binary_traits<std::pmr::string>::wiretype;"));
         assert.ok(doc.includes("static void decode_id_into(T& t, keyma::binary_detail::Reader& r, std::uint8_t wt, keyma::alloc_t a)"));
-        const rich = file(on.files, "models/rich.hpp");
-        assert.ok(rich.includes("struct binary_traits<app::models::rich::Color> {"));
+        const rich = file(on.files, "src/rich.hpp");
+        assert.ok(rich.includes("struct binary_traits<app::src::rich::Color> {"));
         // embedded field routes through the target struct's own binary_traits leaf (which now
         // carries encode_payload/decode_payload + wiretype), folded into the scalar path
-        assert.ok(rich.includes("keyma::binary_traits<app::models::rich::Addr>::wiretype"));
-        assert.ok(rich.includes("keyma::encode_payload<app::models::rich::Addr>(out, x.addr, a)"));
-        assert.ok(rich.includes("keyma::decode_payload<app::models::rich::Addr>(r, wt, a)"));
+        assert.ok(rich.includes("keyma::binary_traits<app::src::rich::Addr>::wiretype"));
+        assert.ok(rich.includes("keyma::encode_payload<app::src::rich::Addr>(out, x.addr, a)"));
+        assert.ok(rich.includes("keyma::decode_payload<app::src::rich::Addr>(r, wt, a)"));
         // struct gets the length-windowed payload methods (so it can be embedded / an array element)
         assert.ok(rich.includes("static void encode_payload(keyma::ByteBuf& out, const T& x, keyma::alloc_t a)"));
         assert.ok(rich.includes("static T decode_payload(keyma::binary_detail::Reader& r, std::uint8_t, keyma::alloc_t a)"));
         // array-of-embedded → vector<Target>; array-of-references → vector<shared_ptr<Target>>
-        assert.ok(rich.includes("keyma::encode_payload<std::pmr::vector<app::models::rich::Addr>>(out, x.addrs, a)"));
-        assert.ok(rich.includes("keyma::encode_payload<std::pmr::vector<std::shared_ptr<app::models::rich::Cat>>>(out, x.cats, a)"));
+        assert.ok(rich.includes("keyma::encode_payload<std::pmr::vector<app::src::rich::Addr>>(out, x.addrs, a)"));
+        assert.ok(rich.includes("keyma::encode_payload<std::pmr::vector<std::shared_ptr<app::src::rich::Cat>>>(out, x.cats, a)"));
         // int-id reference target gets varint id helpers
         assert.ok(rich.includes("static constexpr std::uint8_t id_wiretype = keyma::binary_traits<std::int64_t>::wiretype;"));
     });
 
     it("emits NOTHING binary when binary is disabled (JSON-only output unchanged)", () => {
-        const doc = file(off.files, "models/doc.hpp");
+        const doc = file(off.files, "src/doc.hpp");
         assert.ok(!doc.includes("binary-typed.hpp"), "binary header leaked into JSON-only output");
         assert.ok(!doc.includes("binary_traits"), "binary_traits leaked into JSON-only output");
-        const rich = file(off.files, "models/rich.hpp");
+        const rich = file(off.files, "src/rich.hpp");
         assert.ok(!rich.includes("binary_traits"), "enum binary_traits leaked into JSON-only output");
     });
 });
@@ -210,8 +210,8 @@ const CONSUMER = `#include "index.hpp"
 #include <string_view>
 
 using namespace keyma;
-using D = app::models::doc::Doc;
-using R = app::models::rich::Rich;
+using D = app::src::doc::Doc;
+using R = app::src::rich::Rich;
 
 static std::span<const std::byte> sp(const ByteBuf& b) { return std::span<const std::byte>(b.data(), b.size()); }
 static std::string hx(std::span<const std::byte> b) {
@@ -283,7 +283,7 @@ int main() {
     assert(rback.id == "r-1");
     assert(rback.addr.city == "NYC" && rback.addr.zip == 10001);
     assert(rback.fav && rback.fav->id == 42);
-    assert(rback.color == app::models::rich::Color::Green);
+    assert(rback.color == app::src::rich::Color::Green);
     assert(rback.score == 0.5f);
     assert(rback.ucount == 4000000000u);
     assert(rback.addrs.size() == 2 && rback.addrs[0].city == "LA" && rback.addrs[0].zip == 90001 && rback.addrs[1].city == "SF");

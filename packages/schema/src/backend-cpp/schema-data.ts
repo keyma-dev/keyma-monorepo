@@ -25,7 +25,7 @@ export function buildSchemaMeta(schema: IRClassDeclaration, opts: SchemaDataOpti
         const validators = fieldValidators(f);
         if (validators.length > 0) {
             const calls = validators.map((v) =>
-                buildFactoryCall(v.name, v.params, opts.functionDecls.get(v.name)?.params ?? [], `${opts.nsRoot}::validators`),
+                buildFactoryCall(v.name, v.params, opts.functionDecls.get(v.name)?.params ?? [], opts.functionNamespace(v.name)),
             );
             out.push(`${I}static const keyma::ValidatorFn __v_${f.name}[] = { ${calls.join(", ")} };`);
         }
@@ -34,7 +34,7 @@ export function buildSchemaMeta(schema: IRClassDeclaration, opts: SchemaDataOpti
         if (formatters.length > 0) {
             const items = formatters.map((fm) => {
                 const call = buildFactoryCall(
-                    fm.spec.name, fm.spec.params, opts.functionDecls.get(fm.spec.name)?.params ?? [], `${opts.nsRoot}::formatters`,
+                    fm.spec.name, fm.spec.params, opts.functionDecls.get(fm.spec.name)?.params ?? [], opts.functionNamespace(fm.spec.name),
                 );
                 return `{ keyma::Phase::${PHASE[fm.phase]}, ${call} }`;
             });

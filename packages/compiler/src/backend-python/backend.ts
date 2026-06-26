@@ -1,21 +1,16 @@
-import { path } from "@keyma/core/util";
+import { path, reachableFunctions, collectFunctionRefs, filterVisibleFields } from "@keyma/core/util";
 import type { KeymaIR, IRClassDeclaration, IRFunctionDeclaration } from "@keyma/core/ir";
 import type { KeymaBackend, KeymaTargetConfig, ResolvedConfig, EmitFile, EmitResult } from "../driver/index.js";
-import { emitModulePython, type ModuleEmitDeps } from "./emit-module.js";
+import { emitModulePython, collectFactoryNames, type ModuleEmitDeps, type ModuleContent } from "./emit-module.js";
 import { emitIndexPython } from "./emit-index.js";
-import { emitFunctionsPy } from "./emit-validators.js";
-import { moduleOf } from "./module-path.js";
+import { moduleRefOf } from "./module-path.js";
 import { resolvePythonTargetJSStyle as resolvePythonTarget, type PythonTargetConfig } from "./types.js";
 import { EmitterRegistry, type PythonEmitterPack } from "./emitter-registry.js";
 
-const VALIDATORS_REF = "validators";
-const FORMATTERS_REF = "formatters";
-const FUNCTIONS_REF = "functions";
-
 /**
- * Build a Python backend from the given domain emitter packs. The generic bundle shell here
- * is domain-neutral; the schema metadata comes from the registered pack (the schema pack lives
- * in `@keyma/schema/backend-python`, registered by the CLI).
+ * Build a Python backend from the given domain emitter packs. The generic bundle shell here is
+ * domain-neutral; the schema metadata comes from the registered pack (the schema pack lives in
+ * `@keyma/schema/backend-python`, registered by the CLI).
  */
 export function createPythonBackend(packs: Iterable<PythonEmitterPack>): KeymaBackend {
     const registry = new EmitterRegistry();
@@ -29,8 +24,7 @@ export function createPythonBackend(packs: Iterable<PythonEmitterPack>): KeymaBa
 
 type SharedDeps = Pick<
     ModuleEmitDeps,
-    "schemaModule" | "classNameByName" | "functionDecls" | "functionNames"
-    | "validatorsModuleRef" | "formattersModuleRef" | "functionsModuleRef"
+    "schemaModule" | "functionModule" | "classNameByName" | "functionDecls" | "claimedFunctionNames"
 >;
 
 type Decls = {
@@ -47,30 +41,38 @@ export async function emitPython(
     const files: EmitFile[] = [];
 
     // The registered domain emit packs. The first (primary) supplies the per-schema metadata
-    // builder; the bundle shell stays domain-agnostic. The full list is threaded through so
-    // every pack's `emitBundleFiles` can contribute its own bundle files. Empty for a
-    // core-only build.
+    // builder + the validator/formatter render hook; the bundle shell stays domain-agnostic. The
+    // full list is threaded through so every pack's `emitBundleFiles` can contribute its own
+    // bundle files. Empty for a core-only build.
     const packs = registry.list();
 
     const decls: Decls = {
         functions: ir.functionDeclarations ?? [],
     };
 
-    // sourceName → bundle-relative module ref under models/, from the SOURCE file
-    // (Python-sanitized: `user-credentials.ts` → models/user_credentials).
+    // Every declaration emits into the module derived from its SOURCE file: project-local
+    // declarations under `src/` (classes authored in one file share a module), out-of-project
+    // (library) declarations into the single shared `vendor` module.
     const schemaModule = new Map<string, string>(
-        ir.classes.map((s) => [s.sourceName, path.posix.join("models", moduleOf(s.source.file, ir.sourceRoot))])
+        ir.classes.map((s) => [s.sourceName, moduleRefOf(s.source.file, ir.sourceRoot)])
     );
+    const functionModule = new Map<string, string>(
+        decls.functions.map((d) => [d.name, moduleRefOf(d.source.file, ir.sourceRoot)])
+    );
+
+    // Functions a domain renders itself (with its own wrapper) rather than as plain functions.
+    const claimedFunctionNames = new Set<string>();
+    for (const p of packs) {
+        if (p.claimFunctions !== undefined) for (const n of p.claimFunctions(ir)) claimedFunctionNames.add(n);
+    }
 
     const shared: SharedDeps = {
         schemaModule,
+        functionModule,
         // Reference/embedded/edge target `name` → emitted Python class (`sourceName`).
         classNameByName: new Map(ir.classes.map((s) => [s.name, s.sourceName])),
         functionDecls: new Map(decls.functions.map((d) => [d.name, d])),
-        functionNames: new Set(decls.functions.map((d) => d.name)),
-        validatorsModuleRef: VALIDATORS_REF,
-        formattersModuleRef: FORMATTERS_REF,
-        functionsModuleRef: FUNCTIONS_REF,
+        claimedFunctionNames,
     };
 
     if (pyTarget.emitClient) {
@@ -116,36 +118,52 @@ function emitBundle(
         ? ir.classes
         : ir.classes.filter((s) => s.visibility === "public");
 
-    const groups = new Map<string, IRClassDeclaration[]>();
-    for (const s of visibleSchemas) {
-        const ref = shared.schemaModule.get(s.sourceName)!;
-        const list = groups.get(ref) ?? [];
-        list.push(s);
-        groups.set(ref, list);
+    // Per-bundle tree-shaking: keep only the functions reachable from this bundle's visible roots
+    // (class behaviors + defaults + the validator/formatter factories on visible fields,
+    // formatters gated to form phases for the client). Reachability is the client/server gate —
+    // a helper reachable only from a private class's server method never lands in the client bundle.
+    const functionsByName = new Map(decls.functions.map((d) => [d.name, d]));
+    const allVisibleFields = visibleSchemas.flatMap((s) => filterVisibleFields(s, opts.includePrivate));
+    const seeds = collectFunctionRefs(visibleSchemas, {
+        includePrivate: opts.includePrivate,
+        includeDefaults: opts.includeDefaults,
+        functionNames: new Set(functionsByName.keys()),
+    });
+    for (const n of collectFactoryNames(allVisibleFields, "validators", opts.formPhasesOnly)) seeds.add(n);
+    for (const n of collectFactoryNames(allVisibleFields, "formatters", opts.formPhasesOnly)) seeds.add(n);
+    const reachable = reachableFunctions(seeds, functionsByName);
+    const reachableFns = decls.functions.filter((d) => reachable.has(d.name));
+
+    // Group declarations by their source module: classes by their module ref, functions by theirs
+    // (the two coincide for a class + helper authored in one file).
+    const moduleContent = new Map<string, { classes: IRClassDeclaration[]; functions: IRFunctionDeclaration[] }>();
+    const slot = (ref: string) => {
+        let c = moduleContent.get(ref);
+        if (c === undefined) { c = { classes: [], functions: [] }; moduleContent.set(ref, c); }
+        return c;
+    };
+    for (const s of visibleSchemas) slot(shared.schemaModule.get(s.sourceName)!).classes.push(s);
+    for (const d of reachableFns) slot(shared.functionModule.get(d.name)!).functions.push(d);
+
+    if (visibleSchemas.length > 0 && pack?.buildSchemaData === undefined) {
+        // Schemas need a domain's metadata builder (the schema domain). Absent only in a
+        // core-only build, which produces no schemas — so reaching here is a real error.
+        throw new Error("no Python emitter pack with a schema-metadata builder registered, but the IR has schemas to emit");
     }
-    if (groups.size > 0) {
-        // Schemas need a domain's metadata builder (the schema domain, registered first).
-        // It is absent only in a core-only build, which produces no schemas — so reaching
-        // here without it is a real error.
-        if (pack?.buildSchemaData === undefined) throw new Error("no Python emitter pack with a schema-metadata builder registered, but the IR has schemas to emit");
-        const deps: ModuleEmitDeps = { ...opts, ...shared, buildSchemaData: pack.buildSchemaData };
-        for (const [ref, schemas] of groups) {
-            files.push({ path: path.posix.join(bundleDir, `${ref}.py`), content: emitModulePython(ref, schemas, deps) });
+    if (moduleContent.size > 0) {
+        const renderClaimedFunctions = pack?.renderClaimedFunctions !== undefined
+            ? (dcls: readonly IRFunctionDeclaration[]) => pack.renderClaimedFunctions!(dcls, ir)
+            : undefined;
+        const deps: ModuleEmitDeps = {
+            ...opts, ...shared,
+            buildSchemaData: pack?.buildSchemaData ?? (() => ({})),
+            ...(renderClaimedFunctions !== undefined ? { renderClaimedFunctions } : {}),
+        };
+        for (const [ref, content] of moduleContent) {
+            const c: ModuleContent = content;
+            files.push({ path: path.posix.join(bundleDir, `${ref}.py`), content: emitModulePython(ref, c, deps) });
             addInitPys(files, bundleDir, path.posix.dirname(ref));
         }
-    }
-
-    // Shared `functions.py` at the bundle root — the project-local utility functions. Names a
-    // domain pack claims (e.g. the schema pack's validator/formatter factories, which it emits
-    // as runtime validator/formatter wrappers into validators.py/formatters.py via
-    // `emitBundleFiles`) are excluded here so they are emitted once, by their owner.
-    const claimed = new Set<string>();
-    for (const p of packs) {
-        if (p.claimFunctions !== undefined) for (const n of p.claimFunctions(ir)) claimed.add(n);
-    }
-    const utilityFunctions = decls.functions.filter((d) => !claimed.has(d.name));
-    if (utilityFunctions.length > 0) {
-        files.push({ path: path.posix.join(bundleDir, "functions.py"), content: emitFunctionsPy(utilityFunctions) });
     }
 
     const indexContent = emitIndexPython(visibleSchemas, shared.schemaModule, {

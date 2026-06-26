@@ -1,19 +1,14 @@
-import type { IRFunctionDeclaration } from "@keyma/core/ir";
-import { factoryIdent, stmtToJs, jsTypeGuard, irTypeLabel } from "@keyma/compiler/backend-js";
+import type { IRFunctionDeclaration, KeymaIR } from "@keyma/core/ir";
+import { factoryIdent, stmtToJs, jsTypeGuard, irTypeLabel, type ClaimedFunctionRendering } from "@keyma/compiler/backend-js";
 import { validatorShape } from "../backend-common/validator-shape.js";
+import { fieldValidators, fieldFormatters } from "../ir/extensions.js";
 
 // The schema domain owns the runtime `ValidatorFn`/`FormatterFn` wrapper emission. Each
 // validator/formatter factory is an ordinary `IRFunctionDeclaration` (its body returns a
 // typed inner arrow); `validatorShape` recovers the factory params, the inner positional
 // params (value/field/context) and the input type so this re-emits the same factory the
-// `<Class>.schema` metadata calls. Generic project-local utility functions stay in
-// `@keyma/compiler` (`functions.js`).
-
-/** `import { a, b } from "<spec>";` header, or empty when there are none. */
-function functionsImport(functionNames: readonly string[], spec: string): string {
-    if (functionNames.length === 0) return "";
-    return `import { ${functionNames.map(factoryIdent).join(", ")} } from "${spec}";\n\n`;
-}
+// `<Class>.schema` metadata calls. The factory is spliced into its SOURCE module by the
+// generic module emitter, which resolves any utility-function imports its body needs.
 
 // ─── Direct-ref factory call (spliced into schema metadata) ────────────────────
 
@@ -33,20 +28,40 @@ export function buildFactoryCall(
     return `${factoryIdent(name)}(${rendered.join(", ")})`;
 }
 
-// ─── Validators ───────────────────────────────────────────────────────────────
+// ─── Claimed-function rendering (validators/formatters into their source module) ───
 
-/** Emit `validators.js`: one direct-ref factory `export const` per used validator. */
-export function emitValidatorsJs(
-    decls: readonly IRFunctionDeclaration[],
-    functionNames: readonly string[],
-): string {
-    return functionsImport(functionNames, "./functions.js") + decls.map(emitValidatorFactory).join("\n\n") + "\n";
+/** Validator/formatter factory names referenced by any field's `@Validate`/`@Format`. */
+export function factoryNames(ir: KeymaIR): { validatorNames: ReadonlySet<string>; formatterNames: ReadonlySet<string> } {
+    const validatorNames = new Set<string>();
+    const formatterNames = new Set<string>();
+    for (const cls of ir.classes) {
+        for (const field of cls.fields) {
+            for (const v of fieldValidators(field)) validatorNames.add(v.name);
+            for (const f of fieldFormatters(field)) formatterNames.add(f.spec.name);
+        }
+    }
+    return { validatorNames, formatterNames };
 }
 
-export function emitValidatorsDts(decls: readonly IRFunctionDeclaration[]): string {
-    const lines = [`import type { ValidatorFn } from "./types.js";`, ""];
-    for (const d of decls) lines.push(`export declare const ${factoryIdent(d.name)}: (...args: unknown[]) => ValidatorFn;`);
-    return lines.join("\n") + "\n";
+/**
+ * Render each claimed factory with its runtime guard wrapper, for splicing into its source
+ * module. The generic module emitter passes the module's claimed subset (in order) and resolves
+ * the cross-module utility-function imports each body references.
+ */
+export function renderClaimedFunctions(
+    decls: readonly IRFunctionDeclaration[],
+    ir: KeymaIR,
+): readonly ClaimedFunctionRendering[] {
+    const { validatorNames } = factoryNames(ir);
+    return decls.map((decl) =>
+        validatorNames.has(decl.name)
+            ? { js: emitValidatorFactory(decl) + "\n", dts: declConst(decl, "ValidatorFn"), dtsTypeImports: ["ValidatorFn"] }
+            : { js: emitFormatterFactory(decl) + "\n", dts: declConst(decl, "FormatterFn"), dtsTypeImports: ["FormatterFn"] },
+    );
+}
+
+function declConst(decl: IRFunctionDeclaration, marker: "ValidatorFn" | "FormatterFn"): string {
+    return `export declare const ${factoryIdent(decl.name)}: (...args: unknown[]) => ${marker};\n`;
 }
 
 function emitValidatorFactory(decl: IRFunctionDeclaration): string {
@@ -64,22 +79,6 @@ function emitValidatorFactory(decl: IRFunctionDeclaration): string {
     const fnBody = [guardLine, body].filter(Boolean).join("\n");
 
     return `export const ${factoryIdent(decl.name)} = (${factoryParamList}) => (${innerParamList}) => {\n${fnBody}\n};`;
-}
-
-// ─── Formatters ───────────────────────────────────────────────────────────────
-
-/** Emit `formatters.js`: one direct-ref factory `export const` per used formatter. */
-export function emitFormattersJs(
-    decls: readonly IRFunctionDeclaration[],
-    functionNames: readonly string[],
-): string {
-    return functionsImport(functionNames, "./functions.js") + decls.map(emitFormatterFactory).join("\n\n") + "\n";
-}
-
-export function emitFormattersDts(decls: readonly IRFunctionDeclaration[]): string {
-    const lines = [`import type { FormatterFn } from "./types.js";`, ""];
-    for (const d of decls) lines.push(`export declare const ${factoryIdent(d.name)}: (...args: unknown[]) => FormatterFn;`);
-    return lines.join("\n") + "\n";
 }
 
 function emitFormatterFactory(decl: IRFunctionDeclaration): string {

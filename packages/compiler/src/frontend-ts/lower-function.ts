@@ -36,6 +36,15 @@ export type FunctionCollectorDeps = {
  */
 export type FunctionCollector = {
     classify: (ident: ts.Identifier) => FnRefVerdict;
+    /**
+     * Enqueue the complete project-local top-level function surface (every `function` decl and
+     * `const f = (…) => …` / function-expression in a non-declaration, non-`node_modules` source
+     * file), so the IR carries all local functions — referenced or not — as a complete import
+     * surface. `isExcluded(returnType)` skips declarations a domain lowers separately (the schema
+     * domain excludes validator/formatter factories, which lower only where referenced). Shares
+     * `classify`'s dedup, so a function already reached by reference is not enqueued twice.
+     */
+    enqueueLocalSurface: (program: ts.Program, isExcluded: (returnType: ts.TypeNode | undefined) => boolean) => void;
     drain: () => IRFunctionDeclaration[];
 };
 
@@ -100,6 +109,51 @@ export function createFunctionCollector(deps: FunctionCollectorDeps): FunctionCo
             queue.push({ symbol: resolved, name, node: found.node, sourceFile: declFile });
         }
         return { kind: "compile", name };
+    }
+
+    function enqueueLocalSurface(
+        program: ts.Program,
+        isExcluded: (returnType: ts.TypeNode | undefined) => boolean,
+    ): void {
+        for (const sf of program.getSourceFiles()) {
+            if (sf.isDeclarationFile) continue;
+            if (sf.fileName.replace(/\\/g, "/").includes("/node_modules/")) continue;
+            for (const stmt of sf.statements) {
+                if (ts.isFunctionDeclaration(stmt) && stmt.body !== undefined && stmt.name !== undefined) {
+                    if (!isExcluded(stmt.type)) enqueueDeclaration(stmt.name, stmt, sf);
+                } else if (ts.isVariableStatement(stmt)) {
+                    for (const d of stmt.declarationList.declarations) {
+                        if (ts.isIdentifier(d.name) && d.initializer !== undefined
+                            && (ts.isArrowFunction(d.initializer) || ts.isFunctionExpression(d.initializer))) {
+                            if (!isExcluded(d.type ?? d.initializer.type)) enqueueDeclaration(d.name, d.initializer, sf);
+                        }
+                    }
+                }
+            }
+        }
+    }
+
+    /** Enqueue one local function declaration (deduped by symbol; collision-checked by name),
+     *  mirroring `classify`'s bookkeeping for the declaration-driven (full-surface) path. */
+    function enqueueDeclaration(nameNode: ts.Identifier, node: CallableNode, sourceFile: ts.SourceFile): void {
+        const sym = checker.getSymbolAtLocation(nameNode);
+        if (sym === undefined) return;
+        const resolved = resolveAlias(sym, checker);
+        const name = resolved.getName();
+        const prior = byName.get(name);
+        if (prior !== undefined && prior !== resolved) {
+            diagnostics.push(mkError(
+                KEYMA086,
+                `Two distinct utility functions are named "${name}" — referenced functions must have unique names`,
+                getLocation(nameNode, sourceFile),
+            ));
+            return;
+        }
+        if (!seen.has(resolved)) {
+            seen.add(resolved);
+            byName.set(name, resolved);
+            queue.push({ symbol: resolved, name, node, sourceFile });
+        }
     }
 
     function drain(): IRFunctionDeclaration[] {
@@ -175,7 +229,7 @@ export function createFunctionCollector(deps: FunctionCollectorDeps): FunctionCo
         return result.type;
     }
 
-    return { classify, drain };
+    return { classify, enqueueLocalSurface, drain };
 }
 
 function findCallable(decls: readonly ts.Declaration[]): { node: CallableNode } | undefined {

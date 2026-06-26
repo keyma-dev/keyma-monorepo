@@ -1,16 +1,19 @@
-import type { IRFunctionDeclaration } from "@keyma/core/ir";
+import type { IRFunctionDeclaration, KeymaIR } from "@keyma/core/ir";
 import {
-    factoryIdent, renderStatements, intrinsicImports, moduleHeader,
+    factoryIdent, renderStatements,
     irTypeGuard, irTypeLabel, emitLiteral,
 } from "@keyma/compiler/backend-python";
 import { validatorShape } from "../backend-common/validator-shape.js";
+import { fieldValidators, fieldFormatters } from "../ir/extensions.js";
 
 // The schema domain owns the runtime validator/formatter wrapper emission. Each
 // validator/formatter factory is an ordinary `IRFunctionDeclaration` (its body returns a
 // typed inner arrow); `validatorShape` recovers the factory params, the inner positional
 // params (value/field/context) and the input type so this re-emits the same factory the
 // `<Class>.schema` metadata calls. Generic project-local utility functions stay in
-// `@keyma/compiler` (`functions.py`).
+// `@keyma/compiler` (plain `def`s in their source module). Validator/formatter factories are
+// claimed here and rendered (with the runtime guard wrapper) co-located in their source module
+// by the generic module emitter.
 
 /**
  * Render a factory parameter for the def signature. An optional param (a `?` or default
@@ -48,12 +51,35 @@ export function buildFactoryCall(
     return `${factoryIdent(name)}(${args.map((a) => emitLiteral(a)).join(", ")})`;
 }
 
-// ─── Validators (validators.py) ────────────────────────────────────────────────
+// ─── Claimed-function rendering (validators/formatters into their source module) ───
 
-export function emitValidatorsPy(decls: readonly IRFunctionDeclaration[], hasFunctions: boolean): string {
-    const body = decls.map(emitValidatorFactory).join("\n");
-    return [...moduleHeader(hasFunctions, intrinsicImports(body)), body].join("\n");
+/** Validator/formatter factory names referenced by any field's `@Validate`/`@Format`. */
+export function factoryNames(ir: KeymaIR): { validatorNames: ReadonlySet<string>; formatterNames: ReadonlySet<string> } {
+    const validatorNames = new Set<string>();
+    const formatterNames = new Set<string>();
+    for (const cls of ir.classes) {
+        for (const field of cls.fields) {
+            for (const v of fieldValidators(field)) validatorNames.add(v.name);
+            for (const f of fieldFormatters(field)) formatterNames.add(f.spec.name);
+        }
+    }
+    return { validatorNames, formatterNames };
 }
+
+/**
+ * Render each claimed factory with its runtime guard wrapper (a `def` returning the typed inner
+ * `_v`/`_f`), for splicing into its source module by the generic module emitter. The schema
+ * metadata calls each factory by name (imported cross-module where needed).
+ */
+export function renderClaimedFunctions(
+    decls: readonly IRFunctionDeclaration[],
+    ir: KeymaIR,
+): readonly string[] {
+    const { validatorNames } = factoryNames(ir);
+    return decls.map((d) => (validatorNames.has(d.name) ? emitValidatorFactory(d) : emitFormatterFactory(d)));
+}
+
+// ─── Validators ────────────────────────────────────────────────────────────────
 
 function emitValidatorFactory(decl: IRFunctionDeclaration): string {
     const s = validatorShape(decl);
@@ -73,16 +99,11 @@ function emitValidatorFactory(decl: IRFunctionDeclaration): string {
     if (s.statements.length > 0) {
         lines.push(rewriteContextAccess(renderStatements(s.statements, "        "), ctxParam));
     }
-    lines.push(`    return _v`, "");
+    lines.push(`    return _v`);
     return lines.join("\n");
 }
 
-// ─── Formatters (formatters.py) ─────────────────────────────────────────────────
-
-export function emitFormattersPy(decls: readonly IRFunctionDeclaration[], hasFunctions: boolean): string {
-    const body = decls.map(emitFormatterFactory).join("\n");
-    return [...moduleHeader(hasFunctions, intrinsicImports(body)), body].join("\n");
-}
+// ─── Formatters ─────────────────────────────────────────────────────────────────
 
 function emitFormatterFactory(decl: IRFunctionDeclaration): string {
     const s = validatorShape(decl);
@@ -101,6 +122,6 @@ function emitFormatterFactory(decl: IRFunctionDeclaration): string {
     if (s.statements.length > 0) {
         lines.push(rewriteContextAccess(renderStatements(s.statements, "        "), ctxParam));
     }
-    lines.push(`    return _f`, "");
+    lines.push(`    return _f`);
     return lines.join("\n");
 }

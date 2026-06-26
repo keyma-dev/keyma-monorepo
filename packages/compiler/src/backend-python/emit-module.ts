@@ -1,5 +1,5 @@
 import type { IRClassDeclaration, IRField, IRMethod, IRFunctionDeclaration } from "@keyma/core/ir";
-import { collectRefTargets, collectFunctionRefs, filterVisibleFields, filterVisibleMethods } from "@keyma/core/util";
+import { collectRefTargets, collectFunctionRefs, collectStatementIdentifiers, filterVisibleFields, filterVisibleMethods } from "@keyma/core/util";
 import { renderStatements, factoryIdent } from "./emit-validators.js";
 import { intrinsicImports } from "./emit-expression.js";
 import { irTypeToPython } from "./ir-type-to-python.js";
@@ -8,35 +8,59 @@ import { buildApplyDefaults } from "./emit-defaults.js";
 import { emitLiteral } from "./emit-literal.js";
 import { pythonRelImport } from "./module-path.js";
 
+/** The declarations a single source module owns: the schema classes authored in the file plus
+ *  the (reachable) functions homed in it — plain utility helpers and claimed validator/formatter
+ *  factories alike. Either list may be empty (a function-only file still produces a module). */
+export type ModuleContent = {
+    classes: readonly IRClassDeclaration[];
+    functions: readonly IRFunctionDeclaration[];
+};
+
 export type ModuleEmitDeps = {
     includePrivate: boolean;
     includeIndexes: boolean;
     formPhasesOnly: boolean;
     includeDefaults: boolean;
-    /** sourceName → bundle-relative module ref (e.g. "models/user/user"). */
+    /** sourceName → bundle-relative module ref (e.g. "src/user/user"). */
     schemaModule: ReadonlyMap<string, string>;
+    /** Function name → bundle-relative module ref (e.g. "src/user", "vendor"). Covers every
+     *  function the bundle keeps; cross-module function refs resolve through here. */
+    functionModule: ReadonlyMap<string, string>;
     /** Reference/embedded/edge target `name` → emitted Python class (`sourceName`). */
     classNameByName: ReadonlyMap<string, string>;
     /** Every project-local function declaration keyed by name (a domain pack reads a
      *  validator/formatter factory's params for factory-call arg ordering). */
     functionDecls: ReadonlyMap<string, IRFunctionDeclaration>;
-    functionNames: ReadonlySet<string>;
-    validatorsModuleRef: string;
-    formattersModuleRef: string;
-    functionsModuleRef: string;
+    /** Names of the functions rendered with the domain wrapper (validators/formatters) rather
+     *  than as plain functions. The matching renderings come from `renderClaimedFunctions`. */
+    claimedFunctionNames: ReadonlySet<string>;
     /** Domain-supplied builder of the per-schema `.schema` metadata dict (from the
      *  emitter registry's schema pack). Keeps the generic module emitter domain-agnostic. */
     buildSchemaData: BuildSchemaData;
+    /** Render the claimed (validator/formatter) functions a module owns, with the domain
+     *  wrapper, one rendered `def` block per declaration. Present when `claimedFunctionNames`
+     *  is non-empty. */
+    renderClaimedFunctions?: (decls: readonly IRFunctionDeclaration[]) => readonly string[];
 };
 
 const CLIENT_PHASES = new Set(["change", "blur", "submit"]);
 
-export function emitModulePython(moduleRef: string, schemas: readonly IRClassDeclaration[], deps: ModuleEmitDeps): string {
-    // Emit the class bodies first so the header can pull in only the math/coercion-intrinsic
-    // imports they actually reference (getter/method/default expressions may use them).
+/** Emit one source module `.py` with every declaration authored in a source file — schema
+ *  classes plus the functions homed there (plain utilities and wrapped validator/formatter
+ *  factories alike). A function-only file still produces a module. */
+export function emitModulePython(moduleRef: string, content: ModuleContent, deps: ModuleEmitDeps): string {
+    const claimedByName = renderClaimed(content, deps);
+
+    // Emit the class + function bodies first so the header can pull in only the math/coercion-
+    // intrinsic imports they actually reference (getter/method/default/factory bodies may use them).
     const body: string[] = [];
-    for (const schema of schemas) {
+    for (const schema of content.classes) {
         body.push(...emitSchemaClass(schema, deps));
+        body.push("");
+    }
+    for (const fn of content.functions) {
+        const rendering = claimedByName.get(fn.name);
+        body.push(rendering !== undefined ? rendering : emitFunctionPy(fn));
         body.push("");
     }
 
@@ -48,10 +72,31 @@ export function emitModulePython(moduleRef: string, schemas: readonly IRClassDec
         ...intrinsicImports(body.join("\n")),
         "",
     ];
-    lines.push(...buildImports(moduleRef, schemas, deps));
+    lines.push(...buildImports(moduleRef, content, deps));
     lines.push("", "");
     lines.push(...body);
     return lines.join("\n");
+}
+
+/** Emit a plain project-local utility function as a module-level `def`. */
+function emitFunctionPy(decl: IRFunctionDeclaration): string {
+    const params = decl.params.map((p) => p.name).join(", ");
+    const lines = [`def ${decl.name}(${params}):`];
+    if (decl.statements.length === 0) lines.push("    pass");
+    else lines.push(renderStatements(decl.statements, "    "));
+    return lines.join("\n");
+}
+
+/** Run the domain's claimed-function renderer over the claimed functions this module owns,
+ *  returning a name→rendering map (empty when the module owns none). */
+function renderClaimed(content: ModuleContent, deps: ModuleEmitDeps): Map<string, string> {
+    const claimed = content.functions.filter((fn) => deps.claimedFunctionNames.has(fn.name));
+    if (claimed.length === 0) return new Map();
+    if (deps.renderClaimedFunctions === undefined) {
+        throw new Error("module owns claimed functions but no renderClaimedFunctions hook was provided");
+    }
+    const renderings = deps.renderClaimedFunctions(claimed);
+    return new Map(claimed.map((fn, i) => [fn.name, renderings[i]!]));
 }
 
 function emitSchemaClass(schema: IRClassDeclaration, deps: ModuleEmitDeps): string[] {
@@ -109,7 +154,7 @@ function emitSchemaClass(schema: IRClassDeclaration, deps: ModuleEmitDeps): stri
 
 // ─── Imports ──────────────────────────────────────────────────────────────────
 
-function buildImports(moduleRef: string, schemas: readonly IRClassDeclaration[], deps: ModuleEmitDeps): string[] {
+function buildImports(moduleRef: string, content: ModuleContent, deps: ModuleEmitDeps): string[] {
     const bySpec = new Map<string, Set<string>>();
     const add = (toRef: string, binding: string): void => {
         if (toRef === moduleRef) return;
@@ -119,8 +164,10 @@ function buildImports(moduleRef: string, schemas: readonly IRClassDeclaration[],
         bySpec.get(spec)!.add(binding);
     };
 
+    const schemas = content.classes;
     const allFields: IRField[] = schemas.flatMap((s) => filterVisibleFields(s, deps.includePrivate));
 
+    // Cross-module schema base classes + embedded/reference class targets.
     for (const s of schemas) {
         if (s.extends !== undefined) {
             const ref = deps.schemaModule.get(s.extends);
@@ -134,9 +181,27 @@ function buildImports(moduleRef: string, schemas: readonly IRClassDeclaration[],
         const ref = deps.schemaModule.get(className);
         if (ref !== undefined) add(ref, className);
     }
-    for (const n of collectFactoryNames(allFields, "validators", deps.formPhasesOnly)) add(deps.validatorsModuleRef, factoryIdent(n));
-    for (const n of collectFactoryNames(allFields, "formatters", deps.formPhasesOnly)) add(deps.formattersModuleRef, factoryIdent(n));
-    for (const n of collectFunctionRefs(schemas, deps)) add(deps.functionsModuleRef, n);
+
+    // Functions referenced from this module — by field validator/formatter metadata, by class
+    // behaviors/defaults, and by the bodies of the functions homed here — resolved to their
+    // source module through `functionModule`. Same-module refs are skipped by `add`.
+    const fnRefs = new Set<string>();
+    for (const n of collectFactoryNames(allFields, "validators", deps.formPhasesOnly)) fnRefs.add(n);
+    for (const n of collectFactoryNames(allFields, "formatters", deps.formPhasesOnly)) fnRefs.add(n);
+    for (const n of collectFunctionRefs(schemas, {
+        includePrivate: deps.includePrivate,
+        includeDefaults: deps.includeDefaults,
+        functionNames: new Set(deps.functionModule.keys()),
+    })) fnRefs.add(n);
+    for (const fn of content.functions) {
+        const ids = new Set<string>();
+        for (const stmt of fn.statements) collectStatementIdentifiers(stmt, ids);
+        for (const id of ids) if (deps.functionModule.has(id)) fnRefs.add(id);
+    }
+    for (const n of fnRefs) {
+        const ref = deps.functionModule.get(n);
+        if (ref !== undefined) add(ref, factoryIdent(n));
+    }
 
     return [...bySpec.entries()]
         .sort((a, b) => a[0].localeCompare(b[0]))
@@ -166,7 +231,7 @@ function schemaSlice(field: IRField): SchemaFieldSlice | undefined {
     return field.extensions?.["schema"] as SchemaFieldSlice | undefined;
 }
 
-function collectFactoryNames(fields: IRField[], which: "validators" | "formatters", formPhasesOnly: boolean): Set<string> {
+export function collectFactoryNames(fields: readonly IRField[], which: "validators" | "formatters", formPhasesOnly: boolean): Set<string> {
     const out = new Set<string>();
     for (const f of fields) {
         const slice = schemaSlice(f);

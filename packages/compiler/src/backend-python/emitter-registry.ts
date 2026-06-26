@@ -39,12 +39,19 @@ export type PythonEmitterPack = {
      *  primary pack); a domain that only contributes bundle files (e.g. UI) omits it. */
     buildSchemaData?: BuildSchemaData;
     /**
-     * Names of `functionDeclarations` this domain emits itself (with its own wrapper) via
-     * `emitBundleFiles`, so the generic backend excludes them from `functions.py`. The schema
-     * domain claims its validator/formatter factories (which it re-emits as runtime validator/
-     * formatter wrappers in `validators.py`/`formatters.py`). Omit when the domain claims none.
+     * Names of `functionDeclarations` this domain renders itself (with its own wrapper) via
+     * `renderClaimedFunctions`, so the generic backend emits them through that hook rather than
+     * as plain `def`s. The schema domain claims its validator/formatter factories (re-emitted as
+     * runtime validator/formatter wrappers co-located in their source module). Omit when none.
      */
     claimFunctions?: (ir: KeymaIR) => ReadonlySet<string>;
+    /**
+     * Render the claimed (e.g. validator/formatter) functions a source module owns, with the
+     * domain wrapper, one rendered `def` block per declaration (same order as `decls`). Spliced
+     * into the module's body by the generic emitter. Present whenever `claimFunctions` is. The
+     * full IR is passed so the domain can distinguish validator vs formatter factories.
+     */
+    renderClaimedFunctions?: (decls: readonly IRFunctionDeclaration[], ir: KeymaIR) => readonly string[];
     /**
      * Contribute extra files to each bundle, derived from the domain's own IR slice
      * (e.g. `ir.extensions['ui']`). Runs for **every** registered pack (not just the primary),

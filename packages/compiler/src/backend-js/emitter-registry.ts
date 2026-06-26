@@ -74,11 +74,28 @@ export type BundleEmitContext = {
 export type ServiceEmitDeps = {
     /** Include private services and private methods (server/library bundles). */
     includePrivate: boolean;
-    /** sourceName → bundle-relative model module ref (e.g. "models/user/user"). */
+    /** sourceName → bundle-relative source module ref (e.g. "src/user"). */
     schemaModule: ReadonlyMap<string, string>;
     /** Reference/embedded target `name` → emitted class symbol (for `.d.ts` types
      *  and the client `refs` Map value / model-import binding). */
     embeddedTypeNames: ReadonlyMap<string, string>;
+};
+
+/**
+ * One claimed (validator/formatter) function rendered within its source module. Since the
+ * validator→function collapse these factories are ordinary `IRFunctionDeclaration`s, but the
+ * schema domain re-emits them with the runtime `ValidatorFn`/`FormatterFn` guard wrapper rather
+ * than as plain functions. The generic module emitter places the rendering inside the
+ * declaration's source module and resolves the cross-module utility-function imports its body
+ * needs; the domain only supplies the bodies + the bundle `types`-module names the `.d.ts` uses.
+ */
+export type ClaimedFunctionRendering = {
+    /** The `.js` definition, e.g. `export const minLength = (min) => (raw, field) => { … };`. */
+    js: string;
+    /** The `.d.ts` declaration, e.g. `export declare const minLength: (...args: unknown[]) => ValidatorFn;`. */
+    dts: string;
+    /** Type names this `.d.ts` declaration imports from the bundle `types` module (e.g. `ValidatorFn`). */
+    dtsTypeImports: readonly string[];
 };
 
 /**
@@ -106,12 +123,21 @@ export type JsEmitterPack = {
     /** Emit the bundle-root services.js/.d.ts; omit when the domain has no services. */
     emitServices?: (services: readonly IRService[], deps: ServiceEmitDeps) => { js: string; dts: string };
     /**
-     * Names of `functionDeclarations` this domain emits itself (with its own wrapper) via
-     * `emitBundleFiles`, so the generic backend excludes them from `functions.js`. The schema
-     * domain claims its validator/formatter factories (which it re-emits as `ValidatorFn`/
-     * `FormatterFn` wrappers in `validators.js`/`formatters.js`). Omit when the domain claims none.
+     * Names of `functionDeclarations` this domain renders itself (with its own wrapper) via
+     * `renderClaimedFunctions`, so the generic backend does not emit them as plain functions.
+     * The schema domain claims its validator/formatter factories (re-emitted with the runtime
+     * `ValidatorFn`/`FormatterFn` guard wrapper). Omit when the domain claims none.
      */
     claimFunctions?: (ir: KeymaIR) => ReadonlySet<string>;
+    /**
+     * Render the claimed functions a single source module owns, with the domain wrapper. The
+     * generic module emitter passes the subset of a module's reachable functions whose names are
+     * in `claimFunctions`, in module order, and splices each rendering into that module (resolving
+     * the cross-module imports the body needs). Required when `claimFunctions` returns names.
+     * `decls` is the module's claimed subset; `ir` is the full document (to classify each as a
+     * validator vs formatter). Returns one rendering per input declaration, in order.
+     */
+    renderClaimedFunctions?: (decls: readonly IRFunctionDeclaration[], ir: KeymaIR) => readonly ClaimedFunctionRendering[];
     /**
      * Contribute extra files to each bundle, derived from the domain's own IR slice
      * (e.g. `ir.extensions['ui']`). Unlike `buildSchemaData` (which only the first/primary

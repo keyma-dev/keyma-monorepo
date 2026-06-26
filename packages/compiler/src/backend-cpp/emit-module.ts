@@ -2,9 +2,9 @@ import type {
     IRClassDeclaration, IRField, IRType, IRMethod, IREnumDeclaration,
     IRFunctionDeclaration,
 } from "@keyma/core/ir";
-import { collectRefTargets, collectFunctionRefs, unwrapArray, filterVisibleFields, filterVisibleMethods } from "@keyma/core/util";
+import { collectRefTargets, collectFunctionRefs, collectStatementIdentifiers, unwrapArray, filterVisibleFields, filterVisibleMethods } from "@keyma/core/util";
 import { exprToCpp, type ExprOpts } from "./emit-expression.js";
-import { stmtToCpp, factoryIdent, type ReturnLowerer } from "./emit-validators.js";
+import { stmtToCpp, plainReturn, factoryIdent, type ReturnLowerer } from "./emit-validators.js";
 import { irTypeToCpp, memberType, traitsArg, whereValueType, fieldKind, refTargetType, binaryFieldPlan, type BinaryFieldPlan } from "./ir-type-to-cpp.js";
 import type { BuildSchemaMeta, EmitEnumClass, EmitEnumConversions } from "./emitter-registry.js";
 import { buildApplyDefaults } from "./emit-defaults.js";
@@ -37,9 +37,15 @@ export type ModuleEmitDeps = {
      *  validator/formatter factory's params for factory-call arg ordering). */
     functionDecls: ReadonlyMap<string, IRFunctionDeclaration>;
     functionNames: ReadonlySet<string>;
-    validatorsModuleRef: string;
-    formattersModuleRef: string;
-    functionsModuleRef: string;
+    /** Function name → bundle-relative module ref of its declaring file (e.g. "src/validators",
+     *  "vendor"). Cross-module function refs resolve through here, like reference targets. */
+    functionModule: ReadonlyMap<string, string>;
+    /** Names of the functions rendered with the domain wrapper (validators/formatters) rather
+     *  than as plain functions. The matching renderings come from `renderClaimedFunctions`. */
+    claimedFunctionNames: ReadonlySet<string>;
+    /** Render the claimed (validator/formatter) functions a module owns, with the domain
+     *  wrapper. Present whenever `claimedFunctionNames` is non-empty. */
+    renderClaimedFunctions?: (decls: readonly IRFunctionDeclaration[]) => readonly string[];
     /** Complete `#include` token (with delimiters) for the runtime header. */
     runtimeInclude: string;
     /** Domain-supplied builders (from the emitter registry's schema pack) — keep the
@@ -56,38 +62,51 @@ export function emitModuleCpp(
     moduleRef: string,
     schemas: readonly IRClassDeclaration[],
     enums: readonly IREnumDeclaration[],
+    functions: readonly IRFunctionDeclaration[],
     deps: ModuleEmitDeps,
 ): string {
     const ordered = topoSort(schemas, deps);
     const ns = namespaceOf(moduleRef, deps.nsRoot);
-    const funcsUsed = collectFunctionRefs(schemas, deps);
+
+    // Cross-module utility-function home namespaces this module's bodies call by bare name
+    // (class behaviors/defaults + the bodies of the functions homed here). They resolve via
+    // per-module using-directives — replacing the old shared `using namespace <root>::functions`.
+    // Validator/formatter factory refs in the schema metadata are fully qualified separately
+    // (like reference targets), so they are not part of this set.
+    const usingDirectives = crossModuleFnUsings(moduleRef, schemas, functions, deps);
+    const useLines = usingDirectives.map((u) => `using namespace ${u};`);
 
     const lines: string[] = ["#pragma once", `#include ${deps.runtimeInclude}`];
+    // A claimed formatter's runtime guard throws std::runtime_error, so a module that owns any
+    // domain-wrapped factory pulls in <stdexcept> (the old shared formatters.hpp did the same).
+    if (functions.some((d) => deps.claimedFunctionNames.has(d.name))) lines.push(`#include <stdexcept>`);
     // The typed binary codec lives in a separate runtime header (keeps the binary-only
     // primitives out of the baked runtime.hpp); pulled in only when binary is enabled.
-    if (deps.binary) lines.push(`#include <keyma/binary-typed.hpp>`);
-    for (const inc of buildIncludes(moduleRef, schemas, deps, funcsUsed.size > 0)) lines.push(`#include "${inc}"`);
+    if (deps.binary && schemas.length > 0) lines.push(`#include <keyma/binary-typed.hpp>`);
+    for (const inc of buildIncludes(moduleRef, schemas, functions, deps)) lines.push(`#include "${inc}"`);
 
-    // Forward declarations for every reference target (same- and cross-module). A
-    // std::shared_ptr<T> member needs only a forward declaration, which lets legal
-    // reference cycles compile (the complete type is pulled in after the structs).
-    const fwd = referenceForwardDecls(schemas, deps);
-    if (fwd.length > 0) { lines.push(""); lines.push(...fwd); }
+    if (schemas.length > 0) {
+        // Forward declarations for every reference target (same- and cross-module). A
+        // std::shared_ptr<T> member needs only a forward declaration, which lets legal
+        // reference cycles compile (the complete type is pulled in after the structs).
+        const fwd = referenceForwardDecls(schemas, deps);
+        if (fwd.length > 0) { lines.push(""); lines.push(...fwd); }
 
-    // value_traits explicit-specialization DECLARATIONS for every same-module struct and
-    // reference target, before any struct whose value_traits would implicitly instantiate
-    // a target's. This guarantees "declared before first use" in every translation unit
-    // and both include orders — required for the reference cycle to be well-formed
-    // ([temp.expl.spec]); redeclaration across the cycle's headers is legal.
-    const traitDecls = valueTraitsForwardDecls(ns, schemas, deps);
-    if (traitDecls.length > 0) { lines.push(""); lines.push(...traitDecls); }
+        // value_traits explicit-specialization DECLARATIONS for every same-module struct and
+        // reference target, before any struct whose value_traits would implicitly instantiate
+        // a target's. This guarantees "declared before first use" in every translation unit
+        // and both include orders — required for the reference cycle to be well-formed
+        // ([temp.expl.spec]); redeclaration across the cycle's headers is legal.
+        const traitDecls = valueTraitsForwardDecls(ns, schemas, deps);
+        if (traitDecls.length > 0) { lines.push(""); lines.push(...traitDecls); }
 
-    // binary_traits explicit-specialization forward declarations (same discipline as
-    // value_traits) so a binary_traits body that names a sibling's or a reference target's
-    // binary_traits has seen its declaration first. Gated on deps.binary.
-    if (deps.binary) {
-        const binDecls = binaryTraitsForwardDecls(schemas, deps);
-        if (binDecls.length > 0) lines.push(...binDecls);
+        // binary_traits explicit-specialization forward declarations (same discipline as
+        // value_traits) so a binary_traits body that names a sibling's or a reference target's
+        // binary_traits has seen its declaration first. Gated on deps.binary.
+        if (deps.binary) {
+            const binDecls = binaryTraitsForwardDecls(schemas, deps);
+            if (binDecls.length > 0) lines.push(...binDecls);
+        }
     }
 
     // ── Enums first: definitions + keyma:: conversions + std::formatter, all BEFORE
@@ -102,9 +121,27 @@ export function emitModuleCpp(
         }
     }
 
+    // ── Functions homed in this module: plain utilities + the domain-wrapped validator/
+    // formatter factories. Emitted before the structs so same-module behaviors can call them;
+    // a function-only source file (e.g. validators.ts) produces just this block. ──
+    if (functions.length > 0) {
+        const utility = functions.filter((d) => !deps.claimedFunctionNames.has(d.name));
+        const claimed = functions.filter((d) => deps.claimedFunctionNames.has(d.name));
+        const claimedRenderings = claimed.length > 0 && deps.renderClaimedFunctions !== undefined
+            ? deps.renderClaimedFunctions(claimed) : [];
+        lines.push("", `namespace ${ns} {`);
+        if (useLines.length > 0) { lines.push(...useLines); }
+        lines.push("");
+        for (const decl of utility) { lines.push(...emitFunctionCpp(decl)); lines.push(""); }
+        for (const r of claimedRenderings) { lines.push(r, ""); }
+        lines.push(`}  // namespace ${ns}`, "");
+    }
+
+    if (schemas.length === 0) return lines.join("\n");
+
     // ── Structs ──
     lines.push(`namespace ${ns} {`);
-    if (funcsUsed.size > 0) lines.push(`using namespace ${deps.nsRoot}::functions;`);
+    if (useLines.length > 0) lines.push(...useLines);
     lines.push("");
     for (const schema of ordered) {
         lines.push(...emitStruct(schema, deps));
@@ -133,7 +170,7 @@ export function emitModuleCpp(
     // ── Block 2b: out-of-line apply_defaults / schema() + the thin
     // from_value/to_value forwarder definitions (after the value_traits they delegate to). ──
     lines.push(`namespace ${ns} {`);
-    if (funcsUsed.size > 0) lines.push(`using namespace ${deps.nsRoot}::functions;`);
+    if (useLines.length > 0) lines.push(...useLines);
     lines.push("");
 
     if (deps.includeDefaults) {
@@ -149,6 +186,37 @@ export function emitModuleCpp(
 
     lines.push(`}  // namespace ${ns}`, "");
     return lines.join("\n");
+}
+
+/** Emit a plain project-local utility function as an inline free function. */
+function emitFunctionCpp(decl: IRFunctionDeclaration): string[] {
+    const params = decl.params.map((p) => `${irTypeToCpp(p.type)} ${p.name}`).join(", ");
+    const lines = [`inline auto ${decl.name}(${params}) {`];
+    for (const stmt of decl.statements) lines.push(stmtToCpp(stmt, "    ", plainReturn));
+    lines.push(`}`);
+    return lines;
+}
+
+/** The distinct cross-module utility-function home namespaces this module references by bare
+ *  name (from class behaviors/defaults and the bodies of the functions homed here). */
+function crossModuleFnUsings(
+    moduleRef: string,
+    schemas: readonly IRClassDeclaration[],
+    functions: readonly IRFunctionDeclaration[],
+    deps: ModuleEmitDeps,
+): string[] {
+    const names = new Set<string>(collectFunctionRefs(schemas, deps));
+    for (const fn of functions) {
+        const ids = new Set<string>();
+        for (const stmt of fn.statements) collectStatementIdentifiers(stmt, ids);
+        for (const id of ids) if (deps.functionModule.has(id)) names.add(id);
+    }
+    const nsSet = new Set<string>();
+    for (const n of names) {
+        const home = deps.functionModule.get(n);
+        if (home !== undefined && home !== moduleRef) nsSet.add(namespaceOf(home, deps.nsRoot));
+    }
+    return [...nsSet].sort();
 }
 
 // ─── Struct ───────────────────────────────────────────────────────────────────
@@ -277,6 +345,10 @@ function emitSchemaAccessor(schema: IRClassDeclaration, deps: ModuleEmitDeps): s
             formPhasesOnly: deps.formPhasesOnly,
             functionDecls: deps.functionDecls,
             nsRoot: deps.nsRoot,
+            functionNamespace: (name) => {
+                const home = deps.functionModule.get(name);
+                return home !== undefined ? namespaceOf(home, deps.nsRoot) : deps.nsRoot;
+            },
             refs: schemaRefs(stored, deps),
             ...(ad !== null ? { applyDefaultsName: ad.name } : {}),
         }),
@@ -588,10 +660,9 @@ function schemaRefs(fields: IRField[], deps: ModuleEmitDeps): { name: string; cp
 }
 
 // Validator/formatter attachments now ride in the field's `extensions['schema']` slice
-// (a schema-domain concern). The generic module emitter still needs to know whether a field
-// references any factory to wire the model header's `#include` of validators.hpp/formatters.hpp —
-// a transitional read of the well-known slice keeps that include wiring here without depending
-// on `@keyma/schema`.
+// (a schema-domain concern). The generic module emitter still needs the referenced factory
+// names to wire each model header's `#include` of the factory's SOURCE module — a transitional
+// read of the well-known slice keeps that include wiring here without depending on `@keyma/schema`.
 type SchemaFieldSlice = {
     validators?: { name: string }[];
     formatters?: { phase: string; spec: { name: string } }[];
@@ -600,10 +671,27 @@ function schemaSlice(field: IRField): SchemaFieldSlice | undefined {
     return field.extensions?.["schema"] as SchemaFieldSlice | undefined;
 }
 
-/** Top-of-file includes: embedded targets (by-value, complete type needed) and named
- *  enums used by value, plus the validator/formatter/function bundles. Reference
+export function collectFactoryNames(fields: readonly IRField[], which: "validators" | "formatters", formPhasesOnly: boolean): Set<string> {
+    const out = new Set<string>();
+    for (const f of fields) {
+        const slice = schemaSlice(f);
+        if (which === "validators") {
+            for (const v of slice?.validators ?? []) out.add(v.name);
+        } else {
+            for (const fmt of slice?.formatters ?? []) {
+                if (formPhasesOnly && !CLIENT_PHASES.has(fmt.phase)) continue;
+                out.add(fmt.spec.name);
+            }
+        }
+    }
+    return out;
+}
+
+/** Top-of-file includes: embedded targets (by-value, complete type needed), named enums used
+ *  by value, and the SOURCE modules of every referenced function — validator/formatter
+ *  factories (called by the schema metadata) and utility helpers (called by bodies). Reference
  *  targets are deliberately excluded here — see referenceIncludes. */
-function buildIncludes(moduleRef: string, schemas: readonly IRClassDeclaration[], deps: ModuleEmitDeps, hasFunctions: boolean): string[] {
+function buildIncludes(moduleRef: string, schemas: readonly IRClassDeclaration[], functions: readonly IRFunctionDeclaration[], deps: ModuleEmitDeps): string[] {
     const refs = new Set<string>();
     const allFields = schemas.flatMap((s) => filterVisibleFields(s, deps.includePrivate));
 
@@ -618,19 +706,22 @@ function buildIncludes(moduleRef: string, schemas: readonly IRClassDeclaration[]
         if (ref !== undefined && ref !== moduleRef) refs.add(includePath(ref));
     }
 
-    let anyValidators = false;
-    let anyFormatters = false;
-    for (const f of allFields) {
-        const slice = schemaSlice(f);
-        if ((slice?.validators?.length ?? 0) > 0) anyValidators = true;
-        const fmts = deps.formPhasesOnly
-            ? (slice?.formatters ?? []).filter((fm) => CLIENT_PHASES.has(fm.phase))
-            : (slice?.formatters ?? []);
-        if (fmts.length > 0) anyFormatters = true;
+    // Every referenced function's source module: factory refs from field metadata, utility refs
+    // from class behaviors/defaults, and the helpers the functions homed here call in turn.
+    const fnRefs = new Set<string>([
+        ...collectFactoryNames(allFields, "validators", deps.formPhasesOnly),
+        ...collectFactoryNames(allFields, "formatters", deps.formPhasesOnly),
+        ...collectFunctionRefs(schemas, deps),
+    ]);
+    for (const fn of functions) {
+        const ids = new Set<string>();
+        for (const stmt of fn.statements) collectStatementIdentifiers(stmt, ids);
+        for (const id of ids) if (deps.functionModule.has(id)) fnRefs.add(id);
     }
-    if (anyValidators) refs.add(includePath(deps.validatorsModuleRef));
-    if (anyFormatters) refs.add(includePath(deps.formattersModuleRef));
-    if (hasFunctions) refs.add(includePath(deps.functionsModuleRef));
+    for (const n of fnRefs) {
+        const ref = deps.functionModule.get(n);
+        if (ref !== undefined && ref !== moduleRef) refs.add(includePath(ref));
+    }
 
     return [...refs].sort();
 }

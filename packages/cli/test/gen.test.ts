@@ -47,8 +47,8 @@ describe("keyma gen", () => {
 
         // The JS backend writes both client and server bundles by default.
         const expectedFiles = [
-            "dist/js/client/models/user.js",
-            "dist/js/server/models/user.js",
+            "dist/js/client/src/user.js",
+            "dist/js/server/src/user.js",
             "dist/js/client/index.js",
             "dist/js/server/index.js",
         ];

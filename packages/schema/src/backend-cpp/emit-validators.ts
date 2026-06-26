@@ -1,10 +1,11 @@
-import type { IRFunctionDeclaration, IRExpression } from "@keyma/core/ir";
+import type { IRFunctionDeclaration, IRExpression, KeymaIR } from "@keyma/core/ir";
 import {
     factoryIdent, stmtToCpp, rewriteContextAccess,
     valueBinding, irTypeGuard, irTypeLabel, exprToCpp,
     type ReturnLowerer,
 } from "@keyma/compiler/backend-cpp";
 import { validatorShape } from "../backend-common/validator-shape.js";
+import { fieldValidators, fieldFormatters } from "../ir/extensions.js";
 
 // The schema domain owns the runtime `ValidatorFn`/`FormatterFn` wrapper emission. Each
 // validator/formatter factory is an ordinary `IRFunctionDeclaration` (its body returns a
@@ -65,26 +66,32 @@ export function buildFactoryCall(
     return `${qualifiedNs}::${factoryIdent(name)}(${args.map(cppArg).join(", ")})`;
 }
 
-// ─── Validators (validators.hpp) ──────────────────────────────────────────────
+// ─── Claimed-function rendering (validators/formatters into their source module) ───
 
-export function emitValidatorsCpp(
+/** Validator/formatter factory names referenced by any field's `@Validate`/`@Format`. */
+export function factoryNames(ir: KeymaIR): { validatorNames: ReadonlySet<string>; formatterNames: ReadonlySet<string> } {
+    const validatorNames = new Set<string>();
+    const formatterNames = new Set<string>();
+    for (const cls of ir.classes) {
+        for (const field of cls.fields) {
+            for (const v of fieldValidators(field)) validatorNames.add(v.name);
+            for (const f of fieldFormatters(field)) formatterNames.add(f.spec.name);
+        }
+    }
+    return { validatorNames, formatterNames };
+}
+
+/**
+ * Render each claimed factory with its runtime guard wrapper (an `inline keyma::ValidatorFn`/
+ * `keyma::FormatterFn` free function), for splicing into its source module's namespace by the
+ * generic module emitter. The schema metadata calls each fully qualified by that namespace.
+ */
+export function renderClaimedFunctions(
     decls: readonly IRFunctionDeclaration[],
-    hasFunctions: boolean,
-    nsRoot: string,
-    runtimeInclude: string,
-): string {
-    const lines = [
-        "#pragma once",
-        `#include ${runtimeInclude}`,
-        ...(hasFunctions ? [`#include "functions.hpp"`] : []),
-        "",
-        `namespace ${nsRoot}::validators {`,
-        ...(hasFunctions ? ["", `using namespace ${nsRoot}::functions;`] : []),
-        "",
-    ];
-    for (const d of decls) lines.push(emitValidatorFactory(d), "");
-    lines.push(`}  // namespace ${nsRoot}::validators`, "");
-    return lines.join("\n");
+    ir: KeymaIR,
+): readonly string[] {
+    const { validatorNames } = factoryNames(ir);
+    return decls.map((d) => (validatorNames.has(d.name) ? emitValidatorFactory(d) : emitFormatterFactory(d)));
 }
 
 function emitValidatorFactory(decl: IRFunctionDeclaration): string {
@@ -135,28 +142,7 @@ function emitValidatorFactory(decl: IRFunctionDeclaration): string {
     return rewriteContextAccess(lines.join("\n"), ctxParam);
 }
 
-// ─── Formatters (formatters.hpp) ──────────────────────────────────────────────
-
-export function emitFormattersCpp(
-    decls: readonly IRFunctionDeclaration[],
-    hasFunctions: boolean,
-    nsRoot: string,
-    runtimeInclude: string,
-): string {
-    const lines = [
-        "#pragma once",
-        `#include ${runtimeInclude}`,
-        "#include <stdexcept>",
-        ...(hasFunctions ? [`#include "functions.hpp"`] : []),
-        "",
-        `namespace ${nsRoot}::formatters {`,
-        ...(hasFunctions ? ["", `using namespace ${nsRoot}::functions;`] : []),
-        "",
-    ];
-    for (const d of decls) lines.push(emitFormatterFactory(d), "");
-    lines.push(`}  // namespace ${nsRoot}::formatters`, "");
-    return lines.join("\n");
-}
+// ─── Formatters ───────────────────────────────────────────────────────────────
 
 function emitFormatterFactory(decl: IRFunctionDeclaration): string {
     const s = validatorShape(decl);

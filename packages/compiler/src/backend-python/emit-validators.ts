@@ -1,48 +1,11 @@
 import type {
-    IRFunctionDeclaration,
     IRStatement,
 } from "@keyma/core/ir";
-import { exprToPython, intrinsicImports, withHoist, type Hoist } from "./emit-expression.js";
+import { exprToPython, withHoist, type Hoist } from "./emit-expression.js";
 
 /** A factory identifier safe for a Python binding. */
 export function factoryIdent(name: string): string {
     return name.replace(/-/g, "_");
-}
-
-/**
- * Standard import header for generated validator/formatter/function modules. `extra`
- * carries any math/coercion-intrinsic imports the body requires (computed from the
- * emitted body via `intrinsicImports`). Exported so the schema domain pack — which now
- * owns validator/formatter emission — reuses the same header.
- */
-export function moduleHeader(hasFunctions: boolean, extra: readonly string[] = []): string[] {
-    const lines = ["from datetime import datetime, timezone", "import re", ...extra];
-    if (hasFunctions) lines.push("from .functions import *");
-    lines.push("", "");
-    return lines;
-}
-
-// ─── Utility functions (functions.py) ───────────────────────────────────────────
-//
-// The generic project-local function emitter. After the validator→function collapse this
-// emits every function the bundle keeps in `functions.py` — plain utility helpers. The
-// validator/formatter factories (also `IRFunctionDeclaration`s) are CLAIMED by the schema
-// domain pack, which emits them with the runtime validator/formatter wrapper into
-// validators.py/formatters.py, so the generic backend excludes their names from this set.
-
-export function emitFunctionsPy(declarations: readonly IRFunctionDeclaration[]): string {
-    const body: string[] = [];
-    for (const decl of declarations) {
-        const params = decl.params.map((p) => p.name).join(", ");
-        body.push(`def ${decl.name}(${params}):`);
-        if (decl.statements.length === 0) {
-            body.push("    pass");
-        } else {
-            body.push(renderStatements(decl.statements, "    "));
-        }
-        body.push("");
-    }
-    return [...moduleHeader(false, intrinsicImports(body.join("\n"))), ...body].join("\n");
 }
 
 // ─── Statement lowering ──────────────────────────────────────────────────────

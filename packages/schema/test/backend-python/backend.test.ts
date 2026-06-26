@@ -252,8 +252,8 @@ describe("emitPython", () => {
     it("emits a model with class and schema", async () => {
         const target: PythonTargetConfig = { language: "python", outDir: "dist/python", library: true };
         const result = await emitPython(BASIC_IR, target, RESOLVED_CONFIG);
-        const content = fileContent(result.files, "dist/python/models/user.py");
-        
+        const content = fileContent(result.files, "dist/python/src/user.py");
+
         assert.ok(content.includes("class User:"), "Missing class declaration");
         assert.ok(content.includes("def __init__(self, value: Dict[str, Any] = None):"), "Missing constructor");
         assert.ok(content.includes("self.firstName: str = value.get(\"firstName\")"), "Missing field assignment");
@@ -280,7 +280,7 @@ describe("emitPython", () => {
         };
         const target: PythonTargetConfig = { language: "python", outDir: "dist/python", library: true };
         const result = await emitPython(NULLABLE_IR, target, RESOLVED_CONFIG);
-        const content = fileContent(result.files, "dist/python/models/thing.py");
+        const content = fileContent(result.files, "dist/python/src/thing.py");
 
         assert.ok(content.includes("self.nickname: Optional[str] = value.get(\"nickname\")"), "Nullable field not rendered as Optional");
     });
@@ -289,8 +289,8 @@ describe("emitPython", () => {
         const target: PythonTargetConfig = { language: "python", outDir: "dist/python", library: true };
         const result = await emitPython(BASIC_IR, target, RESOLVED_CONFIG);
         const content = fileContent(result.files, "dist/python/index.py");
-        
-        assert.ok(content.includes("from .models.user import User"), "Missing re-export");
+
+        assert.ok(content.includes("from .src.user import User"), "Missing re-export");
     });
 
     it("emits schema with fields and refs", async () => {
@@ -308,7 +308,7 @@ describe("emitPython", () => {
         };
         const target: PythonTargetConfig = { language: "python", outDir: "dist/python", library: true };
         const result = await emitPython(REF_IR, target, RESOLVED_CONFIG);
-        const content = fileContent(result.files, "dist/python/models/p.py");
+        const content = fileContent(result.files, "dist/python/src/p.py");
         
         assert.ok(content.includes('"fields":'), "Missing fields in schema");
         assert.ok(content.includes('"refs": {"u": U}'), "Missing refs in schema");
@@ -363,7 +363,7 @@ describe("emitPython", () => {
         };
         const target: PythonTargetConfig = { language: "python", outDir: "dist/python", library: true };
         const result = await emitPython(BEHAVIORS_IR, target, RESOLVED_CONFIG);
-        const content = fileContent(result.files, "dist/python/models/user.py");
+        const content = fileContent(result.files, "dist/python/src/user.py");
 
         assert.ok(content.includes("def greeting(self, prefix):"), "method def missing");
         assert.ok(content.includes("return self.firstName.upper()"), "method body wrong");
@@ -375,7 +375,7 @@ describe("emitPython", () => {
     });
 });
 
-describe("emitPython — validators module", () => {
+describe("emitPython — validators co-located in their source module", () => {
     const VALIDATORS_IR: KeymaIR = {
         irVersion: "1.0.0", compilerVersion: "0.1.0",
         classes: [
@@ -403,7 +403,7 @@ describe("emitPython — validators module", () => {
     it("the injected type-guard returns a ValidationError dict, not a string", async () => {
         const target: PythonTargetConfig = { language: "python", outDir: "dist/python", library: true };
         const result = await emitPython(VALIDATORS_IR, target, RESOLVED_CONFIG);
-        const content = fileContent(result.files, "dist/python/validators.py");
+        const content = fileContent(result.files, "dist/python/src/schema.py");
         assert.ok(
             content.includes(`return {"field": field, "code": "type_error", "message": "expected string"}`),
             "type-guard must return a ValidationError dict",
@@ -450,7 +450,7 @@ describe("emitPython — validators module", () => {
     it("emits the (value, field, ctx) signature and lowers ctx.object.<field> to a dict lookup", async () => {
         const target: PythonTargetConfig = { language: "python", outDir: "dist/python", library: true };
         const result = await emitPython(CTX_VALIDATOR_IR, target, RESOLVED_CONFIG);
-        const content = fileContent(result.files, "dist/python/validators.py");
+        const content = fileContent(result.files, "dist/python/src/schema.py");
         assert.ok(content.includes("def _v(value, field, ctx):"), "must emit the 3-arg (value, field, ctx) signature");
         assert.ok(content.includes(`ctx.object.get("password")`), "ctx.object.<field> must lower to a Python dict lookup");
         assert.ok(!content.includes("ctx.object.password"), "must not emit attribute access on the context dict");

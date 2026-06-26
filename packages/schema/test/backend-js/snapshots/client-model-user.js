@@ -1,5 +1,4 @@
-import { trim } from "../formatters.js";
-import { minLength, required } from "../validators.js";
+import { minLength, required, trim } from "./schema.js";
 
 export class User {
     constructor(value) {

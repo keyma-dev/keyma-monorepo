@@ -1241,3 +1241,43 @@ describe("validator naming", () => {
         assert.equal(r.ir.functionDeclarations?.filter((d) => d.name === "nonEmpty").length, 1);
     });
 });
+
+// ─── Complete local surface (issue 006) ───────────────────────────────────────
+//
+// The IR carries the complete LOCAL surface — every project-local function and enum,
+// referenced or not — so a future `keyma.ir.json` is a complete import surface and
+// tree-shaking is a per-bundle backend concern (reachability = the client/server gate).
+
+describe("complete local surface", () => {
+    it("includes an unreferenced project-local function and enum in the IR", () => {
+        const r = cv({ "schema.ts": `
+            import { Schema } from "@keyma/schema/dsl";
+            export function unusedHelper(n: number): number { return n * 2; }
+            enum UnusedEnum { A = "a", B = "b" }
+            @Schema() class Foo { declare name: string; }
+        `});
+        assert.deepEqual(errorCodes(r), [], JSON.stringify(r.diagnostics));
+        assert.ok(
+            r.ir.functionDeclarations?.some((d) => d.name === "unusedHelper"),
+            "an unreferenced project-local function must be in the complete local surface",
+        );
+        assert.ok(
+            r.ir.enums?.some((e) => e.name === "UnusedEnum"),
+            "an unreferenced project-local enum must be in the complete local surface",
+        );
+    });
+
+    it("excludes an unreferenced validator/formatter factory (lowered only where referenced)", () => {
+        const r = cv({ "schema.ts": `
+            import { Schema } from "@keyma/schema/dsl";
+            import type { ValidatorFn } from "@keyma/schema/dsl";
+            export function unusedValidator(): ValidatorFn<string> { return (value) => value.length > 0 ? null : "x"; }
+            @Schema() class Foo { declare name: string; }
+        `});
+        assert.deepEqual(errorCodes(r), [], JSON.stringify(r.diagnostics));
+        assert.ok(
+            !r.ir.functionDeclarations?.some((d) => d.name === "unusedValidator"),
+            "an unreferenced validator factory is not a plain utility and is excluded from the surface",
+        );
+    });
+});

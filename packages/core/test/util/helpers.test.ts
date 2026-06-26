@@ -1,6 +1,6 @@
 import { test } from "node:test";
 import assert from "node:assert/strict";
-import type { IRExpression, IRStatement, IRField, IRClassDeclaration, IRType } from "../../src/ir/index.js";
+import type { IRExpression, IRStatement, IRField, IRClassDeclaration, IRType, IRFunctionDeclaration } from "../../src/ir/index.js";
 import { mkRaw, isRaw } from "../../src/util/emit-literal.js";
 import { mkError, mkWarning } from "../../src/util/diagnostics.js";
 import { filterVisible, filterVisibleFields, filterVisibleMethods } from "../../src/util/visibility.js";
@@ -10,6 +10,7 @@ import {
     collectStatementIdentifiers,
     collectRefTargets,
     collectFunctionRefs,
+    reachableFunctions,
 } from "../../src/util/ir-walk.js";
 
 // ─── emit-literal markers ──────────────────────────────────────────────────────
@@ -133,4 +134,31 @@ test("collectFunctionRefs returns only declared function names actually referenc
         [...collectFunctionRefs([schema], { includePrivate: true, includeDefaults: false, functionNames })],
         ["helperFn"],
     );
+});
+
+test("reachableFunctions takes the transitive closure from seeds, dropping undeclared seeds", () => {
+    const fn = (name: string, ...refs: string[]): [string, IRFunctionDeclaration] => [name, {
+        name,
+        params: [],
+        returnType: { kind: "json" },
+        statements: refs.map((r) => ({ kind: "expression", expr: { kind: "call", callee: { kind: "identifier", name: r }, args: [] } })),
+        source: { file: "f.ts", line: 1, column: 1 },
+    } as unknown as IRFunctionDeclaration];
+
+    const byName = new Map<string, IRFunctionDeclaration>([
+        fn("a", "b"),       // a → b
+        fn("b", "c"),       // b → c
+        fn("c"),            // leaf
+        fn("d", "a"),       // d → a, but nothing reaches d
+        fn("serverOnly", "c"),
+    ]);
+
+    // Transitive closure from a client-style root: a, b, c — never d.
+    assert.deepEqual([...reachableFunctions(["a"], byName)].sort(), ["a", "b", "c"]);
+    // A seed naming no declaration (an undeclared/vendor-only ref) contributes nothing.
+    assert.deepEqual([...reachableFunctions(["missing"], byName)], []);
+    // The security gate: a function reachable only from the server root is absent when the
+    // client root ("a") drives the closure, and present when "serverOnly" does.
+    assert.ok(![...reachableFunctions(["a"], byName)].includes("serverOnly"));
+    assert.deepEqual([...reachableFunctions(["serverOnly"], byName)].sort(), ["c", "serverOnly"]);
 });

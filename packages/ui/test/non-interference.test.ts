@@ -169,7 +169,7 @@ describe("end-to-end via drive() with both domains", () => {
 
         const paths = result.emitted.map((f) => f.path);
         // Schema models present (the @Schema class lowered + emitted) …
-        assert.ok(paths.some((p) => /models\/app\.(js|py|hpp)$/.test(p)), "schema models emitted");
+        assert.ok(paths.some((p) => /src\/app\.(js|py|hpp)$/.test(p)), "schema models emitted");
         // … alongside the UI views file in every language, only under ui/.
         assert.ok(paths.some((p) => p.endsWith("ui/views.js")), "ui/views.js emitted");
         assert.ok(paths.some((p) => p.endsWith("ui/views.py")), "ui/views.py emitted");
