@@ -1,9 +1,0 @@
-{
-    "extends": "../../tsconfig.base.json",
-    "compilerOptions": {
-        "rootDir": ".",
-        "outDir": "./dist",
-        "skipLibCheck": true
-    },
-    "include": ["src", "test", "bench"]
-}

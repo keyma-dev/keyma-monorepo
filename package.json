@@ -4,17 +4,10 @@
   "private": true,
   "workspaces": [
     "packages/core",
-    "packages/runtime-cpp",
-    "packages/runtime-python",
     "packages/runtime",
     "packages/compiler",
     "packages/schema",
     "packages/ui",
-    "packages/bench",
-    "packages/plugin-acl-js",
-    "packages/adapter-gremlin-js",
-    "packages/adapter-mongodb-js",
-    "packages/adapter-sqlite-js",
     "packages/cli",
     "playground"
   ],
