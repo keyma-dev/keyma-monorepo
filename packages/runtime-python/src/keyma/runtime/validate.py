@@ -5,6 +5,7 @@ from __future__ import annotations
 from typing import Any, Dict, List
 
 from ._invoke import Context, invoke_adaptive
+from .fields import all_fields
 from .types import SchemaMetadata, ValidationError
 
 
@@ -19,7 +20,7 @@ async def validate(schema: SchemaMetadata, value: Dict[str, Any]) -> List[Valida
     """
     errors: List[ValidationError] = []
     context = Context(value)
-    for field in schema["fields"]:
+    for field in all_fields(schema):  # own + inherited (real inheritance)
         name = field["name"]
 
         # An absent value skips its validators (they would otherwise trip their own

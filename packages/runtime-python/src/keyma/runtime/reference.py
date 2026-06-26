@@ -13,6 +13,7 @@ from __future__ import annotations
 
 from typing import Any, Dict
 
+from .fields import all_fields
 from .types import FieldType, SchemaMetadata
 
 _SCALAR_OPS = ("$eq", "$ne", "$gt", "$gte", "$lt", "$lte")
@@ -87,7 +88,7 @@ def normalize_reference_ids(record: Dict[str, Any], schema: SchemaMetadata) -> D
     ``Input`` substitution, since the value behind a placeholder is only known at
     request time and may itself be an ``{"id": ...}`` dict or a full instance."""
     out = dict(record)
-    for field in schema["fields"]:
+    for field in all_fields(schema):  # own + inherited (real inheritance)
         name = field["name"]
         if name not in out:
             continue

@@ -54,7 +54,7 @@ export function emitModulePython(moduleRef: string, content: ModuleContent, deps
     // Emit the class + function bodies first so the header can pull in only the math/coercion-
     // intrinsic imports they actually reference (getter/method/default/factory bodies may use them).
     const body: string[] = [];
-    for (const schema of content.classes) {
+    for (const schema of orderClassesByInheritance(content.classes)) {
         body.push(...emitSchemaClass(schema, deps));
         body.push("");
     }
@@ -76,6 +76,25 @@ export function emitModulePython(moduleRef: string, content: ModuleContent, deps
     lines.push("", "");
     lines.push(...body);
     return lines.join("\n");
+}
+
+/** Order a module's classes so a base class precedes any same-module subclass — Python executes
+ *  top-to-bottom, so `Parent.schema` (and the `class Parent`) must be defined before a child's
+ *  `class Child(Parent)` / `Child.schema = { base: Parent.schema }`. Cross-module parents come in
+ *  via imports. */
+function orderClassesByInheritance(classes: readonly IRClassDeclaration[]): IRClassDeclaration[] {
+    const bySource = new Map(classes.map((c) => [c.sourceName, c]));
+    const out: IRClassDeclaration[] = [];
+    const seen = new Set<string>();
+    const visit = (c: IRClassDeclaration): void => {
+        if (seen.has(c.sourceName)) return;
+        seen.add(c.sourceName);
+        const parent = c.extends !== undefined ? bySource.get(c.extends) : undefined;
+        if (parent !== undefined) visit(parent);
+        out.push(c);
+    };
+    for (const c of classes) visit(c);
+    return out;
 }
 
 /** Emit a plain project-local utility function as a module-level `def`. */
@@ -103,17 +122,23 @@ function emitSchemaClass(schema: IRClassDeclaration, deps: ModuleEmitDeps): stri
     const fields = filterVisibleFields(schema, deps.includePrivate);
     const lines: string[] = [];
 
+    // Inheritance is real: `class Child(Parent)`; `__init__` chains to the base then assigns only
+    // OWN fields. `extends` is the parent sourceName (the emit symbol).
     const extendsClause = schema.extends !== undefined ? `(${schema.extends})` : "";
     lines.push(`class ${schema.sourceName}${extendsClause}:`);
     lines.push(`    def __init__(self, value: Dict[str, Any] = None):`);
     if (schema.extends !== undefined) lines.push(`        super().__init__(value)`);
-    lines.push(`        if value:`);
-    let assigned = false;
-    for (const field of fields) {
-        lines.push(`            self.${field.name}: ${fieldAnnotation(field, deps.classNameByName)} = value.get("${field.name}")`);
-        assigned = true;
+    if (fields.length > 0) {
+        lines.push(`        if value:`);
+        for (const field of fields) {
+            lines.push(`            self.${field.name}: ${fieldAnnotation(field, deps.classNameByName)} = value.get("${field.name}")`);
+        }
+    } else if (schema.extends === undefined) {
+        // Fieldless base class: keep the historical empty-but-valid body.
+        lines.push(`        if value:`);
+        lines.push(`            pass`);
     }
-    if (!assigned && schema.extends === undefined) lines.push(`            pass`);
+    // (extends with no own fields → the body is just the super().__init__(value) call.)
 
     // Getters, setters, and methods are all behaviors re-emitted as class members.
     // Emit getters first so a paired `@name.setter` follows its `@property`.

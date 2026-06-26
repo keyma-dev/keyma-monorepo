@@ -1,14 +1,16 @@
 import type { SchemaMetadata, FieldType, SchemaClass } from "./types.js";
 import { base64ToBytes } from "./base64.js";
+import { allFields, allRefs } from "./fields.js";
 
 export function deserialize(
     schema: SchemaMetadata,
     value: Record<string, unknown>,
 ): Record<string, unknown> {
     const out: Record<string, unknown> = {};
-    for (const field of schema.fields) {
+    const refs = allRefs(schema); // own + inherited targets (real inheritance)
+    for (const field of allFields(schema)) {
         if (field.name in value) {
-            out[field.name] = deserializeValue(value[field.name], field.type, schema.refs);
+            out[field.name] = deserializeValue(value[field.name], field.type, refs);
         }
     }
     return out;

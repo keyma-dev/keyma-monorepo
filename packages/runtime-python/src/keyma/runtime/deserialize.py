@@ -10,13 +10,14 @@ import base64
 from typing import Any, Dict, Optional
 
 from ._iso import from_epoch_ms
+from .fields import all_fields, all_refs
 from .types import FieldType, SchemaMetadata
 
 
 def deserialize(schema: SchemaMetadata, value: Dict[str, Any]) -> Dict[str, Any]:
     out: Dict[str, Any] = {}
-    refs: Optional[Dict[str, Any]] = schema.get("refs")
-    for field in schema["fields"]:
+    refs: Optional[Dict[str, Any]] = all_refs(schema)  # own + inherited (real inheritance)
+    for field in all_fields(schema):
         name = field["name"]
         if name in value:
             out[name] = _deserialize_value(value[name], field["type"], refs)

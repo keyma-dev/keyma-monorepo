@@ -1,4 +1,5 @@
 import type { SchemaMetadata, FormatterContext, FormatterFn } from "./types.js";
+import { allFields } from "./fields.js";
 
 export type { FormatterContext, FormatterFn } from "./types.js";
 
@@ -15,7 +16,7 @@ export async function format(
     phase: string,
 ): Promise<void> {
     const context: FormatterContext = { object: value };
-    for (const field of schema.fields) {
+    for (const field of allFields(schema)) {
         const current = value[field.name];
         if (current === undefined) continue;
         for (const fmt of field.formatters ?? []) {

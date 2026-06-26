@@ -2,8 +2,9 @@
 
 from __future__ import annotations
 
-from typing import Any, Dict
+from typing import Any, Dict, List, Optional
 
+from .fields import all_fields
 from .types import SchemaMetadata
 
 
@@ -15,7 +16,8 @@ def apply_defaults(schema: SchemaMetadata, data: Dict[str, Any]) -> Dict[str, An
     attached to the metadata, which guards its own absent check). Mutates and
     returns ``data``.
     """
-    for field in schema["fields"]:
+    # Literal defaults: ``all_fields`` already covers own + inherited fields.
+    for field in all_fields(schema):
         default = field.get("default")
         if default is None:
             continue
@@ -29,9 +31,20 @@ def apply_defaults(schema: SchemaMetadata, data: Dict[str, Any]) -> Dict[str, An
         if default.get("kind") == "literal":
             value = default.get("value")
             data[name] = list(value) if isinstance(value, list) else value
-        # `expression` defaults are applied by the schema's applyDefaults below.
+        # `expression` defaults are applied by each schema's own applyDefaults below.
 
-    apply = schema.get("applyDefaults")
-    if apply is not None:
-        apply(data)
+    # Expression defaults ride in each schema's own ``applyDefaults`` (own fields only, real
+    # inheritance). Walk the base chain parent-first so an ancestor's expression defaults run
+    # before the leaf's, mirroring the JS/C++ runtimes.
+    chain: List[SchemaMetadata] = []
+    seen = set()
+    cur: Optional[SchemaMetadata] = schema
+    while cur is not None and cur.get("name") not in seen:
+        seen.add(cur.get("name"))
+        chain.append(cur)
+        cur = cur.get("base")
+    for s in reversed(chain):
+        apply = s.get("applyDefaults")
+        if apply is not None:
+            apply(data)
     return data

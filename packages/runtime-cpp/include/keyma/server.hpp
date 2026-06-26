@@ -480,7 +480,9 @@ private:
         const EdgeMeta* edge = schema.edge;
         auto is_visible = [&](const FieldMeta& f) { return include_private || f.visibility != Visibility::Private; };
         auto find_field = [&](std::string_view key) -> const FieldMeta* {
-            for (const FieldMeta& f : schema.fields) if (f.name == key) return &f;
+            // Real inheritance: search the base chain (own + inherited fields).
+            for (const SchemaMeta* s = &schema; s != nullptr; s = (s->base != nullptr ? &s->base() : nullptr))
+                for (const FieldMeta& f : s->fields) if (f.name == key) return &f;
             return nullptr;
         };
 
@@ -534,7 +536,7 @@ private:
                 handle_entry(key, sub);
             }
         } else {
-            for (const FieldMeta& f : schema.fields) {
+            for (const FieldMeta& f : all_fields(schema, a_)) {  // own + inherited (real inheritance)
                 if (!is_visible(f)) continue;
                 handle_entry(f.name, nullptr);
             }

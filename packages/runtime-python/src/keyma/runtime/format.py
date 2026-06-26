@@ -5,6 +5,7 @@ from __future__ import annotations
 from typing import Any, Dict
 
 from ._invoke import Context, invoke_adaptive
+from .fields import all_fields
 from .types import SchemaMetadata
 
 
@@ -16,7 +17,7 @@ async def format(schema: SchemaMetadata, value: Dict[str, Any], phase: str) -> N
     fields it actually carries. Mutates ``value`` in place.
     """
     context = Context(value)
-    for field in schema["fields"]:
+    for field in all_fields(schema):  # own + inherited (real inheritance)
         name = field["name"]
         if name not in value:
             continue

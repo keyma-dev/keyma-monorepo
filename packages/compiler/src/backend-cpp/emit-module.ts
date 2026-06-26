@@ -2,11 +2,13 @@ import type {
     IRClassDeclaration, IRField, IRType, IRMethod, IREnumDeclaration,
     IRFunctionDeclaration,
 } from "@keyma/core/ir";
-import { collectRefTargets, collectFunctionRefs, collectStatementIdentifiers, unwrapArray, filterVisibleFields, filterVisibleMethods } from "@keyma/core/util";
+import { collectRefTargets, collectFunctionRefs, collectStatementIdentifiers, unwrapArray, filterVisible, filterVisibleFields, filterVisibleMethods, inheritedFields } from "@keyma/core/util";
 import { exprToCpp, type ExprOpts } from "./emit-expression.js";
 import { stmtToCpp, plainReturn, factoryIdent, type ReturnLowerer } from "./emit-validators.js";
 import { irTypeToCpp, memberType, traitsArg, whereValueType, fieldKind, refTargetType, binaryFieldPlan, type BinaryFieldPlan } from "./ir-type-to-cpp.js";
-import type { BuildSchemaMeta, EmitEnumClass, EmitEnumConversions } from "./emitter-registry.js";
+import type { BuildSchemaData } from "./emitter-registry.js";
+import { emitEnumClass, emitEnumConversions } from "./emit-enum.js";
+import { emitSchemaMeta } from "./emit-schema-meta.js";
 import { buildApplyDefaults } from "./emit-defaults.js";
 import { includePath, namespaceOf, cppSanitizer } from "./module-path.js";
 
@@ -19,6 +21,9 @@ export type ModuleEmitDeps = {
      *  by the project's `binary` config; off ⇒ JSON-only output is byte-for-byte unchanged. */
     binary: boolean;
     nsRoot: string;
+    /** Every schema keyed by `sourceName` — resolves the `extends` parent so the trait/codec
+     *  emitters can walk the inheritance chain for the full field set (struct members stay own). */
+    schemaBySourceName: ReadonlyMap<string, IRClassDeclaration>;
     /** sourceName → bundle-relative module ref (e.g. "models/user"). */
     schemaModule: ReadonlyMap<string, string>;
     /** Reference/embedded/edge target `name` → emitted C++ class (`sourceName`). */
@@ -48,12 +53,10 @@ export type ModuleEmitDeps = {
     renderClaimedFunctions?: (decls: readonly IRFunctionDeclaration[]) => readonly string[];
     /** Complete `#include` token (with delimiters) for the runtime header. */
     runtimeInclude: string;
-    /** Domain-supplied builders (from the emitter registry's schema pack) — keep the
-     *  generic module emitter domain-agnostic: the per-schema `schema()` metadata body
-     *  and the named-enum `class` + keyma conversions. */
-    buildSchemaMeta: BuildSchemaMeta;
-    emitEnumClass: EmitEnumClass;
-    emitEnumConversions: EmitEnumConversions;
+    /** Domain-supplied builder (from the emitter registry's schema pack) of the per-schema
+     *  `schema()` metadata as neutral data — keeps the generic module emitter domain-agnostic;
+     *  the compiler's `emitSchemaMeta` renders it. (Named-enum emission is fully compiler-owned.) */
+    buildSchemaData: BuildSchemaData;
 };
 
 const CLIENT_PHASES = new Set(["change", "blur", "submit"]);
@@ -114,10 +117,10 @@ export function emitModuleCpp(
     // in complete-class context), so the formatter specialization must already be seen. ──
     if (enums.length > 0) {
         lines.push("", `namespace ${ns} {`);
-        for (const e of enums) lines.push(deps.emitEnumClass(e));
+        for (const e of enums) lines.push(emitEnumClass(e));
         lines.push(`}  // namespace ${ns}`, "");
         for (const e of enums) {
-            lines.push(deps.emitEnumConversions(e, deps.enumTypeByName.get(e.name) ?? `${ns}::${cppSanitizer(e.name)}`, deps.binary), "");
+            lines.push(emitEnumConversions(e, deps.enumTypeByName.get(e.name) ?? `${ns}::${cppSanitizer(e.name)}`, deps.binary), "");
         }
     }
 
@@ -221,30 +224,65 @@ function crossModuleFnUsings(
 
 // ─── Struct ───────────────────────────────────────────────────────────────────
 
+/** The fully-qualified C++ type of a schema's `extends` parent (`<ns>::<SourceName>`), or undefined. */
+function baseFqnOf(schema: IRClassDeclaration, deps: ModuleEmitDeps): string | undefined {
+    if (schema.extends === undefined) return undefined;
+    const mod = deps.schemaModule.get(schema.extends);
+    return mod !== undefined ? `${namespaceOf(mod, deps.nsRoot)}::${schema.extends}` : undefined;
+}
+
+/** A schema's full (own + inherited) visible field set — for the self-contained value/binary traits
+ *  and field descriptors that must enumerate every field (struct MEMBERS stay own-only). */
+function fullFields(schema: IRClassDeclaration, deps: ModuleEmitDeps): IRField[] {
+    return filterVisible(inheritedFields(schema, deps.schemaBySourceName), deps.includePrivate);
+}
+
+/** A schema's full (own + inherited) visible behaviors, child overriding by `kind:name`. */
+function fullMethods(schema: IRClassDeclaration, deps: ModuleEmitDeps): IRMethod[] {
+    const byKey = new Map<string, IRMethod>();
+    const chain: IRClassDeclaration[] = [];
+    const seen = new Set<string>();
+    let cur: IRClassDeclaration | undefined = schema;
+    while (cur !== undefined && !seen.has(cur.sourceName)) {
+        seen.add(cur.sourceName);
+        chain.push(cur);
+        cur = cur.extends !== undefined ? deps.schemaBySourceName.get(cur.extends) : undefined;
+    }
+    for (let i = chain.length - 1; i >= 0; i--) for (const m of chain[i]!.methods ?? []) byKey.set(`${m.kind}:${m.name}`, m);
+    return filterVisible([...byKey.values()], deps.includePrivate);
+}
+
 function emitStruct(schema: IRClassDeclaration, deps: ModuleEmitDeps): string[] {
-    const fields = filterVisibleFields(schema, deps.includePrivate);
-    const stored = fields;
-    // Getter behaviors are member functions, so a reference to one is a call `this->n()`.
-    const getterNames = new Set(filterVisibleMethods(schema, deps.includePrivate).filter((m) => m.kind === "getter").map((m) => m.name));
-    const refFieldNames = new Set(fields.filter((f) => f.type.kind === "reference").map((f) => f.name));
+    // Real inheritance: the struct holds OWN members and derives from the base. The traits/codecs
+    // and field descriptors below use the FULL (own + inherited) set — base members are accessible.
+    const stored = filterVisibleFields(schema, deps.includePrivate);
+    const baseFqn = baseFqnOf(schema, deps);
+    // Getter behaviors are member functions, so a reference to one is a call `this->n()`. Own
+    // method bodies may reference inherited getters/ref-fields, so resolve over the full chain.
+    const getterNames = new Set(fullMethods(schema, deps).filter((m) => m.kind === "getter").map((m) => m.name));
+    const refFieldNames = new Set(fullFields(schema, deps).filter((f) => f.type.kind === "reference").map((f) => f.name));
     const opts: ExprOpts = {
         fieldExpr: (n) => (getterNames.has(n) ? `this->${n}()` : `this->${n}`),
         isRefField: (n) => refFieldNames.has(n),
     };
     const C = schema.sourceName;
-    const lines: string[] = [`struct ${C} {`];
+    const lines: string[] = [`struct ${C}${baseFqn !== undefined ? ` : ${baseFqn}` : ""} {`];
     lines.push(`    using allocator_type = std::pmr::polymorphic_allocator<std::byte>;`, "");
 
-    // Members.
+    // Members (own only — inherited come from the base struct).
     for (const f of stored) lines.push(`    ${memberType(f, deps.cppTypeByName, deps.enumTypeByName)} ${f.name};`);
     lines.push("");
 
-    // Constructors (allocator-aware).
+    // Constructors (allocator-aware). Each chains to the base before initializing own members.
     lines.push(`    ${C}() = default;`);
-    if (stored.length > 0) {
-        lines.push(`    explicit ${C}(const allocator_type& a) : ${stored.map((f) => initAllocOnly(f)).join(", ")} {}`);
-        lines.push(`    ${C}(const ${C}& o, const allocator_type& a) : ${stored.map((f) => initCopy(f)).join(", ")} {}`);
-        lines.push(`    ${C}(${C}&& o, const allocator_type& a) : ${stored.map((f) => initMove(f)).join(", ")} {}`);
+    const baseInit = (args: string): string[] => (baseFqn !== undefined ? [`${baseFqn}(${args})`] : []);
+    const allocInits = [...baseInit("a"), ...stored.map((f) => initAllocOnly(f))];
+    const copyInits = [...baseInit("o, a"), ...stored.map((f) => initCopy(f))];
+    const moveInits = [...baseInit("std::move(o), a"), ...stored.map((f) => initMove(f))];
+    if (allocInits.length > 0) {
+        lines.push(`    explicit ${C}(const allocator_type& a) : ${allocInits.join(", ")} {}`);
+        lines.push(`    ${C}(const ${C}& o, const allocator_type& a) : ${copyInits.join(", ")} {}`);
+        lines.push(`    ${C}(${C}&& o, const allocator_type& a) : ${moveInits.join(", ")} {}`);
     } else {
         lines.push(`    explicit ${C}(const allocator_type&) {}`);
         lines.push(`    ${C}(const ${C}&, const allocator_type&) {}`);
@@ -255,13 +293,12 @@ function emitStruct(schema: IRClassDeclaration, deps: ModuleEmitDeps): string[] 
     lines.push(`    ${C}& operator=(const ${C}&) = default;`);
     lines.push(`    ${C}& operator=(${C}&&) = default;`);
 
-    // get_allocator delegates to the first directly-pmr member, if any.
+    // get_allocator delegates to the first directly-pmr member, then to the base, else default.
     const allocSrc = stored.find((f) => memberCat(f) === "pmr");
-    lines.push(
-        allocSrc !== undefined
-            ? `    allocator_type get_allocator() const noexcept { return ${allocSrc.name}.get_allocator(); }`
-            : `    allocator_type get_allocator() const noexcept { return {}; }`,
-    );
+    const allocExpr = allocSrc !== undefined ? `${allocSrc.name}.get_allocator()`
+        : baseFqn !== undefined ? `${baseFqn}::get_allocator()`
+        : `{}`;
+    lines.push(`    allocator_type get_allocator() const noexcept { return ${allocExpr}; }`);
     lines.push("");
 
     // from_value / to_value: thin members forwarding to keyma::value_traits<C> (defined
@@ -269,11 +306,13 @@ function emitStruct(schema: IRClassDeclaration, deps: ModuleEmitDeps): string[] 
     lines.push(`    static ${C} from_value(const keyma::Value& v, const allocator_type& a);`);
     lines.push(`    keyma::Value to_value(const allocator_type& a) const;`);
 
-    // Getters, setters, and methods — all behaviors re-emitted as member functions.
+    // Getters, setters, and methods — own behaviors re-emitted as member functions (inherited
+    // ones come through C++ inheritance).
     for (const m of filterVisibleMethods(schema, deps.includePrivate)) lines.push(...emitMethod(m, opts, deps));
 
-    // Typed field descriptors (consumed by keyma/query.hpp's where/projection DSL).
-    lines.push(...emitFieldDescriptors(C, stored, deps));
+    // Typed field descriptors (consumed by keyma/query.hpp). The full set — a child's `f` would
+    // otherwise HIDE the base's, so `Child::f::baseField` must resolve here.
+    lines.push(...emitFieldDescriptors(C, fullFields(schema, deps), deps));
 
     lines.push(`    static const keyma::SchemaMeta& schema();`);
     lines.push(`};`);
@@ -339,7 +378,7 @@ function emitSchemaAccessor(schema: IRClassDeclaration, deps: ModuleEmitDeps): s
 
     const accessor: string[] = [
         `inline const keyma::SchemaMeta& ${C}::schema() {`,
-        deps.buildSchemaMeta(schema, {
+        emitSchemaMeta(deps.buildSchemaData(schema, {
             includePrivate: deps.includePrivate,
             includeIndexes: deps.includeIndexes,
             formPhasesOnly: deps.formPhasesOnly,
@@ -351,7 +390,8 @@ function emitSchemaAccessor(schema: IRClassDeclaration, deps: ModuleEmitDeps): s
             },
             refs: schemaRefs(stored, deps),
             ...(ad !== null ? { applyDefaultsName: ad.name } : {}),
-        }),
+            ...(baseFqnOf(schema, deps) !== undefined ? { baseClass: baseFqnOf(schema, deps)! } : {}),
+        })),
         `}`,
     ];
     return [...forwarders, ...accessor];
@@ -377,7 +417,7 @@ function valueTraitsForwardDecls(ns: string, schemas: readonly IRClassDeclaratio
         const fqn = deps.cppTypeByName.get(s.name);
         if (fqn !== undefined) fqns.add(fqn);
     }
-    const fields = schemas.flatMap((s) => filterVisibleFields(s, deps.includePrivate));
+    const fields = schemas.flatMap((s) => fullFields(s, deps));
     for (const target of collectTargetsByKind(fields, "reference")) {
         const fqn = deps.cppTypeByName.get(target);
         if (fqn !== undefined) fqns.add(fqn);
@@ -397,7 +437,9 @@ function valueTraitsForwardDecls(ns: string, schemas: readonly IRClassDeclaratio
  */
 function emitValueTraits(schema: IRClassDeclaration, deps: ModuleEmitDeps): string[] {
     const C = deps.cppTypeByName.get(schema.name) ?? schema.sourceName;
-    const stored = filterVisibleFields(schema, deps.includePrivate);
+    // The traits are self-contained: enumerate the FULL (own + inherited) field set and assign on
+    // the derived object — base members are accessible through inheritance. Keeps wire bytes intact.
+    const stored = fullFields(schema, deps);
 
     const fromBody: string[] = [];
     for (const f of stored) {
@@ -430,7 +472,8 @@ function emitValueTraits(schema: IRClassDeclaration, deps: ModuleEmitDeps): stri
 
     if (deps.referenceTargetNames.has(schema.name)) {
         const idName = deps.idFieldByName.get(schema.name) ?? "id";
-        const idField = schema.fields.find((f) => f.name === idName);
+        // The id field may be inherited — search the full chain to type the id stub correctly.
+        const idField = inheritedFields(schema, deps.schemaBySourceName).find((f) => f.name === idName);
         const idTmpl = idField !== undefined ? memberType(idField, deps.cppTypeByName, deps.enumTypeByName) : "std::pmr::string";
         lines.push(
             `    static void set_id(T& t, const keyma::Value& idv, keyma::alloc_t a) { t.${idName} = keyma::from_value<${idTmpl}>(idv, a); }`,
@@ -458,7 +501,7 @@ function binaryTraitsForwardDecls(schemas: readonly IRClassDeclaration[], deps: 
         const fqn = deps.cppTypeByName.get(s.name);
         if (fqn !== undefined) fqns.add(fqn);
     }
-    const fields = schemas.flatMap((s) => filterVisibleFields(s, deps.includePrivate));
+    const fields = schemas.flatMap((s) => fullFields(s, deps));
     for (const target of collectTargetsByKind(fields, "reference")) {
         const fqn = deps.cppTypeByName.get(target);
         if (fqn !== undefined) fqns.add(fqn);
@@ -469,7 +512,8 @@ function binaryTraitsForwardDecls(schemas: readonly IRClassDeclaration[], deps: 
 /** Block 2a: the `keyma::binary_traits<T>` specialization for one schema. */
 function emitBinaryTraits(schema: IRClassDeclaration, deps: ModuleEmitDeps): string[] {
     const C = deps.cppTypeByName.get(schema.name) ?? schema.sourceName;
-    const stored = filterVisibleFields(schema, deps.includePrivate);
+    // Full (own + inherited) set, like value_traits — chain-unique tags keep the flat record valid.
+    const stored = fullFields(schema, deps);
     const plans = stored.map((f, i) => binaryFieldPlan(f, i, deps.cppTypeByName, deps.enumTypeByName));
 
     const encodeLines = plans.flatMap((p) => binaryEncodeField(p));
@@ -514,7 +558,8 @@ function emitBinaryTraits(schema: IRClassDeclaration, deps: ModuleEmitDeps): str
     // zigzag, unsigned plain, string/Id length — matching the dynamic reference branch).
     if (deps.referenceTargetNames.has(schema.name)) {
         const idName = deps.idFieldByName.get(schema.name) ?? "id";
-        const idField = schema.fields.find((f) => f.name === idName);
+        // The id field may be inherited — search the full chain.
+        const idField = inheritedFields(schema, deps.schemaBySourceName).find((f) => f.name === idName);
         const idTmpl = idField !== undefined ? memberType(idField, deps.cppTypeByName, deps.enumTypeByName) : "std::pmr::string";
         lines.push(
             `    static constexpr std::uint8_t id_wiretype = keyma::binary_traits<${idTmpl}>::wiretype;`,
@@ -693,7 +738,18 @@ export function collectFactoryNames(fields: readonly IRField[], which: "validato
  *  targets are deliberately excluded here — see referenceIncludes. */
 function buildIncludes(moduleRef: string, schemas: readonly IRClassDeclaration[], functions: readonly IRFunctionDeclaration[], deps: ModuleEmitDeps): string[] {
     const refs = new Set<string>();
-    const allFields = schemas.flatMap((s) => filterVisibleFields(s, deps.includePrivate));
+    const ownFields = schemas.flatMap((s) => filterVisibleFields(s, deps.includePrivate));
+    // The value/binary traits enumerate the full set, so embedded/enum target headers are needed
+    // for inherited fields too (a base member's complete type).
+    const allFields = schemas.flatMap((s) => fullFields(s, deps));
+
+    // Base class headers: real inheritance needs the complete base type (and transitively brings
+    // in the base's own embedded/reference/enum field headers).
+    for (const s of schemas) {
+        if (s.extends === undefined) continue;
+        const ref = deps.schemaModule.get(s.extends);
+        if (ref !== undefined && ref !== moduleRef) refs.add(includePath(ref));
+    }
 
     for (const target of collectTargetsByKind(allFields, "embedded")) {
         const className = deps.classNameByName.get(target);
@@ -706,11 +762,12 @@ function buildIncludes(moduleRef: string, schemas: readonly IRClassDeclaration[]
         if (ref !== undefined && ref !== moduleRef) refs.add(includePath(ref));
     }
 
-    // Every referenced function's source module: factory refs from field metadata, utility refs
-    // from class behaviors/defaults, and the helpers the functions homed here call in turn.
+    // Every referenced function's source module: factory refs from field metadata (OWN fields —
+    // the `schema()` metadata is own-only), utility refs from class behaviors/defaults, and the
+    // helpers the functions homed here call in turn.
     const fnRefs = new Set<string>([
-        ...collectFactoryNames(allFields, "validators", deps.formPhasesOnly),
-        ...collectFactoryNames(allFields, "formatters", deps.formPhasesOnly),
+        ...collectFactoryNames(ownFields, "validators", deps.formPhasesOnly),
+        ...collectFactoryNames(ownFields, "formatters", deps.formPhasesOnly),
         ...collectFunctionRefs(schemas, deps),
     ]);
     for (const fn of functions) {
@@ -726,9 +783,10 @@ function buildIncludes(moduleRef: string, schemas: readonly IRClassDeclaration[]
     return [...refs].sort();
 }
 
-/** Forward declarations (grouped by namespace) for every reference target. */
+/** Forward declarations (grouped by namespace) for every reference target — full field set, since
+ *  the value/binary traits reference inherited fields' targets too. */
 function referenceForwardDecls(schemas: readonly IRClassDeclaration[], deps: ModuleEmitDeps): string[] {
-    const fields = schemas.flatMap((s) => filterVisibleFields(s, deps.includePrivate));
+    const fields = schemas.flatMap((s) => fullFields(s, deps));
     const byNs = new Map<string, Set<string>>();
     for (const name of collectTargetsByKind(fields, "reference")) {
         const cls = deps.classNameByName.get(name);
@@ -744,9 +802,9 @@ function referenceForwardDecls(schemas: readonly IRClassDeclaration[], deps: Mod
     });
 }
 
-/** Cross-module reference-target headers, included after the struct definitions. */
+/** Cross-module reference-target headers, included after the struct definitions — full field set. */
 function referenceIncludes(moduleRef: string, schemas: readonly IRClassDeclaration[], deps: ModuleEmitDeps): string[] {
-    const fields = schemas.flatMap((s) => filterVisibleFields(s, deps.includePrivate));
+    const fields = schemas.flatMap((s) => fullFields(s, deps));
     const incs = new Set<string>();
     for (const name of collectTargetsByKind(fields, "reference")) {
         const cls = deps.classNameByName.get(name);
@@ -780,7 +838,8 @@ function collectEnumTargets(fields: IRField[]): Set<string> {
     return out;
 }
 
-/** Order schemas so a same-module embedded target is defined before its user (by-value). */
+/** Order schemas so a same-module base class or embedded target is defined before its user
+ *  (real inheritance and by-value embeds both need the complete dependency type first). */
 function topoSort(schemas: readonly IRClassDeclaration[], deps: ModuleEmitDeps): IRClassDeclaration[] {
     const inModule = new Map(schemas.map((s) => [s.sourceName, s]));
     const result: IRClassDeclaration[] = [];
@@ -788,6 +847,9 @@ function topoSort(schemas: readonly IRClassDeclaration[], deps: ModuleEmitDeps):
     const visit = (s: IRClassDeclaration): void => {
         if (seen.has(s.sourceName)) return;
         seen.add(s.sourceName);
+        // A same-module base class must be fully defined before the derived struct.
+        const baseInModule = s.extends !== undefined ? inModule.get(s.extends) : undefined;
+        if (baseInModule !== undefined && baseInModule !== s) visit(baseInModule);
         for (const f of filterVisibleFields(s, deps.includePrivate)) {
             const inner = unwrapArray(f.type);
             if (inner.kind === "embedded") {

@@ -241,27 +241,45 @@ describe("compile inheritance", () => {
         assert.deepEqual(errorCodes(result), [], `Errors: ${JSON.stringify(result.diagnostics)}`);
     });
 
-    it("Employee schema has flattened fields from Person", () => {
+    it("Employee schema carries OWN fields only (real inheritance, no flattening)", () => {
         const emp = schemaByName(result, "Employee");
         const fieldNames = emp.fields.map((f) => f.name);
-        assert.ok(fieldNames.includes("id"), "id inherited from Person");
-        assert.ok(fieldNames.includes("firstName"), "firstName inherited from Person");
-        assert.ok(fieldNames.includes("lastName"), "lastName inherited from Person");
         assert.ok(fieldNames.includes("department"), "own field department");
         assert.ok(fieldNames.includes("salary"), "own field salary");
+        // Inherited fields are NOT merged in — they live on Person and are walked at runtime.
+        assert.ok(!fieldNames.includes("id"), "id stays on Person, not flattened into Employee");
+        assert.ok(!fieldNames.includes("firstName"), "firstName stays on Person");
+        assert.ok(!fieldNames.includes("lastName"), "lastName stays on Person");
     });
 
-    it("Employee drops `extends` after flattening but records provenance", () => {
+    it("Employee keeps `extends` pointing at the parent's emit symbol (sourceName)", () => {
         const emp = schemaByName(result, "Employee");
-        assert.equal(emp.extends, undefined, "post-flatten IR must not carry `extends`");
-        assert.equal(emp.extendsSource, "Person");
+        assert.equal(emp.extends, "Person", "inheritance is real — `extends` survives to the IR");
+        assert.equal(emp.extendsSource, undefined, "deprecated provenance field is no longer set");
     });
 
-    it("Employee has each inherited field exactly once", () => {
+    it("Employee has each own field exactly once", () => {
         const emp = schemaByName(result, "Employee");
         const counts = new Map<string, number>();
         for (const f of emp.fields) counts.set(f.name, (counts.get(f.name) ?? 0) + 1);
         for (const [name, n] of counts) assert.equal(n, 1, `field "${name}" appears ${n} times`);
+    });
+
+    it("tags are chain-unique: Employee's own-field tags continue past Person's max", () => {
+        // Binary tags are only assigned when binary is enabled; assignTags walks the
+        // inheritance chain so a child's own-field tags never collide with inherited ones.
+        const tagged = compile({ files: [fixture("inheritance.ts")], binaryTags: true });
+        assert.deepEqual(errorCodes(tagged), [], `Errors: ${JSON.stringify(tagged.diagnostics)}`);
+        const person = schemaByName(tagged, "Person");
+        const emp = schemaByName(tagged, "Employee");
+        const parentMax = Math.max(...person.fields.map((f) => f.tag ?? 0));
+        assert.ok(parentMax > 0, "Person fields received tags");
+        for (const f of emp.fields) {
+            assert.ok(
+                (f.tag ?? 0) > parentMax,
+                `own field "${f.name}" tag ${f.tag} must exceed parent max ${parentMax}`,
+            );
+        }
     });
 
     it("Person schema has no extends/extendsSource field", () => {

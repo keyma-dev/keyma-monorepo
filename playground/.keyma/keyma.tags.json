@@ -25,21 +25,22 @@
       "fields": {
         "avatar": 13,
         "bio": 10,
-        "createdAt": 2,
         "email": 4,
         "firstName": 5,
         "homepage": 14,
-        "id": 1,
         "lastName": 6,
         "phone": 9,
         "role": 12,
         "securityStamp": 15,
         "theme": 11,
-        "updatedAt": 3,
         "username": 7,
         "website": 8
       },
-      "tombstones": []
+      "tombstones": [
+        1,
+        2,
+        3
+      ]
     },
     "comment": {
       "nextTag": 10,
@@ -48,24 +49,26 @@
         "authorIp": 8,
         "body": 4,
         "countryCode": 7,
-        "createdAt": 2,
-        "id": 1,
         "post": 6,
-        "score": 9,
-        "updatedAt": 3
+        "score": 9
       },
-      "tombstones": []
+      "tombstones": [
+        1,
+        2,
+        3
+      ]
     },
     "credentials": {
       "nextTag": 6,
       "fields": {
         "author": 4,
-        "createdAt": 2,
-        "id": 1,
-        "passwordHash": 5,
-        "updatedAt": 3
+        "passwordHash": 5
       },
-      "tombstones": []
+      "tombstones": [
+        1,
+        2,
+        3
+      ]
     },
     "entity": {
       "nextTag": 4,
@@ -97,9 +100,7 @@
       "fields": {
         "author": 10,
         "body": 6,
-        "createdAt": 2,
         "excerpt": 7,
-        "id": 1,
         "metadata": 18,
         "previewToken": 20,
         "price": 14,
@@ -113,10 +114,13 @@
         "subtitle": 19,
         "tags": 9,
         "title": 4,
-        "updatedAt": 3,
         "views": 16
       },
-      "tombstones": []
+      "tombstones": [
+        1,
+        2,
+        3
+      ]
     },
     "seo": {
       "nextTag": 3,
@@ -132,13 +136,14 @@
         "adjustment": 4,
         "apiPath": 7,
         "balance": 5,
-        "createdAt": 2,
-        "id": 1,
         "ipv6": 8,
-        "nationalId": 6,
-        "updatedAt": 3
+        "nationalId": 6
       },
-      "tombstones": []
+      "tombstones": [
+        1,
+        2,
+        3
+      ]
     },
     "signupinput": {
       "nextTag": 4,
@@ -160,13 +165,14 @@
     "tag": {
       "nextTag": 6,
       "fields": {
-        "createdAt": 2,
-        "id": 1,
         "label": 4,
-        "slug": 5,
-        "updatedAt": 3
+        "slug": 5
       },
-      "tombstones": []
+      "tombstones": [
+        1,
+        2,
+        3
+      ]
     }
   }
 }

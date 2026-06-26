@@ -4,7 +4,7 @@ TypeScript compiler frontend for Keyma. Ingests `.ts` schema files decorated wit
 
 ## Purpose
 
-This package bridges the TypeScript authoring surface (`@keyma/dsl`) and the IR (`@keyma/ir`). Using the TypeScript compiler API (`ts.createProgram`) it parses and type-checks the schema files, then runs a sequence of passes — `discoverSchemas` → `extractSchema` (own fields) → `flattenAll` (inheritance), plus validator/formatter/utility-function discovery — followed by duplicate-name and visibility-leak post-checks. It:
+This package bridges the TypeScript authoring surface (`@keyma/dsl`) and the IR (`@keyma/ir`). Using the TypeScript compiler API (`ts.createProgram`) it parses and type-checks the schema files, then runs a sequence of passes — `discoverSchemas` → `extractSchema` (own fields) → `checkInheritance` (validates `extends`; inheritance stays real), plus validator/formatter/utility-function discovery — followed by duplicate-name and visibility-leak post-checks. It:
 
 - Discovers `@Schema`- and `@Edge`-decorated classes.
 - Extracts fields, validators, formatters, indexes, methods, and form metadata from the AST — **without executing decorators**.

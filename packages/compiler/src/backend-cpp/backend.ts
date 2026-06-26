@@ -1,4 +1,4 @@
-import { path, reachableFunctions, collectFunctionRefs, filterVisibleFields } from "@keyma/core/util";
+import { path, reachableFunctions, collectFunctionRefs, filterVisibleFields, inheritedFields } from "@keyma/core/util";
 import type {
     KeymaIR, IRClassDeclaration, IREnumDeclaration, IRService, IRType,
     IRFunctionDeclaration,
@@ -28,7 +28,7 @@ export function createCppBackend(packs: Iterable<CppEmitterPack>): KeymaBackend 
 
 type SharedDeps = Pick<
     ModuleEmitDeps,
-    "nsRoot" | "schemaModule" | "classNameByName" | "cppTypeByName" | "enumTypeByName" | "enumModuleByName"
+    "nsRoot" | "schemaBySourceName" | "schemaModule" | "classNameByName" | "cppTypeByName" | "enumTypeByName" | "enumModuleByName"
     | "idFieldByName" | "functionDecls" | "functionNames" | "functionModule" | "claimedFunctionNames"
     | "runtimeInclude" | "referenceTargetNames" | "binary"
 >;
@@ -81,9 +81,12 @@ export async function emitCpp(
     const enumTypeByName = new Map<string, string>(
         decls.enums.map((e) => [e.name, `${namespaceOf(enumModuleByName.get(e.name)!, nsRoot)}::${cppSanitizer(e.name)}`]),
     );
-    // Schema `name` → its id field's name (for reference id-stubs). Defaults to "id".
+    // Resolve `extends` parents (keyed by sourceName) so trait emitters can walk the chain.
+    const schemaBySourceName = new Map<string, IRClassDeclaration>(ir.classes.map((s) => [s.sourceName, s]));
+    // Schema `name` → its id field's name (for reference id-stubs). The id may be INHERITED, so
+    // search the full chain. Defaults to "id".
     const idFieldByName = new Map<string, string>(
-        ir.classes.map((s) => [s.name, s.fields.find((f) => f.type.kind === "id")?.name ?? "id"]),
+        ir.classes.map((s) => [s.name, inheritedFields(s, schemaBySourceName).find((f) => f.type.kind === "id")?.name ?? "id"]),
     );
     // Schema `name`s that are the target of some reference field (recursing arrays). The
     // value_traits of these schemas carry id-stub helpers (set_id / id_value).
@@ -102,6 +105,7 @@ export async function emitCpp(
 
     const shared: SharedDeps = {
         nsRoot,
+        schemaBySourceName,
         schemaModule,
         classNameByName: new Map(ir.classes.map((s) => [s.name, s.sourceName])),
         cppTypeByName,
@@ -155,9 +159,9 @@ function emitBundle(
 ): EmitFile[] {
     const files: EmitFile[] = [];
 
-    // Primary pack — the per-schema metadata + enum provider (the schema domain) — selected by
-    // CAPABILITY, not registration order. Undefined only in a core-only build (no schemas/enums).
-    const pack = packs.find((p) => p.buildSchemaMeta !== undefined);
+    // Primary pack — the per-schema metadata provider (the schema domain) — selected by
+    // CAPABILITY, not registration order. Undefined only in a core-only build (no schemas).
+    const pack = packs.find((p) => p.buildSchemaData !== undefined);
 
     // Vendor the runtime header into the bundle only when opted in; by default generated
     // headers depend on @keyma/runtime-cpp via `#include <keyma/runtime.hpp>`.
@@ -201,10 +205,10 @@ function emitBundle(
         (fnGroups.get(ref) ?? fnGroups.set(ref, []).get(ref)!).push(d);
     }
     const moduleRefs = new Set([...schemaGroups.keys(), ...enumGroups.keys(), ...fnGroups.keys()]);
-    if (schemaGroups.size > 0 && (pack?.buildSchemaMeta === undefined || pack.emitEnumClass === undefined || pack.emitEnumConversions === undefined)) {
-        // Schemas need a domain's metadata + enum emitters (the schema domain). They are absent
-        // only in a core-only build, which produces no schemas — so reaching here is a real error.
-        throw new Error("no C++ emitter pack with schema/enum emitters registered, but the IR has schemas to emit");
+    if (schemaGroups.size > 0 && pack?.buildSchemaData === undefined) {
+        // Schemas need a domain's metadata builder (the schema domain). It is absent only in a
+        // core-only build, which produces no schemas — so reaching here is a real error.
+        throw new Error("no C++ emitter pack with a schema metadata builder registered, but the IR has schemas to emit");
     }
     if (moduleRefs.size > 0) {
         const renderClaimedFunctions = pack?.renderClaimedFunctions !== undefined
@@ -212,9 +216,8 @@ function emitBundle(
             : undefined;
         const deps: ModuleEmitDeps = {
             ...opts, ...shared,
-            buildSchemaMeta: pack?.buildSchemaMeta ?? (() => ""),
-            emitEnumClass: pack?.emitEnumClass ?? (() => ""),
-            emitEnumConversions: pack?.emitEnumConversions ?? (() => ""),
+            // Only invoked when schemaGroups is non-empty, which the guard above proves has a pack.
+            buildSchemaData: pack?.buildSchemaData ?? (() => { throw new Error("buildSchemaData missing"); }),
             ...(renderClaimedFunctions !== undefined ? { renderClaimedFunctions } : {}),
         };
         for (const ref of moduleRefs) {

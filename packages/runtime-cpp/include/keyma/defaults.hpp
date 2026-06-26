@@ -11,6 +11,9 @@
 namespace keyma {
 
 inline void apply_defaults(const SchemaMeta& schema, Value& data, alloc_t a) {
+    // Real inheritance: each schema's apply_defaults fills its OWN fields, so walk the base chain
+    // parent-first — a child default may then override an inherited one.
+    if (schema.base != nullptr) apply_defaults(schema.base(), data, a);
     if (schema.apply_defaults != nullptr) schema.apply_defaults(data, a);
 }
 

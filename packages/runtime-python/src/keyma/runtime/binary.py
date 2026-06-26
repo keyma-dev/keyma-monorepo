@@ -16,6 +16,7 @@ from datetime import datetime
 from typing import Any, Dict, List, Optional, Tuple
 
 from ._iso import from_epoch_ms, to_epoch_ms
+from .fields import all_fields, all_refs
 from .types import FieldType, SchemaMetadata, SerializeTarget
 
 # Wire types — the low 3 bits of each field key (= tag * 8 + wiretype).
@@ -60,8 +61,8 @@ def encode_binary(schema: SchemaMetadata, value: Any, *, target: SerializeTarget
 
 
 def _encode_record(out: bytearray, schema: SchemaMetadata, value: Any, target: SerializeTarget) -> None:
-    refs: Optional[Dict[str, Any]] = schema.get("refs")
-    for i, field in enumerate(schema["fields"]):
+    refs: Optional[Dict[str, Any]] = all_refs(schema)  # own + inherited (real inheritance)
+    for i, field in enumerate(all_fields(schema)):
         if target == "client" and field.get("visibility") == "private":
             continue
         if target == "database" and field.get("ephemeral"):
@@ -230,7 +231,7 @@ def decode_binary(schema: SchemaMetadata, data: bytes) -> Dict[str, Any]:
 
 def _decode_record(schema: SchemaMetadata, r: _Reader) -> Dict[str, Any]:
     by_tag = _fields_by_tag(schema)
-    refs: Optional[Dict[str, Any]] = schema.get("refs")
+    refs: Optional[Dict[str, Any]] = all_refs(schema)  # own + inherited (real inheritance)
     out: Dict[str, Any] = {}
     while r.pos < r.end:
         key = _read_varint(r)
@@ -249,7 +250,7 @@ def _decode_record(schema: SchemaMetadata, r: _Reader) -> Dict[str, Any]:
 
 def _fields_by_tag(schema: SchemaMetadata) -> Dict[int, Any]:
     m: Dict[int, Any] = {}
-    for i, f in enumerate(schema["fields"]):
+    for i, f in enumerate(all_fields(schema)):  # own + inherited (real inheritance)
         tag = f.get("tag")
         if tag is None:
             tag = i + 1

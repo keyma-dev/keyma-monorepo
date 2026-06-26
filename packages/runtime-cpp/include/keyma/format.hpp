@@ -11,12 +11,15 @@ namespace keyma {
 
 inline void format(const SchemaMeta& schema, Value& value, Phase phase) {
     Context ctx{value};
-    for (const FieldMeta& f : schema.fields) {
-        if (value.find(f.name) == nullptr) continue;
-        for (const PhasedFormatter& pf : f.formatters) {
-            if (pf.phase != phase) continue;
-            Value formatted = pf.fn(value.at(f.name), ctx);
-            value.set(f.name, std::move(formatted));
+    // Real inheritance: walk the base chain (no allocator here; order is irrelevant for formatting).
+    for (const SchemaMeta* s = &schema; s != nullptr; s = (s->base != nullptr ? &s->base() : nullptr)) {
+        for (const FieldMeta& f : s->fields) {
+            if (value.find(f.name) == nullptr) continue;
+            for (const PhasedFormatter& pf : f.formatters) {
+                if (pf.phase != phase) continue;
+                Value formatted = pf.fn(value.at(f.name), ctx);
+                value.set(f.name, std::move(formatted));
+            }
         }
     }
 }

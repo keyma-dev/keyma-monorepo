@@ -1,23 +1,21 @@
 import type { CppEmitterPack } from "@keyma/compiler/backend-cpp";
-import { buildSchemaMeta } from "./schema-data.js";
-import { emitEnumClass, emitEnumConversions } from "./emit-enum.js";
+import { buildSchemaData } from "./schema-data.js";
 import { emitServicesCpp } from "./emit-service.js";
 import { emitServiceClientCpp } from "./emit-service-client.js";
 import { factoryNames, renderClaimedFunctions } from "./emit-validators.js";
 
 /**
- * The schema-domain C++ emitter pack: supplies the per-schema `schema()` metadata body, the
- * enum `class` + keyma conversions, the service / service-client headers, and — since the
+ * The schema-domain C++ emitter pack: supplies the per-schema `schema()` metadata (as neutral
+ * data the compiler renders), the service / service-client headers, and — since the
  * validator→function collapse — the validator/formatter factory wrapper rendering. The CLI
  * registers it into the generic C++ backend's `EmitterRegistry`; `@keyma/compiler` references no
- * schema symbol. Validator/formatter factories are claimed here and rendered (with the runtime
- * guard wrapper) into their own source module by the generic module emitter.
+ * schema symbol. Named-enum emission is now fully compiler-owned. Validator/formatter factories
+ * are claimed here and rendered (with the runtime guard wrapper) into their own source module by
+ * the generic module emitter.
  */
 export const schemaCppEmitterPack: CppEmitterPack = {
     name: "schema",
-    buildSchemaMeta,
-    emitEnumClass,
-    emitEnumConversions,
+    buildSchemaData,
     emitServices: emitServicesCpp,
     emitServiceClient: emitServiceClientCpp,
     claimFunctions: (ir) => {

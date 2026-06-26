@@ -124,7 +124,13 @@ export type SchemaMetadata = {
      *  for validation/serialization of wire payloads and function I/O, and cannot
      *  be queried through the server. */
     ephemeral?: boolean;
+    /** OWN fields only (real inheritance). Inherited fields live on `base`; the full
+     *  set is assembled by walking the base chain — see {@link allFields}. */
     fields: FieldMetadata[];
+    /** Parent schema's metadata when this schema `extends` another (real inheritance).
+     *  A live reference to `Parent.schema`; absent for a root schema. The full field
+     *  set (own + inherited) is gathered base-first via {@link allFields}. */
+    base?: SchemaMetadata;
     indexes?: SchemaIndex[];
     refs?: ReadonlyMap<string, SchemaClass>;
     /** Present iff the schema is an edge (compiler-frontend recorded an `@Edge` decorator). */

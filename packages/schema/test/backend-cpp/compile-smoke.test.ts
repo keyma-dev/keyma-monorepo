@@ -259,4 +259,112 @@ int main() {
             rmSync(dir, { recursive: true, force: true });
         }
     });
+
+    // Real inheritance: a derived schema (`Employee extends Person`) must emit `struct Employee :
+    // Person` with own-only members, allocator ctors that chain to the base, traits that assign the
+    // FULL field set on the derived object, and a `.schema().base` accessor. This compiles AND
+    // RUNS — proving inherited members are real (upcast works), from_value/to_value cover the whole
+    // chain, the own-only-metadata + base-walk (all_fields) is wired, and binary round-trips the
+    // full set with chain-unique tags.
+    it("a derived schema emits real inheritance and round-trips inherited + own fields", async (t) => {
+        if (cxx === null) {
+            t.skip("no C++23 compiler found (set KEYMA_CXX to enable)");
+            return;
+        }
+        const loc = { file: "/proj/src/people.ts", line: 1, column: 1 };
+        // Chain-unique tags — exactly what assignTags produces (child tags continue past the
+        // parent's max), so the metadata-driven binary codec keeps a single flat tag space.
+        const f = (name: string, type: IRType, tag: number): IRField => ({
+            name, type, visibility: "public", readonly: false, required: true, tag, source: loc,
+        });
+        const ir: KeymaIR = {
+            irVersion: "7.1.0", compilerVersion: "0.1.0", sourceRoot: "/proj/src",
+            classes: [
+                {
+                    name: "person", sourceName: "Person", visibility: "public",
+                    fields: [f("id", { kind: "id" }, 1), f("firstName", { kind: "string" }, 2), f("lastName", { kind: "string" }, 3)],
+                    source: loc,
+                },
+                {
+                    name: "employee", sourceName: "Employee", visibility: "public", extends: "Person",
+                    fields: [f("department", { kind: "string" }, 4), f("salary", { kind: "integer" }, 5)],
+                    source: loc,
+                },
+            ],
+            functionDeclarations: [], enums: [], diagnostics: [],
+        };
+        const consumer = `#include "index.hpp"
+#include <keyma/binary.hpp>
+#include <cassert>
+#include <span>
+#include <string_view>
+namespace p = app::src::people;
+int main() {
+    std::pmr::monotonic_buffer_resource pool;
+    keyma::Value::allocator_type a{&pool};
+    keyma::Value rec = keyma::Value::object(a);
+    rec.set("id", keyma::Value(std::string_view{"e1"}, a));
+    rec.set("firstName", keyma::Value(std::string_view{"Ada"}, a));
+    rec.set("lastName", keyma::Value(std::string_view{"Lovelace"}, a));
+    rec.set("department", keyma::Value(std::string_view{"R&D"}, a));
+    rec.set("salary", keyma::Value(std::int64_t{100}, a));
+
+    // from_value populates the whole chain on the derived object.
+    p::Employee e = p::Employee::from_value(rec, a);
+    assert(e.id == "e1");
+    assert(e.firstName == "Ada");        // inherited member
+    assert(e.lastName == "Lovelace");    // inherited member
+    assert(e.department == "R&D");       // own member
+    assert(e.salary == 100);
+
+    // Real inheritance: an Employee IS-A Person (derived → base reference binds).
+    p::Person& base = e;
+    assert(base.lastName == "Lovelace");
+
+    // to_value emits inherited + own fields.
+    keyma::Value back = e.to_value(a);
+    assert(back.at("firstName").as_string() == "Ada");
+    assert(back.at("lastName").as_string() == "Lovelace");
+    assert(back.at("department").as_string() == "R&D");
+    assert(back.at("salary").as_int() == 100);
+
+    // Metadata: own-only fields + a base accessor pointing at Person::schema.
+    const keyma::SchemaMeta& m = p::Employee::schema();
+    assert(m.base != nullptr);
+    assert(&m.base() == &p::Person::schema());
+    assert(m.fields.size() == 2);                 // OWN fields only (department, salary)
+    auto full = keyma::all_fields(m, a);          // walk the base chain
+    assert(full.size() == 5);                     // id, firstName, lastName, department, salary
+
+    // Metadata-driven binary round-trip carries the full inherited+own set (chain-unique tags).
+    keyma::ByteBuf bytes = keyma::encode_binary(m, back, keyma::SerializeTarget::Server, a);
+    keyma::Value rt = keyma::decode_binary(m, std::span<const std::byte>(bytes.data(), bytes.size()), a);
+    assert(rt.at("firstName").as_string() == "Ada");    // inherited field survives the wire
+    assert(rt.at("department").as_string() == "R&D");   // own field survives the wire
+    assert(rt.at("salary").as_int() == 100);
+    return 0;
+}`;
+        const dir = mkdtempSync(join(tmpdir(), "keyma-cpp-inherit-"));
+        try {
+            const { files } = await emitCpp(ir, { language: "cpp", outDir: "out", library: true }, {} as ResolvedConfig);
+            for (const file of files) {
+                const p = join(dir, file.path);
+                mkdirSync(dirname(p), { recursive: true });
+                writeFileSync(p, file.content);
+            }
+            const root = join(dir, "out");
+            const main = join(dir, "main.cpp");
+            writeFileSync(main, consumer);
+            const exe = join(dir, "inherit.test");
+            // Compile to an executable and RUN it — the inherited-field round-trip is new behavior
+            // worth executing, not just instantiating.
+            execFileSync(cxx, ["-std=c++23", "-I", root, "-I", RUNTIME_INC, main, "-o", exe], { stdio: ["ignore", "ignore", "pipe"] });
+            execFileSync(exe, [], { stdio: ["ignore", "ignore", "pipe"] });
+        } catch (err) {
+            const e = err as { stderr?: Buffer; message?: string };
+            assert.fail(`generated inheritance C++ failed to compile/run:\n${e.stderr?.toString() ?? e.message ?? err}`);
+        } finally {
+            rmSync(dir, { recursive: true, force: true });
+        }
+    });
 });

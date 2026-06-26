@@ -260,18 +260,19 @@ export type IRClassDeclaration = {
     fields: IRField[];
     /**
      * Portable behaviors (instance methods, setters) emitted onto the generated
-     * model class. Not part of the stored record — pure re-emitted code. Inherited
-     * behaviors are flattened in alongside fields. Absent when there are none.
+     * model class. Not part of the stored record — pure re-emitted code. Holds only
+     * this class's OWN behaviors; inherited ones come through real inheritance in the
+     * generated output. Absent when there are none.
      */
     methods?: IRMethod[];
     /**
-     * Pre-flatten only: the parent class name, present until inheritance is
-     * flattened. After flattening (the IR emitted to backends) this is absent —
-     * the field list is already complete and self-contained. Backends must NOT
-     * re-apply inheritance.
+     * The parent class this schema extends — its `sourceName` (the emit symbol), NOT
+     * the canonical `name`. Survives to the IR emitted to backends: inheritance is REAL
+     * (`fields`/`methods` hold own members only; `extends` drives the emitted base class).
+     * Backends resolve it through their sourceName→module map, like an import target.
      */
     extends?: string;
-    /** Provenance: the parent class this schema's fields were flattened from. */
+    /** @deprecated Legacy provenance from the removed flatten pass; no longer produced. */
     extendsSource?: string;
     /**
      * Domain-namespaced extension data, keyed by domain id (`extensions['schema']`,

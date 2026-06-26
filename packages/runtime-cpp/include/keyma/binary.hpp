@@ -228,21 +228,28 @@ inline void encode_payload(ByteBuf& out, const TypeInfo& t, const Value& v, cons
 }
 
 inline void encode_record(ByteBuf& out, const SchemaMeta& schema, const Value& value, SerializeTarget target, alloc_t a) {
+    // Real inheritance: walk the base chain. Records are tag-keyed (chain-unique tags assigned by
+    // the compiler), so emit order is irrelevant. The 1-based `idx` fallback is reached only when
+    // tags are absent — which never happens on the configured binary path — but it runs CHAIN-GLOBAL
+    // (idx continues across the base chain, not restarting per schema) so an untagged child field
+    // can never collide with an untagged inherited one; find_by_tag mirrors this exactly.
     std::uint32_t idx = 0;
-    for (const FieldMeta& f : schema.fields) {
-        ++idx;  // 1-based declaration index
-        if (target == SerializeTarget::Client && f.visibility == Visibility::Private) continue;
-        if (target == SerializeTarget::Database && f.ephemeral) continue;
-        const Value* present = value.find(f.name);
-        if (present == nullptr) continue;
-        std::uint32_t tag = f.tag != 0 ? f.tag : idx;
-        if (present->is_null()) {
-            write_key(out, tag, WIRE_NULL);
-            continue;
+    for (const SchemaMeta* s = &schema; s != nullptr; s = (s->base != nullptr ? &s->base() : nullptr)) {
+        for (const FieldMeta& f : s->fields) {
+            ++idx;  // 1-based declaration index across the whole chain (child-first)
+            if (target == SerializeTarget::Client && f.visibility == Visibility::Private) continue;
+            if (target == SerializeTarget::Database && f.ephemeral) continue;
+            const Value* present = value.find(f.name);
+            if (present == nullptr) continue;
+            std::uint32_t tag = f.tag != 0 ? f.tag : idx;
+            if (present->is_null()) {
+                write_key(out, tag, WIRE_NULL);
+                continue;
+            }
+            TypeInfo t = field_info(f);
+            write_key(out, tag, wiretype_of(t));
+            encode_payload(out, t, *present, schema, target, a);  // top schema → resolve_ref walks the chain
         }
-        TypeInfo t = field_info(f);
-        write_key(out, tag, wiretype_of(t));
-        encode_payload(out, t, *present, schema, target, a);
     }
 }
 
@@ -303,11 +310,15 @@ inline void skip_value(Reader& r, std::uint8_t wt) {
 }
 
 inline const FieldMeta* find_by_tag(const SchemaMeta& schema, std::uint32_t tag) {
+    // Walk the base chain (own + inherited); the chain-global `idx` fallback mirrors encode_record
+    // (idx continues across the chain, never restarting per schema) so untagged fields stay unique.
     std::uint32_t idx = 0;
-    for (const FieldMeta& f : schema.fields) {
-        ++idx;
-        std::uint32_t ft = f.tag != 0 ? f.tag : idx;
-        if (ft == tag) return &f;
+    for (const SchemaMeta* s = &schema; s != nullptr; s = (s->base != nullptr ? &s->base() : nullptr)) {
+        for (const FieldMeta& f : s->fields) {
+            ++idx;
+            std::uint32_t ft = f.tag != 0 ? f.tag : idx;
+            if (ft == tag) return &f;
+        }
     }
     return nullptr;
 }

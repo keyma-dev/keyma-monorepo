@@ -25,8 +25,12 @@ enum class SerializeTarget { Client, Server, Database };
 // Resolve a target schema by `name` via the parent's refs (the name → metadata accessor
 // span). Returns nullptr when the name is not a declared ref of `schema`.
 inline const SchemaMeta* resolve_ref(const SchemaMeta& schema, std::string_view target_name) {
-    for (const auto& entry : schema.refs) {
-        if (entry.first == target_name) return &entry.second();
+    // `refs` is own-only (real inheritance); a ref target of an inherited field lives on an
+    // ancestor, so walk the base chain.
+    for (const SchemaMeta* s = &schema; s != nullptr; s = (s->base != nullptr ? &s->base() : nullptr)) {
+        for (const auto& entry : s->refs) {
+            if (entry.first == target_name) return &entry.second();
+        }
     }
     return nullptr;
 }
@@ -58,7 +62,7 @@ inline Value serialize_value(const Value& v, const FieldMeta& f, const SchemaMet
 
 inline Value serialize(const SchemaMeta& schema, const Value& value, SerializeTarget target, alloc_t a) {
     Value out = Value::object(a);
-    for (const FieldMeta& f : schema.fields) {
+    for (const FieldMeta& f : all_fields(schema, a)) {  // own + inherited (real inheritance)
         if (target == SerializeTarget::Client && f.visibility == Visibility::Private) continue;
         if (target == SerializeTarget::Database && f.ephemeral) continue;
         const Value* present = value.find(f.name);
@@ -122,7 +126,7 @@ inline Value normalize_reference_field_value(const Value& v, alloc_t a) {
 // unwraps an array field to its element (FieldMeta.element). Returns a new Value.
 inline Value normalize_reference_ids(const Value& record, const SchemaMeta& schema, alloc_t a) {
     Value out(record, a);
-    for (const FieldMeta& f : schema.fields) {
+    for (const FieldMeta& f : all_fields(schema, a)) {  // own + inherited (real inheritance)
         if (out.find(f.name) == nullptr) continue;
         TypeTag core = (f.type == TypeTag::Array) ? f.element : f.type;
         if (core != TypeTag::Reference) continue;

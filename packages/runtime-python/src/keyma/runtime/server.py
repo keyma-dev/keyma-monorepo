@@ -16,6 +16,7 @@ from typing import Any, Dict, List, Optional, Sequence
 
 from .defaults import apply_defaults
 from .errors import KeymaError, KeymaRuntimeError
+from .fields import all_fields
 from .format import format as _format
 from .reference import normalize_reference_ids
 from .types import FieldType, RequestContext, SchemaMetadata
@@ -37,7 +38,7 @@ def _is_system(context: RequestContext) -> bool:
 
 
 def _find_field(schema: SchemaMetadata, name: str) -> Optional[Dict[str, Any]]:
-    for f in schema["fields"]:
+    for f in all_fields(schema):  # own + inherited (real inheritance)
         if f["name"] == name:
             return f
     return None
@@ -324,7 +325,10 @@ class KeymaServer:
         data = normalize_reference_ids(op["data"], schema)
         apply_defaults(schema, data)
         await _format(schema, data, "save")
-        writable_schema = {**schema, "fields": [f for f in schema["fields"] if f["name"] != "id"]}
+        # Flatten the full inheritance chain into ``fields`` and drop ``base`` so the derived
+        # validation schema enumerates exactly this filtered set (id may be inherited).
+        writable_schema = {**schema, "fields": [f for f in all_fields(schema) if f["name"] != "id"]}
+        writable_schema.pop("base", None)
         errors = await validate(writable_schema, data)
         if errors:
             raise _ValidationFailedError(errors)
@@ -341,7 +345,8 @@ class KeymaServer:
         data = normalize_reference_ids(op["data"], schema)
         await _format(schema, data, "save")
         # A partial update only validates the fields actually supplied.
-        update_schema = {**schema, "fields": [f for f in schema["fields"] if f["name"] in data]}
+        update_schema = {**schema, "fields": [f for f in all_fields(schema) if f["name"] in data]}
+        update_schema.pop("base", None)
         errors = await validate(update_schema, data)
         if errors:
             raise _ValidationFailedError(errors)
@@ -474,7 +479,7 @@ class KeymaServer:
                 if (_find_field(schema, key) is None or _find_field(schema, key).get("visibility") != "private")
             ]
         else:
-            entries = [(f["name"], 1) for f in schema["fields"] if f.get("visibility") != "private"]
+            entries = [(f["name"], 1) for f in all_fields(schema) if f.get("visibility") != "private"]
 
         edge = schema.get("edge")
 

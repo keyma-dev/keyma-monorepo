@@ -76,7 +76,12 @@ class SchemaMetadata(TypedDict, total=False):
     sourceName: str
     visibility: Visibility
     ephemeral: bool
+    # OWN fields only (real inheritance). Inherited fields live on ``base``; the full set is
+    # assembled by walking the base chain — see ``keyma.runtime.fields.all_fields``.
     fields: List[FieldMetadata]
+    # Parent schema's metadata when this schema extends another (a live reference to
+    # ``Parent.schema``); absent for a root schema.
+    base: "SchemaMetadata"
     indexes: List[Dict[str, Any]]
     refs: Dict[str, Any]
     edge: EdgeMetadata

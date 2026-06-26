@@ -28,7 +28,7 @@ import type { KeymaIR, IRSchema, IRField, IRType } from "@keyma/ir";
 | Type | Description |
 |---|---|
 | `KeymaIR` | Top-level IR document (`irVersion`, `compilerVersion`, `schemas`, `diagnostics`, …). |
-| `IRSchema` | A compiled schema, fully flattened (including inherited fields). |
+| `IRClassDeclaration` | A compiled class/schema. Holds OWN fields/methods; `extends` drives real inheritance in the output. |
 | `IREdge` | Edge metadata on an edge schema (`from`/`to`/`label`/`directed`). |
 | `IRField` | A single field within a schema. |
 | `IRType` | Discriminated union of all supported field types. |

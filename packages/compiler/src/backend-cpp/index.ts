@@ -6,9 +6,9 @@ export type { CppTargetConfig } from "./types.js";
 export { EmitterRegistry, SERVICES_REF, SERVICE_CLIENT_REF } from "./emitter-registry.js";
 export type {
     CppEmitterPack,
-    BuildSchemaMeta,
-    EmitEnumClass,
-    EmitEnumConversions,
+    BuildSchemaData,
+    CppSchemaData,
+    CppFieldData,
     SchemaDataOptions,
     ServiceEmitDeps,
     ServiceClientEmitDeps,

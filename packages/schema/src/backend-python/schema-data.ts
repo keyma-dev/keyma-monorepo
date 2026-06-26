@@ -22,6 +22,10 @@ export function buildSchemaData(schema: IRClassDeclaration, opts: SchemaDataOpti
         sourceName: schema.sourceName,
         fields,
     };
+    // Inheritance is real and metadata carries OWN fields only — a live reference to the parent's
+    // `.schema` lets the runtime walk the chain for the full field set. `extends` is the parent's
+    // sourceName (the emitted class symbol), so `<Parent>.schema` resolves it.
+    if (schema.extends !== undefined) out["base"] = mkRaw(`${schema.extends}.schema`);
     if (indexes.length > 0) out["indexes"] = indexes;
     const edge = schemaEdge(schema);
     if (edge !== undefined) out["edge"] = edge;

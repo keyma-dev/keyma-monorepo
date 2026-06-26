@@ -95,10 +95,10 @@ const INHERITANCE_IR: KeymaIR = {
             name: "employee",
             sourceName: "Employee",
             visibility: "public",
-            extendsSource: "Person",
+            // Real inheritance: `extends` is the parent's emit symbol (sourceName); fields are
+            // OWN-only (id/name are inherited from Person, never flattened in).
+            extends: "Person",
             fields: [
-                { name: "id", type: { kind: "id" }, visibility: "public", readonly: true, required: true, source: SRC },
-                { name: "name", type: { kind: "string" }, visibility: "public", readonly: false, required: true, source: SRC },
                 { name: "department", type: { kind: "string" }, visibility: "public", readonly: false, required: true, source: SRC },
             ],
             source: { file: "employee.ts", line: 1, column: 1 },
@@ -564,25 +564,28 @@ describe("emitJs — inheritance", () => {
         files = result.files;
     });
 
-    it("Employee model is a flat class (no extends/super after flattening)", () => {
+    it("Employee model is a real subclass (extends Person, chains super)", () => {
         const content = fileContent(files, "dist/js/client/src/employee.js");
-        assert.ok(content.includes("export class Employee {"), "expected a flat class declaration");
-        assert.ok(!content.includes("extends Person"), "must not re-emit an extends clause");
-        assert.ok(!content.includes("super(value)"), "must not call super — fields are flattened");
+        assert.ok(content.includes("export class Employee extends Person {"), "expected a real subclass declaration");
+        assert.ok(content.includes("super(value);"), "must chain to super so inherited fields are populated");
     });
 
-    it("Employee assigns each inherited field exactly once", () => {
+    it("Employee assigns only its OWN fields; inherited fields come from super", () => {
         const content = fileContent(files, "dist/js/client/src/employee.js");
         const count = (needle: string) => content.split(needle).length - 1;
-        assert.equal(count("this.id = value.id;"), 1);
-        assert.equal(count("this.name = value.name;"), 1);
-        assert.equal(count("this.department = value.department;"), 1);
+        assert.equal(count("this.department = value.department;"), 1, "own field assigned once");
+        assert.equal(count("this.id = value.id;"), 0, "inherited id NOT re-assigned (super handles it)");
+        assert.equal(count("this.name = value.name;"), 0, "inherited name NOT re-assigned");
     });
 
-    it("Employee .d.ts is a flat class", () => {
+    it("Employee .schema points its `base` at Person.schema", () => {
+        const content = fileContent(files, "dist/js/client/src/employee.js");
+        assert.ok(content.includes('"base": Person.schema'), "`.schema.base` wires the parent metadata for runtime chain-walking");
+    });
+
+    it("Employee .d.ts is a real subclass", () => {
         const content = fileContent(files, "dist/js/client/src/employee.d.ts");
-        assert.ok(content.includes("export declare class Employee {"), "expected a flat declared class");
-        assert.ok(!content.includes("extends Person"), "must not re-emit extends in .d.ts");
+        assert.ok(content.includes("export declare class Employee extends Person {"), "expected a real declared subclass");
     });
 });
 

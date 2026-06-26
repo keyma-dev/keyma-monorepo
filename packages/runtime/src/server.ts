@@ -36,6 +36,7 @@ import {
 } from "./plugin.js";
 import { KeymaError, KeymaRuntimeError } from "./errors.js";
 import { normalizeReferenceIds } from "./reference.js";
+import { allFields } from "./fields.js";
 
 type ServerOptions = {
     schemas: SchemaMetadata[];
@@ -330,9 +331,12 @@ export class KeymaServer {
         let data = normalizeReferenceIds(op.data, schema);
         applyDefaults(schema, data);
         await format(schema, data, "save");
+        // Flatten the full inheritance chain into `fields` and drop `base` so the derived
+        // validation schema enumerates exactly this filtered set (id may be inherited).
+        const { base: _writableBase, ...writableRest } = schema;
         const writableSchema: SchemaMetadata = {
-            ...schema,
-            fields: schema.fields.filter((f) => f.name !== 'id'),
+            ...writableRest,
+            fields: allFields(schema).filter((f) => f.name !== 'id'),
         };
         const errors = await validate(writableSchema, data);
         if (errors.length > 0) {
@@ -355,9 +359,10 @@ export class KeymaServer {
         await format(schema, data, "save");
         // A partial update only validates the fields actually supplied — absent fields
         // must not trip `required`-style validators (they keep their stored value).
+        const { base: _updateBase, ...updateRest } = schema;
         const updateSchema: SchemaMetadata = {
-            ...schema,
-            fields: schema.fields.filter((f) => f.name in data),
+            ...updateRest,
+            fields: allFields(schema).filter((f) => f.name in data),
         };
         const errors = await validate(updateSchema, data);
         if (errors.length > 0) {
@@ -533,6 +538,7 @@ export class KeymaServer {
         const populate: PopulateSpec = {};
         const isVisible = (f: FieldMetadata): boolean =>
             includePrivate || f.visibility !== "private";
+        const schemaFields = allFields(schema); // own + inherited (real inheritance)
 
         const entries: Array<[string, 1 | ProjectionSpec]> =
             spec !== undefined
@@ -543,17 +549,17 @@ export class KeymaServer {
                       // because `undefined !== "private"`, letting a client project a name
                       // not in the schema. Edge endpoint fields are themselves declared
                       // fields, so they survive and are handled by the edge branch below.
-                      const field = schema.fields.find((f) => f.name === key);
+                      const field = schemaFields.find((f) => f.name === key);
                       return field !== undefined && isVisible(field);
                   })
-                : schema.fields
+                : schemaFields
                       .filter(isVisible)
                       .map((f): [string, 1] => [f.name, 1]);
 
         const edge = schema.edge;
 
         for (const [key, sub] of entries) {
-            const field = schema.fields.find((f) => f.name === key);
+            const field = schemaFields.find((f) => f.name === key);
             const type = field !== undefined ? coreType(field.type) : undefined;
 
             // Edge endpoints always materialize as objects: `{ id }` by default,

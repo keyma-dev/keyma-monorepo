@@ -50,6 +50,8 @@ export { encodeBinary, decodeBinary } from "./binary.js";
 
 export { applyDefaults } from "./defaults.js";
 
+export { allFields, allRefs } from "./fields.js";
+
 export type {
     KeymaDatabaseAdapter,
     ListQuery,

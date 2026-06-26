@@ -1,5 +1,6 @@
 import type { SchemaMetadata, FieldType, SchemaClass } from "./types.js";
 import { bytesToBase64 } from "./base64.js";
+import { allFields, allRefs } from "./fields.js";
 
 export type SerializeTarget = "client" | "server" | "database";
 
@@ -9,11 +10,12 @@ export function serialize(
     opts: { target: SerializeTarget }
 ): Record<string, unknown> {
     const out: Record<string, unknown> = {};
-    for (const field of schema.fields) {
+    const refs = allRefs(schema); // own + inherited targets (real inheritance)
+    for (const field of allFields(schema)) {
         if (opts.target === "client" && field.visibility === "private") continue;
         if (opts.target === "database" && field.ephemeral) continue;
         if (field.name in value) {
-            out[field.name] = serializeValue(value[field.name], field.type, schema.refs, opts);
+            out[field.name] = serializeValue(value[field.name], field.type, refs, opts);
         }
     }
     return out;

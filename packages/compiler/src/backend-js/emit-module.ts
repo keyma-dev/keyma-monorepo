@@ -67,7 +67,7 @@ export function emitModuleJs(moduleRef: string, content: ModuleContent, deps: Mo
     const claimedByName = renderClaimed(content, deps);
     const importLines = buildImports(moduleRef, content, deps, false);
     const bodies: string[] = [];
-    for (const s of content.classes) bodies.push(emitSchemaClassJs(s, deps));
+    for (const s of orderClassesByInheritance(content.classes)) bodies.push(emitSchemaClassJs(s, deps));
     for (const fn of content.functions) {
         const rendering = claimedByName.get(fn.name);
         bodies.push(rendering !== undefined ? rendering.js : emitFunctionJs(fn));
@@ -79,9 +79,12 @@ function emitSchemaClassJs(schema: IRClassDeclaration, deps: ModuleEmitDeps): st
     const fields = filterVisibleFields(schema, deps.includePrivate);
     const lines: string[] = [];
 
-    // Inheritance is fully flattened in the IR — a flat class, every field assigned once.
-    lines.push(`export class ${schema.sourceName} {`);
+    // Inheritance is real: emit `extends Parent` and assign only OWN fields here; `super(value)`
+    // populates the inherited ones. (`extends` is the parent's sourceName — the emit symbol.)
+    const ext = schema.extends !== undefined ? ` extends ${schema.extends}` : "";
+    lines.push(`export class ${schema.sourceName}${ext} {`);
     lines.push(`    constructor(value) {`);
+    if (schema.extends !== undefined) lines.push(`        super(value);`);
     lines.push(`        if (value) {`);
     for (const field of fields) {
         lines.push(`            this.${field.name} = value.${field.name};`);
@@ -136,7 +139,7 @@ export function emitModuleDts(moduleRef: string, content: ModuleContent, deps: M
     lines.push(...buildImports(moduleRef, content, deps, true, claimedByName));
     if (lines.length > 0) lines.push("");
 
-    for (const schema of content.classes) lines.push(emitSchemaClassDts(schema, deps));
+    for (const schema of orderClassesByInheritance(content.classes)) lines.push(emitSchemaClassDts(schema, deps));
     for (const fn of content.functions) {
         const rendering = claimedByName.get(fn.name);
         lines.push(rendering !== undefined ? rendering.dts : emitFunctionDts(fn, deps.embeddedTypeNames));
@@ -155,7 +158,9 @@ function emitSchemaClassDts(schema: IRClassDeclaration, deps: ModuleEmitDeps): s
     const declName = shape?.declName ?? schema.sourceName;
     const declKeyword = shape?.declKeyword ?? "export declare class";
 
-    lines.push(`${declKeyword} ${declName} {`);
+    // Real inheritance: declare `extends Parent` and own members only (inherited come from the base).
+    const ext = schema.extends !== undefined ? ` extends ${schema.extends}` : "";
+    lines.push(`${declKeyword} ${declName}${ext} {`);
     lines.push(`    static readonly schema: SchemaMetadata;`);
 
     for (const field of fields) {
@@ -227,6 +232,18 @@ function buildImports(
     const schemas = content.classes;
     const allFields: IRField[] = schemas.flatMap((s) => filterVisibleFields(s, deps.includePrivate));
 
+    // Real-inheritance parents: the base class symbol (`extends` = parent sourceName), imported
+    // from its module. This is a VALUE import — used in the `extends` heritage clause — so even
+    // the `.d.ts` imports it with `import`, never `import type`. Same-module parents need no import.
+    const parentBySpec = new Map<string, Set<string>>();
+    for (const s of schemas) {
+        if (s.extends === undefined) continue;
+        const targetRef = deps.schemaModule.get(s.extends);
+        if (targetRef === undefined || targetRef === moduleRef) continue;
+        const spec = relModuleSpecifier(moduleRef, targetRef);
+        (parentBySpec.get(spec) ?? parentBySpec.set(spec, new Set()).get(spec)!).add(s.extends);
+    }
+
     // Cross-module schema/embedded class refs. Targets are identities (`name`);
     // resolve to the emitted class symbol and its module.
     const addRef = (targetName: string): void => {
@@ -275,10 +292,26 @@ function buildImports(
         if (typeNames.size > 0) add(relModuleSpecifier(moduleRef, TYPES_REF), [...typeNames].sort().join(", "));
     }
 
+    // In `.js`, the parent is an ordinary value import — fold it into the normal import set so it
+    // sorts with everything else. In `.d.ts`, emit it as its own `import` line (value, not type).
+    if (!typeOnly) {
+        for (const [spec, set] of parentBySpec) for (const b of set) add(spec, b);
+    }
     const kw = typeOnly ? "import type" : "import";
-    return [...bySpec.entries()]
+    const typeLines = [...bySpec.entries()]
         .sort((a, b) => a[0].localeCompare(b[0]))
-        .map(([spec, bindings]) => `${kw} { ${[...bindings].sort().join(", ")} } from "${spec}";`);
+        .map(([spec, bindings]) => {
+            // Drop a binding the `.d.ts` also value-imports as a parent (avoid a duplicate import).
+            const names = typeOnly ? [...bindings].filter((b) => !parentBySpec.get(spec)?.has(b)) : [...bindings];
+            return names.length > 0 ? `${kw} { ${names.sort().join(", ")} } from "${spec}";` : undefined;
+        })
+        .filter((l): l is string => l !== undefined);
+    const parentLines = typeOnly
+        ? [...parentBySpec.entries()]
+            .sort((a, b) => a[0].localeCompare(b[0]))
+            .map(([spec, set]) => `import { ${[...set].sort().join(", ")} } from "${spec}";`)
+        : [];
+    return [...parentLines, ...typeLines];
 }
 
 /** Run the domain's claimed-function renderer over the claimed functions this module owns,
@@ -336,6 +369,24 @@ export function collectFactoryNames(fields: readonly IRField[], which: "validato
 }
 
 // ─── Helpers ──────────────────────────────────────────────────────────────────
+
+/** Order a module's classes so a base class precedes any same-module subclass — the emitted
+ *  `class X extends Base` and `X.schema = { base: Base.schema }` both need `Base` evaluated first.
+ *  Cross-module parents (absent from this list) are evaluated via module load order. */
+function orderClassesByInheritance(classes: readonly IRClassDeclaration[]): IRClassDeclaration[] {
+    const bySource = new Map(classes.map((c) => [c.sourceName, c]));
+    const out: IRClassDeclaration[] = [];
+    const seen = new Set<string>();
+    const visit = (c: IRClassDeclaration): void => {
+        if (seen.has(c.sourceName)) return;
+        seen.add(c.sourceName);
+        const parent = c.extends !== undefined ? bySource.get(c.extends) : undefined;
+        if (parent !== undefined) visit(parent);
+        out.push(c);
+    };
+    for (const c of classes) visit(c);
+    return out;
+}
 
 function fieldJsDoc(field: IRField): string[] {
     const body: string[] = [];

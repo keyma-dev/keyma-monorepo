@@ -1,5 +1,5 @@
 import ts from "typescript";
-import { unwrapArray } from "@keyma/core/util";
+import { unwrapArray, inheritedFields } from "@keyma/core/util";
 import type { IRClassDeclaration, IRService, IRType, IRDiagnostic, IREnumDeclaration } from "@keyma/core/ir";
 import { schemaEdge, schemaEphemeral, schemaIndexes, fieldIndexes } from "../ir/extensions.js";
 import { assignTags, stripTagHints } from "./assign-tags.js";
@@ -11,7 +11,7 @@ import { lowerValidatorFactory, lowerFormatterFactory, type LowerDeps } from "./
 import { extractSchema } from "./extract-schema.js";
 import { discoverServices } from "./discover-services.js";
 import { extractService } from "./extract-service.js";
-import { flattenAll } from "./flatten.js";
+import { checkInheritance } from "./check-inheritance.js";
 import {
     mkError,
     mkWarning,
@@ -34,7 +34,7 @@ const SCHEMA_MARKERS = { validator: "ValidatorFn", formatter: "FormatterFn" };
 
 /**
  * The **schema** frontend domain: the full @Schema/@Edge/@Service authoring pipeline
- * — discover → extract own members → flatten inheritance → post-checks → lower
+ * — discover → extract own members → validate inheritance → post-checks → lower
  * validators/formatters/functions → extract services → normalize names → assign binary tags.
  * This is the entire schema-domain frontend; the generic orchestrator (`compileProgram` in
  * `@keyma/compiler/frontend-ts`) just runs `produce` and folds the contribution into the IR
@@ -89,9 +89,9 @@ export const schemaFrontendDomain: FrontendDomain = {
 
         const schemasBySourceName = new Map(rawSchemas.map((s) => [s.sourceName, s]));
 
-        // Pass 3: flatten inheritance
-        const flattenCtx = { schemas: schemasBySourceName, diagnostics };
-        const schemas = flattenAll(rawSchemas, flattenCtx);
+        // Pass 3: validate inheritance (no flattening — inheritance is real in the output).
+        const inheritanceCtx = { schemas: schemasBySourceName, diagnostics };
+        const schemas = checkInheritance(rawSchemas, inheritanceCtx);
 
         // Post-processing: duplicate name check
         checkDuplicateNames(schemas, diagnostics);
@@ -362,10 +362,14 @@ function checkVisibilityLeaks(schemas: IRClassDeclaration[], diagnostics: IRDiag
 // behaviors (re-emitted accessors), not stored/projected data, so they do not
 // count. Fieldless schemas are exempt (nothing to leak and nothing to expose).
 function checkPublicSchemaSurface(schemas: IRClassDeclaration[], diagnostics: IRDiagnostic[]): void {
+    const bySourceName = new Map(schemas.map((s) => [s.sourceName, s]));
     for (const schema of schemas) {
         if (schema.visibility !== "public") continue;
-        if (schema.fields.length === 0) continue;
-        if (schema.fields.some((f) => f.visibility === "public")) continue;
+        // Inheritance is real: an instance's public surface includes inherited fields, so a
+        // child with only own-private fields still passes if it inherits a public one.
+        const all = inheritedFields(schema, bySourceName);
+        if (all.length === 0) continue;
+        if (all.some((f) => f.visibility === "public")) continue;
         diagnostics.push(
             mkError(
                 KEYMA037,
@@ -466,7 +470,8 @@ function checkReferenceTargetsHaveId(schemas: IRClassDeclaration[], diagnostics:
             if (inner.kind !== "reference") continue;
             const target = bySourceName.get(inner.schema);
             if (target === undefined) continue;
-            const idField = target.fields.find((f) => f.type.kind === "id");
+            // The id field may be inherited (the target extends a base that declares it).
+            const idField = inheritedFields(target, bySourceName).find((f) => f.type.kind === "id");
             if (idField === undefined) {
                 diagnostics.push(
                     mkError(
@@ -536,10 +541,13 @@ function analyzeEmbeddedCycles(schemas: IRClassDeclaration[], diagnostics: IRDia
     const sourceOf = new Map(schemas.map((s) => [s.sourceName, s.source]));
 
     // schema sourceName → the schemas it inlines via Embedded<T> (incl. Embedded<T>[]).
+    // Inheritance is real, so an instance also inlines its parents' embedded fields — walk the
+    // full field set so a cycle running through an inherited embed is still detected.
+    const bySourceName = new Map(schemas.map((s) => [s.sourceName, s]));
     const embedsOf = new Map<string, string[]>();
     for (const schema of schemas) {
         const targets: string[] = [];
-        for (const field of schema.fields) {
+        for (const field of inheritedFields(schema, bySourceName)) {
             const inner = unwrapArray(field.type);
             if (inner.kind === "embedded" && known.has(inner.schema)) targets.push(inner.schema);
         }

@@ -23,7 +23,7 @@ std::pmr::vector<ValidationError> validate_if(const SchemaMeta& schema, const Va
                                               alloc_t a, Pred include_field) {
     std::pmr::vector<ValidationError> errors(a);
     Context ctx{value};
-    for (const FieldMeta& f : schema.fields) {
+    for (const FieldMeta& f : all_fields(schema, a)) {  // own + inherited (real inheritance)
         if (!include_field(f)) continue;
         const Value* present = value.find(f.name);
         if (present == nullptr) {

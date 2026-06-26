@@ -2,7 +2,7 @@ import type {
     KeymaIR,
     IRClassDeclaration,
     IRService,
-    IREnumDeclaration,
+    IRType,
     IRFunctionDeclaration,
 } from "@keyma/core/ir";
 import type { EmitFile } from "../driver/index.js";
@@ -13,7 +13,7 @@ export const SERVICES_REF = "services";
 export const SERVICE_CLIENT_REF = "service-client";
 
 /**
- * Options the generic per-module emitter passes to a domain's `buildSchemaMeta`. The contract
+ * Options the generic per-module emitter passes to a domain's `buildSchemaData`. The contract
  * between the bundle shell and the domain pack; carries only IR-derived data, so it stays
  * domain-neutral in `@keyma/compiler`.
  */
@@ -28,6 +28,8 @@ export type SchemaDataOptions = {
     refs: readonly { name: string; cppClass: string }[];
     /** Unqualified name of the apply_defaults free function to reference, if any. */
     applyDefaultsName?: string;
+    /** Fully-qualified C++ type of the `extends` parent (for `.base = &Parent::schema`), if any. */
+    baseClass?: string;
     /** Root namespace. */
     nsRoot: string;
     /** A validator/formatter factory's fully-qualified namespace (its SOURCE module's namespace,
@@ -71,33 +73,75 @@ export type ServiceClientEmitDeps = {
     enumModuleByName: ReadonlyMap<string, string>;
 };
 
-/** Builds the per-schema `keyma::SchemaMeta` accessor body (a C++ code string). */
-export type BuildSchemaMeta = (schema: IRClassDeclaration, opts: SchemaDataOptions) => string;
-/** Emit one named enum's `enum class` definition. */
-export type EmitEnumClass = (decl: IREnumDeclaration) => string;
-/** Emit one named enum's keyma:: conversions / traits. */
-export type EmitEnumConversions = (decl: IREnumDeclaration, qualifiedType: string, binary?: boolean) => string;
+/**
+ * One field's neutral metadata, produced by a domain's `buildSchemaData` and rendered into a
+ * `keyma::FieldMeta` by the compiler's `emitSchemaMeta`. Carries the IR `type` raw — the
+ * compiler derives the `TypeTag` / element / target / bits / id-type tokens, so the domain
+ * emits no C++ type syntax. The `validators` / `formatters` factory-call fragments are the
+ * domain's sole C++ contribution (the analogue of the JS model's `mkRaw` factory calls).
+ */
+export type CppFieldData = {
+    name: string;
+    /** The field's IR type — the compiler maps it to TypeTag / element / target / bits / id-type. */
+    type: IRType;
+    required: boolean;
+    nullable?: boolean;
+    readonly?: boolean;
+    /** Private fields ride only in server/library metadata. */
+    visibility?: "private";
+    /** Field carries at least one index (server bundles); renders `.indexed = true`. */
+    indexed?: boolean;
+    /** Validator factory-call fragments, e.g. `keyma::validators::min_length(2)`. */
+    validators?: readonly string[];
+    /** Formatter entries: a neutral phase name + its factory-call fragment. */
+    formatters?: readonly { phase: string; fn: string }[];
+    /** Stable binary wire tag (present only with binary serialization). */
+    tag?: number;
+};
+
+/**
+ * A schema's neutral metadata, produced by a domain's `buildSchemaData`. Language-neutral
+ * but for the per-field validator/formatter factory-call fragments; the compiler's
+ * `emitSchemaMeta` renders it into the span-backed `keyma::SchemaMeta` accessor body. The
+ * camelCase identity keys are the cross-language runtime contract.
+ */
+export type CppSchemaData = {
+    name: string;
+    sourceName: string;
+    visibility?: "private";
+    ephemeral?: boolean;
+    /** Unqualified `apply_defaults` free-function name to reference (`&name`), if any. */
+    applyDefaults?: string;
+    /** Fully-qualified C++ type of the `extends` parent — renders `.base = &Parent::schema` so the
+     *  runtime walks the chain (metadata carries OWN fields only). */
+    base?: string;
+    /** Embedded/reference targets: identity `name` + fully-qualified C++ class (for `&Class::schema`). */
+    refs: readonly { name: string; cppClass: string }[];
+    /** Schema-level indexes (already gated by `includeIndexes`); `fields` are bare field names. */
+    indexes: readonly { fields: readonly string[]; unique: boolean }[];
+    fields: readonly CppFieldData[];
+};
+
+/** Builds the per-schema neutral metadata the compiler renders into the `schema()` accessor. */
+export type BuildSchemaData = (schema: IRClassDeclaration, opts: SchemaDataOptions) => CppSchemaData;
 
 /**
  * A domain's C++ emission contributions. The generic backend keeps the bundle shell (file
- * layout, visibility gating, struct / value_traits / binary_traits emission, topological
- * ordering) and dispatches the domain-semantic pieces — the `schema()` metadata body, the enum
- * `class` + keyma conversions, and the service/service-client headers — to the registered pack.
- * The schema domain's pack lives in `@keyma/schema/backend-cpp`; the CLI registers it.
+ * layout, visibility gating, struct / value_traits / binary_traits emission, named-enum
+ * emission, topological ordering) and dispatches the domain-semantic pieces — the neutral
+ * `schema()` metadata and the service/service-client headers — to the registered pack. The
+ * schema domain's pack lives in `@keyma/schema/backend-cpp`; the CLI registers it.
  *
- * C++ adds enum + service-client headers (an asymmetry with JS, which has no enum files, and
- * Python, which has neither). The metadata's camelCase keys (`sourceName`, `applyDefaults`, …)
- * are the cross-language runtime contract — a pack must not rename them.
+ * C++ adds a service-client header (an asymmetry with JS and Python, which have neither). The
+ * metadata's camelCase keys (`sourceName`, `applyDefaults`, …) are the cross-language runtime
+ * contract — a pack must not rename them.
  */
 export type CppEmitterPack = {
     name: string;
-    /** Build the per-schema `schema()` accessor body. Provided by the schema domain (the
-     *  primary pack); a domain that only contributes bundle files (e.g. UI) omits it. */
-    buildSchemaMeta?: BuildSchemaMeta;
-    /** Emit one named enum's `enum class` definition. (Schema domain; omit if no enums.) */
-    emitEnumClass?: EmitEnumClass;
-    /** Emit one named enum's keyma:: conversions / traits. (Schema domain; omit if no enums.) */
-    emitEnumConversions?: EmitEnumConversions;
+    /** Build the per-schema `schema()` metadata as neutral data (the compiler renders it).
+     *  Provided by the schema domain (the primary pack); a domain that only contributes bundle
+     *  files (e.g. UI) omits it. */
+    buildSchemaData?: BuildSchemaData;
     /** Emit the bundle-root services.hpp; omit when the domain has no services. */
     emitServices?: (services: readonly IRService[], deps: ServiceEmitDeps) => string;
     /** Emit the bundle-root service-client.hpp; omit when the domain has no services. */

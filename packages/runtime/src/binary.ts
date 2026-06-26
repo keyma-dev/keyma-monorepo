@@ -7,6 +7,7 @@
 
 import type { SchemaMetadata, FieldType, FieldMetadata, SchemaClass } from "./types.js";
 import type { SerializeTarget } from "./serialize.js";
+import { allFields, allRefs } from "./fields.js";
 import {
     writeVarint,
     readVarint,
@@ -48,7 +49,8 @@ function encodeRecord(
     value: Record<string, unknown>,
     opts: { target: SerializeTarget },
 ): void {
-    const fields = schema.fields;
+    const fields = allFields(schema); // own + inherited, base-first (real inheritance)
+    const refs = allRefs(schema);
     for (let i = 0; i < fields.length; i++) {
         const field = fields[i]!;
         if (opts.target === "client" && field.visibility === "private") continue;
@@ -62,7 +64,7 @@ function encodeRecord(
             continue;
         }
         writeKey(out, tag, wiretypeOf(field.type));
-        encodePayload(out, field.type, fv, schema.refs, opts);
+        encodePayload(out, field.type, fv, refs, opts);
     }
 }
 
@@ -263,6 +265,7 @@ export function decodeBinary(schema: SchemaMetadata, bytes: Uint8Array): Record<
 
 function decodeRecord(schema: SchemaMetadata, r: Reader): Record<string, unknown> {
     const byTag = fieldsByTag(schema);
+    const refs = allRefs(schema); // own + inherited targets (real inheritance)
     const out: Record<string, unknown> = {};
     while (r.pos < r.end) {
         const key = readVarintBig(r);
@@ -277,14 +280,14 @@ function decodeRecord(schema: SchemaMetadata, r: Reader): Record<string, unknown
             out[field.name] = null;
             continue;
         }
-        out[field.name] = decodeValue(r, field.type, wiretype, schema.refs);
+        out[field.name] = decodeValue(r, field.type, wiretype, refs);
     }
     return out;
 }
 
 function fieldsByTag(schema: SchemaMetadata): Map<number, FieldMetadata> {
     const m = new Map<number, FieldMetadata>();
-    schema.fields.forEach((f, i) => m.set(f.tag ?? i + 1, f));
+    allFields(schema).forEach((f, i) => m.set(f.tag ?? i + 1, f)); // own + inherited (real inheritance)
     return m;
 }
 

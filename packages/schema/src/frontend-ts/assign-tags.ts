@@ -1,8 +1,10 @@
 // assignTags — the pure pass that assigns each field a STABLE binary wire tag from the
 // committed manifest (`keyma.tags.json`), so at-rest binary records survive schema evolution.
-// Runs AFTER flattenAll and normalizeSchemaNames, so it sees each schema's final, prefixed,
-// self-contained field list. Mutates `field.tag` in place and consumes the frontend-transient
-// `renamedFrom` hint; returns the next manifest (data only — the CLI persists it).
+// Runs AFTER inheritance validation and normalizeSchemaNames, so it sees each schema's final,
+// prefixed, OWN field list. Inheritance is real, so it processes parents before children and
+// reserves ancestor tags — a child's own-field tags continue past the chain's max, keeping the
+// flat on-wire record's tag space globally unique. Mutates `field.tag` in place and consumes the
+// frontend-transient `renamedFrom` hint; returns the next manifest (data only — the CLI persists).
 //
 // Per-schema algorithm (priority order): manual @Tag pins → @RenamedFrom remaps → survivors
 // (same name keeps its committed tag) → new fields (allocate `nextTag++`, monotonic, never
@@ -46,8 +48,20 @@ export function assignTags(
     const diagnostics: IRDiagnostic[] = [];
     const nextSchemas: Record<string, TagManifestSchema> = {};
 
-    for (const schema of schemas) {
-        nextSchemas[schema.name] = assignSchemaTags(schema, prev?.schemas[schema.name], opts, diagnostics);
+    // Inheritance is real, so a child's binary record carries its parents' fields too. Process
+    // parents before children and reserve every ancestor tag, so a child's own-field tags never
+    // collide with an inherited one on the wire (they continue past the chain's max tag).
+    const bySourceName = new Map(schemas.map((s) => [s.sourceName, s]));
+    const resultBySourceName = new Map<string, TagManifestSchema>();
+    for (const schema of inheritanceOrder(schemas, bySourceName)) {
+        const reserved = new Set<number>();
+        for (let p = ancestorOf(schema, bySourceName); p !== undefined; p = ancestorOf(p, bySourceName)) {
+            const r = resultBySourceName.get(p.sourceName);
+            if (r !== undefined) for (const t of Object.values(r.fields)) reserved.add(t);
+        }
+        const entry = assignSchemaTags(schema, prev?.schemas[schema.name], opts, diagnostics, reserved);
+        nextSchemas[schema.name] = entry;
+        resultBySourceName.set(schema.sourceName, entry);
     }
 
     // Carry forward manifest entries for schemas no longer in the project (don't lose tag
@@ -62,14 +76,45 @@ export function assignTags(
     return { manifest: { manifestVersion: "1", schemas: nextSchemas }, diagnostics };
 }
 
+/** Resolve a schema's `extends` parent (sourceName) within the project, or undefined. */
+function ancestorOf(
+    schema: IRClassDeclaration,
+    bySourceName: ReadonlyMap<string, IRClassDeclaration>,
+): IRClassDeclaration | undefined {
+    return schema.extends !== undefined ? bySourceName.get(schema.extends) : undefined;
+}
+
+/** Schemas ordered so every parent precedes its children (a stable topo over `extends`). */
+function inheritanceOrder(
+    schemas: IRClassDeclaration[],
+    bySourceName: ReadonlyMap<string, IRClassDeclaration>,
+): IRClassDeclaration[] {
+    const ordered: IRClassDeclaration[] = [];
+    const seen = new Set<string>();
+    const visit = (s: IRClassDeclaration, path: Set<string>): void => {
+        if (seen.has(s.sourceName) || path.has(s.sourceName)) return;
+        path.add(s.sourceName);
+        const parent = ancestorOf(s, bySourceName);
+        if (parent !== undefined) visit(parent, path);
+        path.delete(s.sourceName);
+        if (!seen.has(s.sourceName)) { seen.add(s.sourceName); ordered.push(s); }
+    };
+    for (const s of schemas) visit(s, new Set());
+    return ordered;
+}
+
 function assignSchemaTags(
     schema: IRClassDeclaration,
     prevEntry: TagManifestSchema | undefined,
     opts: { acceptTags: boolean },
     diagnostics: IRDiagnostic[],
+    reserved: ReadonlySet<number>,
 ): TagManifestSchema {
     const prevFields = prevEntry?.fields ?? {};
+    // Seed past both the committed high-water mark and every inherited tag, so freshly-allocated
+    // child tags continue after the ancestor chain's max (no on-wire collision).
     let nextTag = prevEntry?.nextTag ?? 1;
+    for (const t of reserved) if (t + 1 > nextTag) nextTag = t + 1;
 
     const fields = schema.fields as RawTaggedField[];
     const newFields: Record<string, number> = {};
@@ -154,7 +199,7 @@ function assignSchemaTags(
     }
     for (const field of newlyAllocated) {
         let tag = nextTag++;
-        while (usedTags.has(tag) || tombstones.has(tag)) tag = nextTag++;
+        while (usedTags.has(tag) || tombstones.has(tag) || reserved.has(tag)) tag = nextTag++;
         usedTags.add(tag);
         newFields[field.name] = tag;
         field.tag = tag;

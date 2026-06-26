@@ -1,5 +1,5 @@
 import type { IREnumDeclaration } from "@keyma/core/ir";
-import { cppSanitizer } from "@keyma/compiler/backend-cpp";
+import { cppSanitizer } from "./module-path.js";
 
 /**
  * A named enum lowers to an `enum class` plus full specializations of the generic
@@ -8,6 +8,9 @@ import { cppSanitizer } from "@keyma/compiler/backend-cpp";
  * declaring file's module namespace (`<ns>::models::<module>`), emitted before the
  * structs that may hold it by value; the conversion specializations sit in a separate
  * `namespace keyma` block once the enum is complete.
+ *
+ * Enums are a general language construct, so the generic C++ backend owns their emission
+ * (a non-schema build with enums would emit them too); no domain pack is involved.
  */
 
 /** The `enum class` definition (unqualified) — emitted inside the module's own namespace. */

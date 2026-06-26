@@ -1,4 +1,5 @@
 import type { SchemaMetadata, ValidationError, ValidatorContext, ValidatorFn } from "./types.js";
+import { allFields } from "./fields.js";
 
 export type { ValidatorContext, ValidatorFn } from "./types.js";
 
@@ -17,7 +18,7 @@ export async function validate(
 ): Promise<ValidationError[]> {
     const errors: ValidationError[] = [];
     const context: ValidatorContext = { object: value };
-    for (const field of schema.fields) {
+    for (const field of allFields(schema)) {
         const raw = value[field.name];
 
         // An absent value skips its validators (they would otherwise trip their

@@ -9,6 +9,7 @@
 // and filter (`where`) paths need this.
 
 import type { FieldType, SchemaMetadata } from "./types.js";
+import { allFields } from "./fields.js";
 
 const SCALAR_OPS = ["$eq", "$ne", "$gt", "$gte", "$lt", "$lte"] as const;
 const ARRAY_OPS = ["$in", "$nin"] as const;
@@ -76,7 +77,7 @@ export function normalizeReferenceIds(
     schema: SchemaMetadata,
 ): Record<string, unknown> {
     const out: Record<string, unknown> = { ...record };
-    for (const field of schema.fields) {
+    for (const field of allFields(schema)) {
         if (!(field.name in out)) continue;
         if (coreFieldType(field.type).kind !== "reference") continue;
         out[field.name] = normalizeReferenceFieldValue(out[field.name]);
