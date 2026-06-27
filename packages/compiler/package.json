@@ -47,9 +47,10 @@
   "scripts": {
     "gen-types": "node src/backend-js/scripts/gen-emitted-types.mjs",
     "gen-runtime-header": "node src/backend-cpp/scripts/gen-runtime-header.mjs",
-    "prebuild": "node src/backend-js/scripts/gen-emitted-types.mjs && node src/backend-cpp/scripts/gen-runtime-header.mjs",
+    "gen-py-runtime": "node src/backend-python/scripts/gen-emitted-runtime.mjs",
+    "prebuild": "node src/backend-js/scripts/gen-emitted-types.mjs && node src/backend-cpp/scripts/gen-runtime-header.mjs && node src/backend-python/scripts/gen-emitted-runtime.mjs",
     "build": "tsc",
-    "pretest": "node src/backend-js/scripts/gen-emitted-types.mjs && node src/backend-cpp/scripts/gen-runtime-header.mjs",
+    "pretest": "node src/backend-js/scripts/gen-emitted-types.mjs && node src/backend-cpp/scripts/gen-runtime-header.mjs && node src/backend-python/scripts/gen-emitted-runtime.mjs",
     "test": "tsc && node --test \"dist/test/**/*.test.js\""
   },
   "dependencies": {

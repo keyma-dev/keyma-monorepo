@@ -1,46 +1,28 @@
-"""Runtime schema-metadata types — the Python view of the metadata dict emitted by
-``@keyma/compiler-backend-python`` and attached to each generated class as
-``Class.schema``.
+"""Runtime metadata + RPC type aliases — the Python view of the data the compiler emits.
 
-The metadata is a plain ``dict`` with **camelCase** keys (the cross-language
-contract, matching the IR and the JS runtime); only the Python *API* is snake_case.
-These ``TypedDict``/alias definitions exist for documentation and type-checking —
-the runtime reads dicts directly, so every key is optional in practice.
+The class metadata is a plain ``dict`` with **camelCase** keys (the cross-language contract,
+matching the IR and the JS runtime); only the Python *API* is snake_case. These ``TypedDict`` /
+alias definitions exist for documentation and type-checking — the codec reads dicts directly, so
+every key is optional in practice. Validator/formatter/edge/index/ephemeral metadata is owned by
+the (separate, untouched) schema domain and is not modelled here.
 """
 
 from __future__ import annotations
 
-from typing import Any, Awaitable, Callable, Dict, List, Literal, Optional, TypedDict, Union
+from typing import Any, Dict, List, Literal, TypedDict
 
-SerializeTarget = Literal["client", "server", "database"]
 Visibility = Literal["public", "private"]
 
+#: Wire encoding agreed statically by both ends of a transport (no negotiation).
+Encoding = Literal["json", "binary"]
+
 #: A field type node, e.g. ``{"kind": "string"}`` or ``{"kind": "array", "of": {...}}``.
-#: See ``@keyma/ir`` for the authoritative union.
+#: See ``@keyma/core/ir`` for the authoritative union. Class targets are keyed by ``target``
+#: (reference/embedded) or ``name`` (instance).
 FieldType = Dict[str, Any]
 
-
-class ValidationError(TypedDict):
-    field: str
-    code: str
-    message: str
-
-
-#: Context object handed to validators/formatters; exposes ``.object`` (the record).
-ValidatorContext = Any
-FormatterContext = Any
-
-# Validators/formatters are factory-built callables re-emitted into the metadata.
-# Inner arity varies (the runtime adapts the call) and bodies may be sync or async;
-# these aliases describe the maximal signature.
-ValidatorFn = Callable[..., Union[Optional[ValidationError], Awaitable[Optional[ValidationError]]]]
-FormatterFn = Callable[..., Any]
-SchemaDefaultsFn = Callable[[Dict[str, Any]], None]
-
-
-class FormatterEntry(TypedDict):
-    phase: str
-    fn: FormatterFn
+#: A class-metadata dict (attached to a generated class as ``Class.metadata``).
+Metadata = Dict[str, Any]
 
 
 class FieldMetadata(TypedDict, total=False):
@@ -50,28 +32,12 @@ class FieldMetadata(TypedDict, total=False):
     readonly: bool
     required: bool
     nullable: bool
-    validators: List[ValidatorFn]
-    formatters: List[FormatterEntry]
-    indexes: List[Dict[str, Any]]
     ephemeral: bool
+    tag: int
     default: Dict[str, Any]
 
 
-# `from` is a Python keyword, so EdgeMetadata uses the functional TypedDict form.
-EdgeMetadata = TypedDict(
-    "EdgeMetadata",
-    {
-        "from": str,
-        "fromField": str,
-        "to": str,
-        "toField": str,
-        "label": str,
-        "directed": bool,
-    },
-)
-
-
-class SchemaMetadata(TypedDict, total=False):
+class ClassMetadata(TypedDict, total=False):
     name: str
     sourceName: str
     visibility: Visibility
@@ -79,37 +45,13 @@ class SchemaMetadata(TypedDict, total=False):
     # OWN fields only (real inheritance). Inherited fields live on ``base``; the full set is
     # assembled by walking the base chain — see ``keyma.runtime.fields.all_fields``.
     fields: List[FieldMetadata]
-    # Parent schema's metadata when this schema extends another (a live reference to
-    # ``Parent.schema``); absent for a root schema.
-    base: "SchemaMetadata"
-    indexes: List[Dict[str, Any]]
-    refs: Dict[str, Any]
-    edge: EdgeMetadata
-    applyDefaults: SchemaDefaultsFn
-
-
-# ── Service metadata (mirrors the static `service` on generated service classes) ──
-
-
-class ServiceParamMetadata(TypedDict, total=False):
-    name: str
-    schema: str
-
-
-class ServiceMethodMetadata(TypedDict, total=False):
-    name: str
-    visibility: Visibility
-    params: List[ServiceParamMetadata]
-    returnSchema: str
-    returnArray: bool
-
-
-class ServiceMetadata(TypedDict, total=False):
-    name: str
-    visibility: Visibility
-    methods: List[ServiceMethodMetadata]
+    # Parent class's metadata when this class extends another (a live reference to
+    # ``Parent.metadata``); absent for a root class.
+    base: "ClassMetadata"
+    # Embedded/reference target ``name`` → the target's generated class (carries ``.metadata``).
     refs: Dict[str, Any]
 
 
-#: Ambient per-request context threaded through the server, plugins, and services.
+#: Ambient per-request context threaded through the host into service implementations. Open bag;
+#: ``identity.isSystem`` drives the probe-resistant visibility gate.
 RequestContext = Dict[str, Any]

@@ -3,6 +3,8 @@ import type { KeymaIR, IRClassDeclaration, IRFunctionDeclaration, IRMember } fro
 import type { KeymaBackend, KeymaTargetConfig, ResolvedConfig, EmitFile, EmitResult } from "../driver/index.js";
 import { emitModulePython, type ModuleEmitDeps, type ModuleContent } from "./emit-module.js";
 import { emitIndexPython } from "./emit-index.js";
+import { emitServicesPython, SERVICES_REF, type ServiceEmitDeps } from "./emit-service.js";
+import { EMITTED_PY_RUNTIME, EMITTED_PY_RUNTIME_MODULE } from "./emitted-runtime.js";
 import { moduleRefOf } from "./module-path.js";
 import { resolvePythonTargetJSStyle as resolvePythonTarget, type PythonTargetConfig } from "./types.js";
 import { EmitterRegistry, type PythonEmitterPack } from "./emitter-registry.js";
@@ -173,9 +175,32 @@ function emitBundle(
         }
     }
 
+    // The self-contained baked runtime module (codec + RPC stack + intrinsics) every bundle carries
+    // so generated code imports no `keyma-runtime` package. Sits at the bundle root; generated
+    // modules / services import from it via relative path.
+    files.push({ path: path.posix.join(bundleDir, `${EMITTED_PY_RUNTIME_MODULE}.py`), content: EMITTED_PY_RUNTIME });
+
+    // Remotely-callable services (gated by visibility like classes). `@Service` is a base-language
+    // concern the compiler owns end-to-end, so the bundle shell emits services directly from
+    // `ir.services` — no domain pack participates. Server/library bundles emit the abstract base +
+    // generated `dispatch`; the client bundle emits the transport-bound client class.
+    const services = ir.services ?? [];
+    const visibleServices = opts.includePrivate ? services : services.filter((s) => s.visibility === "public");
+    if (visibleServices.length > 0) {
+        const serviceDeps: ServiceEmitDeps = {
+            includePrivate: opts.includePrivate,
+            classModule: shared.classModule,
+            classNameByName: shared.classNameByName,
+        };
+        const servicesPy = emitServicesPython(services, serviceDeps);
+        if (servicesPy.length > 0) {
+            files.push({ path: path.posix.join(bundleDir, `${SERVICES_REF}.py`), content: servicesPy });
+        }
+    }
+
     const indexContent = emitIndexPython(visibleClasses, shared.classModule, {
         includePrivate: opts.includePrivate,
-    });
+    }, visibleServices.map((s) => s.sourceName));
     files.push({ path: path.posix.join(bundleDir, "index.py"), content: indexContent });
     files.push({ path: path.posix.join(bundleDir, "__init__.py"), content: indexContent });
 

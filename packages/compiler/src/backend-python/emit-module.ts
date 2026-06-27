@@ -7,6 +7,7 @@ import type { BuildClassData } from "./emitter-registry.js";
 import { buildApplyDefaults } from "./emit-defaults.js";
 import { emitLiteral } from "./emit-literal.js";
 import { pythonRelImport } from "./module-path.js";
+import { EMITTED_PY_RUNTIME_MODULE } from "./emitted-runtime.js";
 
 /** The declarations a single source module owns: the classes authored in the file plus
  *  the (reachable) functions homed in it — plain utility helpers and claimed domain
@@ -67,12 +68,16 @@ export function emitModulePython(moduleRef: string, content: ModuleContent, deps
         body.push("");
     }
 
+    // Pull the math/coercion intrinsic shims from the bundle-local baked runtime module (relative
+    // to this module's location) so generated code imports no `keyma-runtime` package.
+    const rt = pythonRelImport(moduleRef, EMITTED_PY_RUNTIME_MODULE);
+    const intrinsicSpec = `from ${rt.prefix}${rt.module} import`;
     const lines: string[] = [
         "from __future__ import annotations",
         "from typing import Any, List, Optional, Literal, Dict",
         "from datetime import datetime, timezone",
         "import re",
-        ...intrinsicImports(body.join("\n")),
+        ...intrinsicImports(body.join("\n"), intrinsicSpec),
         "",
     ];
     lines.push(...buildImports(moduleRef, content, deps));
