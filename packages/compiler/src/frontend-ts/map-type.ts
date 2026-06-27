@@ -1,16 +1,16 @@
 import ts from "typescript";
 import type { IRType, IRDiagnostic } from "@keyma/core/ir";
 import { mkError, KEYMA010, KEYMA024, KEYMA025, KEYMA050, KEYMA071, KEYMA099 } from "./diagnostics.js";
-import { getLocation, isFromModule, entityNameText } from "./util.js";
+import { getLocation, isFromModule, isResolvedCoreDsl, entityNameText } from "./util.js";
 import type { EnumInfo } from "./discover-enums.js";
 
 /**
  * The canonical module that declares the core DSL semantic types (`ID`, `Json`,
  * `Reference`, `Embedded`, `Integer`, …). They are core-owned and re-exported by a
  * domain's DSL surface (e.g. `@keyma/schema/dsl`), so a symbol may carry either
- * specifier: user schemas import from the domain re-export, while the built-in
- * validator/formatter libraries import directly from `@keyma/core/dsl`. Both are
- * accepted (see `fromDsl` below). Naming the core module here is correct layering —
+ * specifier: user schemas (and the built-in validator/formatter libs) import from the
+ * domain re-export, but a symbol imported directly via the canonical `@keyma/core/dsl`
+ * specifier is accepted too (see `fromDsl` below). Naming the core module here is correct layering —
  * the compiler already owns the scalar type *names* in `DSL_SCALAR_TYPES` and depends
  * on `@keyma/core`; this is not a `@keyma/schema` symbol.
  */
@@ -221,11 +221,15 @@ function mapTypeReference(node: ts.TypeReferenceNode, ctx: TypeMapContext): MapT
     const symbol = ctx.checker.getSymbolAtLocation(node.typeName);
     if (!symbol) return fail(node, ctx, `cannot resolve type "${name}"`);
 
-    // Accept core DSL types via the configured domain re-export (e.g. `@keyma/schema/dsl`)
-    // OR the canonical `@keyma/core/dsl` specifier (used by the validator/formatter libs).
+    // Accept core DSL types via the configured domain re-export (e.g. `@keyma/schema/dsl`),
+    // directly via the canonical `@keyma/core/dsl` specifier, OR by resolving the alias chain
+    // to a `@keyma/core/dsl` declaration. The last form makes recognition independent of which
+    // umbrella the author imported the (core-owned, re-exported) marker through — so a
+    // domain-agnostic pass (the base `@Service` pass) resolves the same markers a domain does.
     const fromDsl =
         isFromModule(symbol, ctx.checker, ctx.dslModuleName) ||
-        isFromModule(symbol, ctx.checker, CORE_DSL_MODULE);
+        isFromModule(symbol, ctx.checker, CORE_DSL_MODULE) ||
+        isResolvedCoreDsl(symbol, ctx.checker);
 
     if (fromDsl) {
         // DSL scalar types

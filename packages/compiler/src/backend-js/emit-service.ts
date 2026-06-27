@@ -1,11 +1,16 @@
 import type { IRService, IRServiceMethod, IRType } from "@keyma/core/ir";
 import { filterVisible } from "@keyma/core/util";
-import { irTypeToTs, emitLiteral, mkRaw, relModuleSpecifier, type ServiceEmitDeps } from "@keyma/compiler/backend-js";
+import { irTypeToTs } from "./ir-type-to-ts.js";
+import { emitLiteral, mkRaw } from "./emit-literal.js";
+import { relModuleSpecifier } from "./module-path.js";
+import type { ServiceEmitDeps } from "./emitter-registry.js";
+
+// `@Service`/RPC is a base-language concern the compiler owns end-to-end: the bundle shell
+// calls these emitters directly on `ir.services` (gated by visibility like schemas). No domain
+// pack participates — services emit identically for any (or no) registered domain.
 
 /** Bundle-relative module ref of the services file (sits at the bundle root). */
 export const SERVICES_REF = "services";
-
-export type { ServiceEmitDeps };
 
 export type ServiceEmitFiles = { servicesJs: string; servicesDts: string };
 

@@ -3,6 +3,7 @@ import ts from "typescript";
 import type { KeymaIR, IRDiagnostic, TagManifest } from "@keyma/core/ir";
 import { createProgram, DEFAULT_COMPILER_OPTIONS } from "./program.js";
 import { FrontendExtensionRegistry, type FrontendDomain, type FrontendDomainContext } from "./extension-registry.js";
+import { runServicePass } from "./service-pass.js";
 
 export type FrontendConfig = {
     /** Absolute paths to user schema TypeScript source files. */
@@ -152,8 +153,14 @@ function compileProgram(program: ts.Program, config: FrontendConfig): CompileRes
     const schemas = contributions.flatMap((c) => c.schemas);
     const enums = contributions.flatMap((c) => c.enums);
     const functionDeclarations = contributions.flatMap((c) => c.functionDeclarations);
-    const services = contributions.flatMap((c) => c.services);
     const tagManifest: TagManifest | undefined = contributions.find((c) => c.tagManifest !== undefined)?.tagManifest;
+
+    // `@Service` is a base-language concern the compiler owns end-to-end: a built-in pass that
+    // runs AFTER domains finalize their class surface, so it sees the full class set (`schemas`)
+    // to resolve service param/return types and enforce visibility/collision rules — without a
+    // cross-domain seam. It references no domain by name (it matches `@Service` by its
+    // `@keyma/core/dsl` identity).
+    const services = runServicePass(program, ctx, schemas);
 
     // Shallow-merge each domain's document-level extension slice (every domain writes under
     // its own id, e.g. `{ ui: … }`). Stays empty for a schema-only build, so `ir.extensions`

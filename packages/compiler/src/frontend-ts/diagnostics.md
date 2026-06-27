@@ -518,10 +518,13 @@ them in server code by extending the generated class.
 
 Two methods on the same `@Service` class share a name.
 
-### KEYMA095 — @Service combined with @Schema/@Edge
+### KEYMA095 — a class is both a service and a data model
 
-A class carries `@Service` together with `@Schema` or `@Edge`. A service declares
-callable methods, not a data model — keep them on separate classes.
+A `@Service` class is also produced as a data model (the same authored class is a
+`@Schema`/`@Edge`, or any future data-producing domain's class of the same name). A
+service declares callable methods, not stored fields — split the callable contract from
+the data class. The check is domain-agnostic: it flags a `@Service` whose authored name
+also appears among the classes the frontend domains produced.
 
 ### KEYMA096 — public service exposes a private schema
 

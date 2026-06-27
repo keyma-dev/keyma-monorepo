@@ -2,7 +2,6 @@ import type ts from "typescript";
 import type {
     IRDiagnostic,
     IRClassDeclaration,
-    IRService,
     IREnumDeclaration,
     IRFunctionDeclaration,
     TagManifest,
@@ -40,7 +39,6 @@ export type FrontendContribution = {
      *  ordinary functions). A domain attaches per-field validator/formatter references via
      *  `field.extensions` rather than separate declaration lists. */
     functionDeclarations: IRFunctionDeclaration[];
-    services: IRService[];
     /** Present only when the domain ran binary tag assignment (schema, when binaryTags). */
     tagManifest?: TagManifest;
     /**
@@ -55,9 +53,10 @@ export type FrontendContribution = {
 
 /**
  * A frontend domain: discovers + lowers its own authoring surface from the program. The
- * schema domain (Phase 2's only one) owns the full @Schema/@Edge/@Service pipeline; a later
- * UI domain plugs in alongside it. The generic orchestrator (`compileProgram`) never needs to
- * know which domains exist — it just runs `produce` for each registered one.
+ * schema domain owns the full @Schema/@Edge pipeline; a later UI domain plugs in alongside it.
+ * (`@Service` is NOT a domain concern — the compiler owns it as a built-in base pass in
+ * `compileProgram`, run after every domain finalizes its class surface.) The generic
+ * orchestrator never needs to know which domains exist — it just runs `produce` for each.
  */
 export interface FrontendDomain {
     name: string;

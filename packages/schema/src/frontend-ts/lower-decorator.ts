@@ -13,7 +13,7 @@ type LowerContext = {
     checker: ts.TypeChecker;
     diagnostics: IRDiagnostic[];
     sourceFile: ts.SourceFile;
-    /** Module name of the Keyma DSL (e.g. "@keyma/core/dsl"). */
+    /** Module name of the Keyma DSL (e.g. "@keyma/schema/dsl"). */
     dslModuleName: string;
     /** Schema class names; enables portable lowering of non-literal initializers. */
     schemaClassNames?: ReadonlySet<string>;

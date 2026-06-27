@@ -10,6 +10,8 @@ import { emitSupportHpp } from "./emit-support.js";
 import { moduleRefOf, namespaceOf, cppSanitizer } from "./module-path.js";
 import { resolveCppTarget, VENDOR_RUNTIME_HEADER, type CppTargetConfig } from "./types.js";
 import { EmitterRegistry, SERVICES_REF, SERVICE_CLIENT_REF, type CppEmitterPack } from "./emitter-registry.js";
+import { emitServicesCpp } from "./emit-service.js";
+import { emitServiceClientCpp } from "./emit-service-client.js";
 
 /**
  * Build a C++ backend from the given domain emitter packs. The generic bundle shell here is
@@ -242,13 +244,16 @@ function emitBundle(
         }
     }
 
+    // Remotely-callable services (gated by visibility like schemas). `@Service` is a
+    // base-language concern the compiler owns end-to-end, so the bundle shell emits the
+    // service + service-client headers directly from `ir.services` — no domain pack participates.
     const visibleServices = opts.includePrivate
         ? decls.services
         : decls.services.filter((s) => s.visibility === "public");
-    if (visibleServices.length > 0 && pack?.emitServices !== undefined && pack?.emitServiceClient !== undefined) {
+    if (visibleServices.length > 0) {
         files.push({
             path: path.posix.join(bundleDir, `${SERVICES_REF}.hpp`),
-            content: pack.emitServices(decls.services, {
+            content: emitServicesCpp(decls.services, {
                 includePrivate: opts.includePrivate,
                 nsRoot: shared.nsRoot,
                 runtimeInclude: shared.runtimeInclude,
@@ -263,7 +268,7 @@ function emitBundle(
         // Opt-in (not pulled in by index.hpp) since it depends on <keyma/client.hpp>.
         files.push({
             path: path.posix.join(bundleDir, `${SERVICE_CLIENT_REF}.hpp`),
-            content: pack.emitServiceClient(decls.services, {
+            content: emitServiceClientCpp(decls.services, {
                 includePrivate: opts.includePrivate,
                 nsRoot: shared.nsRoot,
                 schemaModule: shared.schemaModule,

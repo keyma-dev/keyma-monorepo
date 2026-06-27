@@ -15,16 +15,17 @@ import {
     checkExpression,
     checkStatement,
     checkSourceLocation,
+    checkParam,
     type IRValidationError,
     type IRDocumentValidator,
 } from "@keyma/core/ir";
 import { SCHEMA_EXT, UI_EXT } from "./extensions.js";
 
 /**
- * Schema-domain IR sections — classes, enums, function declarations (utilities + the
- * collapsed validator/formatter factories), and services. Validator/formatter field
- * attachments ride in `field.extensions['schema']`. Registered onto the IR validator
- * registry by the CLI; the core envelope checks stay in `@keyma/core/ir`.
+ * Schema-domain IR sections — classes, enums, and function declarations (utilities + the
+ * collapsed validator/formatter factories). Validator/formatter field attachments ride in
+ * `field.extensions['schema']`. Registered onto the IR validator registry by the CLI; the core
+ * envelope checks AND the base-language `services` section live in `@keyma/core/ir`.
  */
 export function checkSchemaDomain(doc: Record<string, unknown>): IRValidationError[] {
     const errors: IRValidationError[] = [];
@@ -52,71 +53,11 @@ export function checkSchemaDomain(doc: Record<string, unknown>): IRValidationErr
         }
     }
 
-    if ("services" in doc && doc["services"] !== undefined) {
-        if (!isArr(doc["services"])) {
-            errors.push(e("services", "must be an array when present"));
-        } else {
-            doc["services"].forEach((s, i) => errors.push(...checkService(s, `services[${i}]`)));
-        }
-    }
-
     return errors;
 }
 
 /** The schema-domain IR validator, registered onto the core `IRValidatorRegistry` by the CLI. */
 export const schemaIRValidator: IRDocumentValidator = checkSchemaDomain;
-
-/** Shared check for a `{ name, type, optional? }` typed parameter. */
-function checkParam(p: unknown, path: string): IRValidationError[] {
-    if (!isObj(p)) return [e(path, "must be an object")];
-    const errors: IRValidationError[] = [];
-    if (!isStr(p["name"]) || p["name"] === "") errors.push(e(`${path}.name`, "must be a non-empty string"));
-    errors.push(...checkType(p["type"], `${path}.type`));
-    if ("optional" in p && p["optional"] !== undefined && !isBool(p["optional"])) {
-        errors.push(e(`${path}.optional`, "must be a boolean when present"));
-    }
-    return errors;
-}
-
-function checkService(svc: unknown, path: string): IRValidationError[] {
-    if (!isObj(svc)) return [e(path, "must be an object")];
-    const errors: IRValidationError[] = [];
-    if (!isStr(svc["id"]) || svc["id"] === "") errors.push(e(`${path}.id`, "must be a non-empty string"));
-    if (!isStr(svc["name"]) || svc["name"] === "") errors.push(e(`${path}.name`, "must be a non-empty string"));
-    if (!isStr(svc["sourceName"]) || svc["sourceName"] === "") errors.push(e(`${path}.sourceName`, "must be a non-empty string"));
-    if (svc["visibility"] !== "public" && svc["visibility"] !== "private") {
-        errors.push(e(`${path}.visibility`, 'must be "public" or "private"'));
-    }
-    if ("description" in svc && svc["description"] !== undefined && !isStr(svc["description"])) {
-        errors.push(e(`${path}.description`, "must be a string when present"));
-    }
-    if (!isArr(svc["methods"])) {
-        errors.push(e(`${path}.methods`, "must be an array"));
-    } else {
-        svc["methods"].forEach((m, i) => errors.push(...checkServiceMethod(m, `${path}.methods[${i}]`)));
-    }
-    errors.push(...checkSourceLocation(svc["source"], `${path}.source`));
-    return errors;
-}
-
-function checkServiceMethod(m: unknown, path: string): IRValidationError[] {
-    if (!isObj(m)) return [e(path, "must be an object")];
-    const errors: IRValidationError[] = [];
-    if (!isStr(m["name"]) || m["name"] === "") errors.push(e(`${path}.name`, "must be a non-empty string"));
-    if (!isArr(m["params"])) {
-        errors.push(e(`${path}.params`, "must be an array"));
-    } else {
-        m["params"].forEach((p, i) => errors.push(...checkParam(p, `${path}.params[${i}]`)));
-    }
-    if ("returnType" in m && m["returnType"] !== undefined) {
-        errors.push(...checkType(m["returnType"], `${path}.returnType`));
-    }
-    if (m["visibility"] !== "public" && m["visibility"] !== "private") {
-        errors.push(e(`${path}.visibility`, 'must be "public" or "private"'));
-    }
-    errors.push(...checkSourceLocation(m["source"], `${path}.source`));
-    return errors;
-}
 
 function checkSchema(schema: unknown, path: string): IRValidationError[] {
     if (!isObj(schema)) return [e(path, "must be an object")];

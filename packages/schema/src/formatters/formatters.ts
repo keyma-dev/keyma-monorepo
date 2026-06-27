@@ -1,4 +1,4 @@
-import type { FormatterFn } from "@keyma/core/dsl";
+import type { FormatterFn } from "@keyma/schema/dsl";
 
 // Built-in formatters. Each is a plain factory function returning a `FormatterFn`
 // — `(value) => value`. The Keyma compiler resolves each from its `@Format(...)`

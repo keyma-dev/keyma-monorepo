@@ -1,5 +1,5 @@
 import ts from "typescript";
-import { isFromModule, getLocation } from "@keyma/compiler/frontend-ts";
+import { getLocation, findKeymaClassDecorator, extractDecoratorOptions } from "@keyma/compiler/frontend-ts";
 import type { IRDiagnostic, IRSourceLocation } from "@keyma/core/ir";
 import { KEYMA032, KEYMA033 } from "./diagnostics.js";
 
@@ -66,9 +66,9 @@ function tryDiscoverSchema(
 
     const className = node.name.text;
     const schemaOptions = schemaDecorator
-        ? extractSchemaOptions(schemaDecorator, ctx)
+        ? extractDecoratorOptions(schemaDecorator)
         : edgeDecorator
-            ? extractSchemaOptions(edgeDecorator, ctx)  // @Edge shares the Schema options shape
+            ? extractDecoratorOptions(edgeDecorator)  // @Edge shares the Schema options shape
             : {};
     const source = getLocation(node.name, sourceFile);
 
@@ -98,63 +98,8 @@ function tryDiscoverSchema(
     return result;
 }
 
-/** Find a named class-level decorator (e.g. "Schema", "Edge", "Service") from the DSL module. */
-export function findKeymaClassDecorator(
-    node: ts.ClassDeclaration,
-    checker: ts.TypeChecker,
-    dslModuleName: string,
-    decoratorName: string
-): ts.Decorator | undefined {
-    const modifiers = ts.getDecorators(node) ?? node.modifiers;
-    if (!modifiers) return undefined;
-
-    for (const modifier of modifiers) {
-        if (!ts.isDecorator(modifier)) continue;
-        const expr = modifier.expression;
-        const ident = ts.isCallExpression(expr) ? expr.expression : expr;
-        if (!ts.isIdentifier(ident) || ident.text !== decoratorName) continue;
-
-        const symbol = checker.getSymbolAtLocation(ident);
-        if (!symbol) continue;
-        if (isFromModule(symbol, checker, dslModuleName)) return modifier;
-    }
-    return undefined;
-}
-
-/** Extract @Schema/@Edge/@Service decorator options from a call expression. */
-export function extractSchemaOptions(
-    decorator: ts.Decorator,
-    ctx: DiscoverContext
-): DiscoveredSchema["schemaOptions"] {
-    const expr = decorator.expression;
-    if (!ts.isCallExpression(expr) || expr.arguments.length === 0) return {};
-
-    const arg = expr.arguments[0];
-    if (!arg || !ts.isObjectLiteralExpression(arg)) return {};
-
-    const opts: DiscoveredSchema["schemaOptions"] = {};
-    for (const prop of arg.properties) {
-        if (!ts.isPropertyAssignment(prop) || !ts.isIdentifier(prop.name)) continue;
-        const key = prop.name.text;
-        const val = prop.initializer;
-
-        if (key === "name" && ts.isStringLiteral(val)) {
-            opts.name = val.text;
-        } else if (key === "private") {
-            if (val.kind === ts.SyntaxKind.TrueKeyword) opts.private = true;
-            if (val.kind === ts.SyntaxKind.FalseKeyword) opts.private = false;
-        } else if (key === "ephemeral") {
-            if (val.kind === ts.SyntaxKind.TrueKeyword) opts.ephemeral = true;
-            if (val.kind === ts.SyntaxKind.FalseKeyword) opts.ephemeral = false;
-        } else if (key === "description" && ts.isStringLiteral(val)) {
-            opts.description = val.text;
-        }
-    }
-    return opts;
-}
-
 /** Extract @Edge decorator options. Only `directed` is read here; the schema
- *  `name` (used as the traversal label) is read by extractSchemaOptions, and
+ *  `name` (used as the traversal label) is read by extractDecoratorOptions, and
  *  the from/to endpoints come from the @From()/@To() fields. */
 function extractEdgeOptions(decorator: ts.Decorator): DiscoveredEdgeOptions {
     const expr = decorator.expression;

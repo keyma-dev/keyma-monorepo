@@ -15,28 +15,16 @@ export type {
     Embedded,
 } from "./types.js";
 
-// Validator/formatter authoring and contract types
-export type {
-    ValidatorFn,
-    FormatterFn,
-    ValidationError,
-    ValidatorContext,
-    FormatterContext,
-} from "./types.js";
-
-// Domain-neutral decorators (the schema-specific decorators — @Schema, @Edge,
-// @Indexed, @From, @To, @Ephemeral, @Computed, @Tag, @RenamedFrom — live in
-// `@keyma/schema/dsl`, which re-exports these alongside them).
+// Domain-neutral decorators. The schema-specific decorators — @Schema, @Edge, @Indexed,
+// @From, @To, @Ephemeral, @Computed, @Tag, @RenamedFrom and the field-level @Validate /
+// @Format (with their validator/formatter contract types) — live in `@keyma/schema/dsl`,
+// which re-exports these alongside them.
 export {
-    Validate,
-    Format,
-    Phase,
     FormField,
     Deprecated,
     Service,
 } from "./decorators.js";
 export type {
-    FormatPhase,
     FormFieldOptions,
     ServiceOptions,
 } from "./decorators.js";

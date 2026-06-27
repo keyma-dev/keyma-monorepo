@@ -18,11 +18,19 @@ export {
     resolveAlias,
     getImportModuleSpecifier,
     isFromModule,
+    isCoreDslSymbol,
+    isResolvedCoreDsl,
     entityNameText,
     numericLiteralValue,
     stringLiteralValue,
     booleanLiteralValue,
 } from "./util.js";
+
+// Neutral class-decorator helpers (find a named `@Schema`/`@Edge`/`@Service` decorator,
+// parse its object-literal options). Promoted from the schema domain so the base service
+// pass — and any domain — shares one parser.
+export { findKeymaClassDecorator, extractDecoratorOptions } from "./decorator.js";
+export type { DecoratorOptions } from "./decorator.js";
 
 export { discoverEnums } from "./discover-enums.js";
 export type { EnumInfo } from "./discover-enums.js";

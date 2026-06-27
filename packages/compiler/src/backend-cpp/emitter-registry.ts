@@ -1,7 +1,6 @@
 import type {
     KeymaIR,
     IRClassDeclaration,
-    IRService,
     IRType,
     IRFunctionDeclaration,
 } from "@keyma/core/ir";
@@ -37,7 +36,7 @@ export type SchemaDataOptions = {
     functionNamespace: (name: string) => string;
 };
 
-/** The deps the bundle shell passes to a domain's services emitter. */
+/** The deps the bundle shell passes to the built-in services emitter (`emit-service.ts`). */
 export type ServiceEmitDeps = {
     /** Include private services and private methods (server/library bundles). */
     includePrivate: boolean;
@@ -56,7 +55,7 @@ export type ServiceEmitDeps = {
     enumModuleByName: ReadonlyMap<string, string>;
 };
 
-/** The deps the bundle shell passes to a domain's service-client emitter. */
+/** The deps the bundle shell passes to the built-in service-client emitter (`emit-service-client.ts`). */
 export type ServiceClientEmitDeps = {
     /** Include private services/methods (server/library bundles). */
     includePrivate: boolean;
@@ -128,13 +127,12 @@ export type BuildSchemaData = (schema: IRClassDeclaration, opts: SchemaDataOptio
 /**
  * A domain's C++ emission contributions. The generic backend keeps the bundle shell (file
  * layout, visibility gating, struct / value_traits / binary_traits emission, named-enum
- * emission, topological ordering) and dispatches the domain-semantic pieces — the neutral
- * `schema()` metadata and the service/service-client headers — to the registered pack. The
+ * emission, topological ordering, and the built-in service / service-client headers) and
+ * dispatches the domain-semantic neutral `schema()` metadata to the registered pack. The
  * schema domain's pack lives in `@keyma/schema/backend-cpp`; the CLI registers it.
  *
- * C++ adds a service-client header (an asymmetry with JS and Python, which have neither). The
- * metadata's camelCase keys (`sourceName`, `applyDefaults`, …) are the cross-language runtime
- * contract — a pack must not rename them.
+ * The metadata's camelCase keys (`sourceName`, `applyDefaults`, …) are the cross-language
+ * runtime contract — a pack must not rename them.
  */
 export type CppEmitterPack = {
     name: string;
@@ -142,10 +140,6 @@ export type CppEmitterPack = {
      *  Provided by the schema domain (the primary pack); a domain that only contributes bundle
      *  files (e.g. UI) omits it. */
     buildSchemaData?: BuildSchemaData;
-    /** Emit the bundle-root services.hpp; omit when the domain has no services. */
-    emitServices?: (services: readonly IRService[], deps: ServiceEmitDeps) => string;
-    /** Emit the bundle-root service-client.hpp; omit when the domain has no services. */
-    emitServiceClient?: (services: readonly IRService[], deps: ServiceClientEmitDeps) => string;
     /**
      * Names of `functionDeclarations` this domain renders itself (with its own wrapper) via
      * `renderClaimedFunctions`, so the generic backend does not emit them as plain functions.

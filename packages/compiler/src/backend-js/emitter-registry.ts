@@ -1,7 +1,6 @@
 import type {
     KeymaIR,
     IRClassDeclaration,
-    IRService,
     IRFunctionDeclaration,
 } from "@keyma/core/ir";
 import type { EmitFile } from "../driver/index.js";
@@ -70,7 +69,7 @@ export type BundleEmitContext = {
     includePrivate: boolean;
 };
 
-/** The deps the bundle shell passes to a domain's services emitter. */
+/** The deps the bundle shell passes to the built-in services emitter (`emit-service.ts`). */
 export type ServiceEmitDeps = {
     /** Include private services and private methods (server/library bundles). */
     includePrivate: boolean;
@@ -100,8 +99,8 @@ export type ClaimedFunctionRendering = {
 
 /**
  * A domain's JS emission contributions. The generic backend keeps the bundle shell (file
- * layout, visibility gating, class / literal emission) and dispatches to the registered pack
- * for the domain-semantic pieces: the `<Class>.schema` metadata object and the services file.
+ * layout, visibility gating, class / literal emission, and the built-in services file) and
+ * dispatches to the registered pack for the domain-semantic `<Class>.schema` metadata object.
  * The schema domain's pack lives in `@keyma/schema/backend-js`; the CLI registers it.
  *
  * NOTE: the metadata produced by `buildSchemaData` uses camelCase keys (`sourceName`,
@@ -120,8 +119,6 @@ export type JsEmitterPack = {
      * for plain schemas, so single-domain bundles stay byte-identical.
      */
     shapeSchemaDts?: (schema: IRClassDeclaration, ctx: SchemaDtsContext) => SchemaDtsShape | undefined;
-    /** Emit the bundle-root services.js/.d.ts; omit when the domain has no services. */
-    emitServices?: (services: readonly IRService[], deps: ServiceEmitDeps) => { js: string; dts: string };
     /**
      * Names of `functionDeclarations` this domain renders itself (with its own wrapper) via
      * `renderClaimedFunctions`, so the generic backend does not emit them as plain functions.

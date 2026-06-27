@@ -14,3 +14,8 @@ export { emitLiteral, mkRaw } from "./emit-literal.js";
 export { factoryIdent } from "./emit-validators.js";
 export { buildApplyDefaults } from "./emit-defaults.js";
 export { relModuleSpecifier } from "./module-path.js";
+
+// Built-in `@Service` emission (compiler-owned, base-language concern) — the bundle shell
+// emits these directly; exported for tests and direct consumers.
+export { emitServicesJs, emitServicesDts, SERVICES_REF } from "./emit-service.js";
+export type { ServiceEmitFiles } from "./emit-service.js";

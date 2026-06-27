@@ -1,4 +1,4 @@
-import type { ValidatorFn } from "@keyma/core/dsl";
+import type { ValidatorFn } from "@keyma/schema/dsl";
 
 /**
  * Cross-field validator: the value must equal the record's `password` field.

@@ -49,7 +49,6 @@ export const uiFrontendDomain: FrontendDomain = {
             schemas: [],
             enums: [],
             functionDeclarations: [],
-            services: [],
         };
         if (views.length > 0) {
             const extension: UiExtension = { views };

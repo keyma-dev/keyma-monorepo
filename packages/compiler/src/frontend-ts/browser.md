@@ -1,8 +1,8 @@
 # Running the Keyma TS frontend (and JS backend) in the browser
 
-`@keyma/compiler-frontend-ts` and `@keyma/compiler-backend-js` are **dependency-free of
+`@keyma/compiler/frontend-ts` and `@keyma/compiler/backend-js` are **dependency-free of
 Node** and run entirely in the browser. They use only path-string math (via
-`@keyma/compiler-util`, not `node:path`) and, for the frontend, an injected in-memory
+`@keyma/core/util`, not `node:path`) and, for the frontend, an injected in-memory
 TypeScript filesystem (`@typescript/vfs`). Nothing reads the real filesystem.
 
 ## Backend — no setup
@@ -19,7 +19,7 @@ pass it as `config.system`:
 ```ts
 import { createSystem, createDefaultMapFromCDN } from "@typescript/vfs";
 import ts from "typescript";
-import { compileVirtual } from "@keyma/compiler-frontend-ts";
+import { compileVirtual } from "@keyma/compiler/frontend-ts";
 
 // 1. TypeScript standard library .d.ts files (lib.es2022.*, lib.decorators*, …).
 //    createDefaultMapFromCDN fetches them; or bundle them yourself as strings.
@@ -52,11 +52,11 @@ const system = createSystem(map);
 const { ir, diagnostics } = compileVirtual(
     {
         "user.ts": `
-            import { Schema, Validate } from "@keyma/dsl";
-            import { minLength } from "@keyma/validators";
-            @Schema() class User {
+            import type { Integer } from "@keyma/dsl";
+            class User {
                 declare id: string;
-                @Validate(minLength(3)) declare name: string;
+                declare name: string;
+                decalre age: Integer<8>;
             }
         `,
     },
@@ -73,16 +73,15 @@ there, feed `ir` to `emitJs` (or any backend) — also in-browser.
   `lib.decorators.legacy.d.ts` in the map. `createDefaultMapFromCDN` includes them; if you
   hand-pick libs, add them explicitly.
 - **`sourceRoot`** in the resulting IR is the virtual base (default `/`), not a disk path.
-- **Don't override `dslModuleName`** in browser mode unless you also remap the validator/
-  formatter libraries — they import the literal `@keyma/dsl`.
+- **Don't override `dslModuleName`** in browser mode — they import the literal `@keyma/core/dsl`.
 
-## Node / SSR / tests — `@keyma/compiler-frontend-ts/node`
+## Node / SSR / tests — `@keyma/compiler/frontend-ts/node`
 
 To build the same virtual `ts.System` from disk (for SSR or tests), use the Node-only helper —
 it reads the TS libs and the `@keyma/*` sources once and returns a no-further-IO system:
 
 ```ts
-import { createKeymaNodeSystem } from "@keyma/compiler-frontend-ts/node";
+import { createKeymaNodeSystem } from "@keyma/compiler/frontend-ts/node";
 const system = createKeymaNodeSystem();
 const { ir } = compileVirtual({ "user.ts": "/* … */" }, { system });
 ```

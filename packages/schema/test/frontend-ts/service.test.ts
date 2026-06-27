@@ -4,6 +4,9 @@ import path from "node:path";
 import { fileURLToPath } from "node:url";
 import { compileVirtual } from "./harness.js";
 import * as CODES from "../../src/frontend-ts/diagnostics.js";
+// Service diagnostic codes (KEYMA093/095/096/097) are compiler-owned — `@Service` is a
+// base-language concern, not a schema concern — so import them from their compiler home.
+import { KEYMA093, KEYMA095, KEYMA096, KEYMA097 } from "@keyma/compiler/frontend-ts";
 import type { IRService } from "@keyma/core/ir";
 
 const __filename = fileURLToPath(import.meta.url);
@@ -68,6 +71,27 @@ describe("services — remote call contracts", () => {
         assert.deepEqual(list.returnType, { kind: "array", of: { kind: "instance", name: "out" } });
     });
 
+    it("discovers @Service whether imported from @keyma/schema/dsl or @keyma/core/dsl", () => {
+        // The base pass matches @Service by its `@keyma/core/dsl` identity, so it is found
+        // through the `@keyma/schema/dsl` re-export AND via the direct core specifier.
+        const viaUmbrella = cv({
+            "svc.ts": `
+                import { Service } from "@keyma/schema/dsl";
+                @Service() export abstract class A { abstract go(): void; }
+            `,
+        });
+        const viaCore = cv({
+            "svc.ts": `
+                import { Service } from "@keyma/core/dsl";
+                @Service() export abstract class A { abstract go(): void; }
+            `,
+        });
+        assert.deepEqual(errorCodes(viaUmbrella), []);
+        assert.deepEqual(errorCodes(viaCore), []);
+        assert.equal(serviceOf(viaUmbrella, "A").name, "A");
+        assert.equal(serviceOf(viaCore, "A").name, "A");
+    });
+
     it("allows async-shaped contracts (no KEYMA082)", () => {
         const result = cv({
             "svc.ts": `
@@ -108,7 +132,7 @@ describe("services — remote call contracts", () => {
                 }
             `,
         });
-        assert.equal(hasError(result, CODES.KEYMA093), true);
+        assert.equal(hasError(result, KEYMA093), true);
     });
 
     it("KEYMA092 — requires explicit parameter/return types", () => {
@@ -128,7 +152,7 @@ describe("services — remote call contracts", () => {
                 @Service() @Schema() export abstract class S { abstract go(): void; }
             `,
         });
-        assert.equal(hasError(result, CODES.KEYMA095), true);
+        assert.equal(hasError(result, KEYMA095), true);
     });
 
     it("KEYMA096 — public service must not expose a private schema", () => {
@@ -139,7 +163,7 @@ describe("services — remote call contracts", () => {
                 @Service() export abstract class S { abstract leak(s: Secret): void; }
             `,
         });
-        assert.equal(hasError(result, CODES.KEYMA096), true);
+        assert.equal(hasError(result, KEYMA096), true);
     });
 
     it("KEYMA097 — rejects a service name colliding with a schema name", () => {
@@ -150,7 +174,7 @@ describe("services — remote call contracts", () => {
                 @Service({ name: "Billing" }) export abstract class BillingService { abstract go(): void; }
             `,
         });
-        assert.equal(hasError(result, CODES.KEYMA097), true);
+        assert.equal(hasError(result, KEYMA097), true);
     });
 
     it("emits no services key when there are none", () => {

@@ -7,6 +7,7 @@ import { emitTypesJs, emitTypesDts } from "./emit-types.js";
 import { identitySanitizer } from "./module-path.js";
 import { resolveJsTarget, type JsTargetConfig } from "./types.js";
 import { EmitterRegistry, type JsEmitterPack, type ServiceEmitDeps } from "./emitter-registry.js";
+import { emitServicesJs, emitServicesDts } from "./emit-service.js";
 
 /**
  * Build a JS backend from the given domain emitter packs. The generic bundle shell here is
@@ -177,18 +178,19 @@ function emitBundle(
         }
     }
 
-    // Remotely-callable services (gated by visibility like schemas).
+    // Remotely-callable services (gated by visibility like schemas). `@Service` is a
+    // base-language concern the compiler owns end-to-end, so the bundle shell emits services
+    // directly from `ir.services` — no domain pack participates.
     const services = ir.services ?? [];
     const visibleServices = opts.includePrivate ? services : services.filter((s) => s.visibility === "public");
-    if (visibleServices.length > 0 && pack?.emitServices !== undefined) {
+    if (visibleServices.length > 0) {
         const serviceDeps: ServiceEmitDeps = {
             includePrivate: opts.includePrivate,
             schemaModule: shared.schemaModule,
             embeddedTypeNames: shared.embeddedTypeNames,
         };
-        const svc = pack.emitServices(services, serviceDeps);
-        files.push({ path: path.posix.join(bundleDir, "services.js"), content: svc.js });
-        files.push({ path: path.posix.join(bundleDir, "services.d.ts"), content: svc.dts });
+        files.push({ path: path.posix.join(bundleDir, "services.js"), content: emitServicesJs(services, serviceDeps) });
+        files.push({ path: path.posix.join(bundleDir, "services.d.ts"), content: emitServicesDts(services, serviceDeps) });
     }
 
     const serviceNames = visibleServices.map((s) => s.sourceName);

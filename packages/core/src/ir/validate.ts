@@ -76,14 +76,78 @@ export function checkEnvelopeTail(doc: Record<string, unknown>): IRValidationErr
 }
 
 /**
- * The default IR validator registry — domain-neutral envelope checks only (head + tail).
- * The schema-domain section checks (schemas/services/enums/declarations) live in
- * `@keyma/schema/ir` and are appended here by the CLI. For a valid IR document every
- * check produces zero errors, so registration order has no observable effect on output.
+ * The default IR validator registry — domain-neutral envelope checks plus the base-language
+ * `services` section. `@Service`/RPC is a base-language concern the compiler owns end-to-end,
+ * so its IR-section checks live in core and are built in here (not contributed by a domain).
+ * The schema-domain section checks (classes/enums/declarations) live in `@keyma/schema/ir` and
+ * are appended here by the CLI. For a valid IR document every check produces zero errors, so
+ * registration order has no observable effect on output.
  */
 export const defaultIRValidators = new IRValidatorRegistry();
 defaultIRValidators.register(checkEnvelopeHead);
+defaultIRValidators.register(checkServices);
 defaultIRValidators.register(checkEnvelopeTail);
+
+/** Core IR section — the `services` array (base-language `@Service`/RPC contracts). */
+export function checkServices(doc: Record<string, unknown>): IRValidationError[] {
+    if (!("services" in doc) || doc["services"] === undefined) return [];
+    if (!isArr(doc["services"])) return [e("services", "must be an array when present")];
+    const errors: IRValidationError[] = [];
+    doc["services"].forEach((s, i) => errors.push(...checkService(s, `services[${i}]`)));
+    return errors;
+}
+
+/** Shared check for a `{ name, type, optional? }` typed parameter (service methods, functions). */
+export function checkParam(p: unknown, path: string): IRValidationError[] {
+    if (!isObj(p)) return [e(path, "must be an object")];
+    const errors: IRValidationError[] = [];
+    if (!isStr(p["name"]) || p["name"] === "") errors.push(e(`${path}.name`, "must be a non-empty string"));
+    errors.push(...checkType(p["type"], `${path}.type`));
+    if ("optional" in p && p["optional"] !== undefined && !isBool(p["optional"])) {
+        errors.push(e(`${path}.optional`, "must be a boolean when present"));
+    }
+    return errors;
+}
+
+function checkService(svc: unknown, path: string): IRValidationError[] {
+    if (!isObj(svc)) return [e(path, "must be an object")];
+    const errors: IRValidationError[] = [];
+    if (!isStr(svc["id"]) || svc["id"] === "") errors.push(e(`${path}.id`, "must be a non-empty string"));
+    if (!isStr(svc["name"]) || svc["name"] === "") errors.push(e(`${path}.name`, "must be a non-empty string"));
+    if (!isStr(svc["sourceName"]) || svc["sourceName"] === "") errors.push(e(`${path}.sourceName`, "must be a non-empty string"));
+    if (svc["visibility"] !== "public" && svc["visibility"] !== "private") {
+        errors.push(e(`${path}.visibility`, 'must be "public" or "private"'));
+    }
+    if ("description" in svc && svc["description"] !== undefined && !isStr(svc["description"])) {
+        errors.push(e(`${path}.description`, "must be a string when present"));
+    }
+    if (!isArr(svc["methods"])) {
+        errors.push(e(`${path}.methods`, "must be an array"));
+    } else {
+        svc["methods"].forEach((m, i) => errors.push(...checkServiceMethod(m, `${path}.methods[${i}]`)));
+    }
+    errors.push(...checkSourceLocation(svc["source"], `${path}.source`));
+    return errors;
+}
+
+function checkServiceMethod(m: unknown, path: string): IRValidationError[] {
+    if (!isObj(m)) return [e(path, "must be an object")];
+    const errors: IRValidationError[] = [];
+    if (!isStr(m["name"]) || m["name"] === "") errors.push(e(`${path}.name`, "must be a non-empty string"));
+    if (!isArr(m["params"])) {
+        errors.push(e(`${path}.params`, "must be an array"));
+    } else {
+        m["params"].forEach((p, i) => errors.push(...checkParam(p, `${path}.params[${i}]`)));
+    }
+    if ("returnType" in m && m["returnType"] !== undefined) {
+        errors.push(...checkType(m["returnType"], `${path}.returnType`));
+    }
+    if (m["visibility"] !== "public" && m["visibility"] !== "private") {
+        errors.push(e(`${path}.visibility`, 'must be "public" or "private"'));
+    }
+    errors.push(...checkSourceLocation(m["source"], `${path}.source`));
+    return errors;
+}
 
 const SCALAR_TYPE_KINDS = new Set([
     "string", "number", "integer", "bigint", "decimal", "boolean",

@@ -27,20 +27,17 @@ export type ResolvedFactory = { name: string; factoryParams: readonly ts.Paramet
 
 export type CollectorDeps = {
     checker: ts.TypeChecker;
-    /** Module specifier the authoring decorators are imported from (e.g. "@keyma/schema/dsl"). */
+    /** Module specifier the authoring decorators AND the validator/formatter contract types
+     *  (`ValidatorFn`/`FormatterFn`) are imported from (e.g. "@keyma/schema/dsl"). They share
+     *  one surface, so a factory is recognized when its return type resolves to a marker
+     *  imported from this module. */
     dslModuleName: string;
     /** DSL marker type names whose presence on a factory's return annotation identifies it as a
      *  validator/formatter factory (the schema domain uses `ValidatorFn`/`FormatterFn`). */
     markerNames?: { validator: string; formatter: string };
-    /** Module specifier the marker contract types (`ValidatorFn`/`FormatterFn`) are canonically
-     *  declared in. They live in `@keyma/core/dsl` but may reach a use site via a re-export
-     *  (e.g. `@keyma/schema/dsl`), so a factory is accepted when its return type comes from
-     *  EITHER this module or {@link dslModuleName}. Defaults to "@keyma/core/dsl". */
-    markerModuleName?: string;
 };
 
 const DEFAULT_MARKERS = { validator: "ValidatorFn", formatter: "FormatterFn" };
-const DEFAULT_MARKER_MODULE = "@keyma/core/dsl";
 
 /**
  * Use-driven collector of validator/formatter factories. Instead of scanning every
@@ -63,7 +60,7 @@ export type ValidatorFormatterCollector = {
 };
 
 export function createValidatorFormatterCollector(deps: CollectorDeps): ValidatorFormatterCollector {
-    const { checker, dslModuleName, markerNames = DEFAULT_MARKERS, markerModuleName = DEFAULT_MARKER_MODULE } = deps;
+    const { checker, dslModuleName, markerNames = DEFAULT_MARKERS } = deps;
     const seenValidators = new Set<ts.Symbol>();
     const seenFormatters = new Set<ts.Symbol>();
     const validators: CollectedFactory[] = [];
@@ -103,15 +100,15 @@ export function createValidatorFormatterCollector(deps: CollectorDeps): Validato
         return { name, factoryParams: found.node.parameters };
     }
 
-    /** Whether a type node is a reference to the DSL's `ValidatorFn`/`FormatterFn`. The
-     *  contract types live in `@keyma/core/dsl` but may reach the factory via a re-export
-     *  (e.g. `@keyma/schema/dsl`), so either origin module is accepted. */
+    /** Whether a type node is a reference to the DSL's `ValidatorFn`/`FormatterFn` — the
+     *  validator/formatter contract types, which live in the schema DSL surface
+     *  (`dslModuleName`, e.g. `@keyma/schema/dsl`) alongside the @Validate/@Format decorators. */
     function isDslTypeRef(node: ts.TypeNode | undefined, marker: string): boolean {
         if (node === undefined || !ts.isTypeReferenceNode(node)) return false;
         const sym = checker.getSymbolAtLocation(node.typeName);
         if (sym === undefined) return false;
         if (resolveAlias(sym, checker).getName() !== marker) return false;
-        return isFromModule(sym, checker, dslModuleName) || isFromModule(sym, checker, markerModuleName);
+        return isFromModule(sym, checker, dslModuleName);
     }
 
     return {
@@ -124,21 +121,21 @@ export function createValidatorFormatterCollector(deps: CollectorDeps): Validato
 
 /**
  * Whether a function's declared return type marks it as a validator/formatter factory (its
- * return type is the DSL's `ValidatorFn`/`FormatterFn`, possibly via re-export). Used by the
- * full-local-surface seeding to exclude factories from the plain utility-function set — they are
- * lowered separately, only where referenced, via the use-driven collector above.
+ * return type is the DSL's `ValidatorFn`/`FormatterFn`). Used by the full-local-surface seeding
+ * to exclude factories from the plain utility-function set — they are lowered separately, only
+ * where referenced, via the use-driven collector above.
  */
 export function isFactoryReturnType(
     returnTypeNode: ts.TypeNode | undefined,
     deps: CollectorDeps,
 ): boolean {
-    const { checker, dslModuleName, markerNames = DEFAULT_MARKERS, markerModuleName = DEFAULT_MARKER_MODULE } = deps;
+    const { checker, dslModuleName, markerNames = DEFAULT_MARKERS } = deps;
     if (returnTypeNode === undefined || !ts.isTypeReferenceNode(returnTypeNode)) return false;
     const sym = checker.getSymbolAtLocation(returnTypeNode.typeName);
     if (sym === undefined) return false;
     const name = resolveAlias(sym, checker).getName();
     if (name !== markerNames.validator && name !== markerNames.formatter) return false;
-    return isFromModule(sym, checker, dslModuleName) || isFromModule(sym, checker, markerModuleName);
+    return isFromModule(sym, checker, dslModuleName);
 }
 
 /** Find the factory declaration (function/arrow with a body) among a symbol's declarations. */

@@ -1,9 +1,11 @@
 import type { IRService, IRType } from "@keyma/core/ir";
 import { filterVisible } from "@keyma/core/util";
-import { irTypeToCpp, includePath, SERVICES_REF, type ServiceEmitDeps } from "@keyma/compiler/backend-cpp";
+import { irTypeToCpp } from "./ir-type-to-cpp.js";
+import { includePath } from "./module-path.js";
+import type { ServiceEmitDeps } from "./emitter-registry.js";
 
-export { SERVICES_REF };
-export type { ServiceEmitDeps };
+// `@Service`/RPC is a base-language concern the compiler owns end-to-end: the bundle shell
+// calls this emitter directly on `ir.services`. No domain pack participates.
 
 /**
  * Emit `services.hpp`: one abstract class per service with a pure virtual function per
@@ -78,4 +80,3 @@ function addTypeIncludes(type: IRType, deps: ServiceEmitDeps, out: Set<string>):
         if (ref !== undefined) out.add(includePath(ref));
     }
 }
-

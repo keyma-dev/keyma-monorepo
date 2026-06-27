@@ -84,12 +84,9 @@ export const KEYMA072 = "KEYMA072"; // Embedded<T> types form a cycle (inline da
 export const KEYMA090 = "KEYMA090"; // Default initializer value incompatible with the field type
 export const KEYMA091 = "KEYMA091"; // OBSOLETE — defaults are now property initializers; non-literal forms self-report via KEYMA082/085/086/087
 
-// Service (remote function call) errors
-export const KEYMA093 = "KEYMA093"; // Service method must be abstract (a signature with no body)
-export const KEYMA094 = "KEYMA094"; // Duplicate method name within a service
-export const KEYMA095 = "KEYMA095"; // @Service combined with @Schema/@Edge on the same class
-export const KEYMA096 = "KEYMA096"; // Public service method exposes a private schema via a parameter/return type
-export const KEYMA097 = "KEYMA097"; // Duplicate service name, or service name collides with a schema name
+// Service (remote function call) errors KEYMA093–097 are owned by `@keyma/compiler`
+// (`@Service` is a base-language concern, not a schema concern) — import them from
+// `@keyma/compiler/frontend-ts` where needed; they are intentionally NOT re-exported here.
 
 // Deferred-feature warnings
 export const KEYMA098 = "KEYMA098"; // @Computed/@Indexed (etc.) on a getter is ignored — computed-field support is deferred; the getter is emitted as a plain accessor

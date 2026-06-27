@@ -5,7 +5,10 @@
     "outDir": "./dist",
     "esModuleInterop": true,
     "allowSyntheticDefaultImports": true,
-    "experimentalDecorators": true
+    "experimentalDecorators": true,
+    "paths": {
+      "@keyma/schema/dsl": ["./src/dsl/index.ts"]
+    }
   },
   "include": [
     "src/**/*.ts",

@@ -1,9 +1,11 @@
 import type { IRService, IRType } from "@keyma/core/ir";
 import { filterVisible } from "@keyma/core/util";
-import { irTypeToCpp, includePath, SERVICE_CLIENT_REF, type ServiceClientEmitDeps } from "@keyma/compiler/backend-cpp";
+import { irTypeToCpp } from "./ir-type-to-cpp.js";
+import { includePath } from "./module-path.js";
+import type { ServiceClientEmitDeps } from "./emitter-registry.js";
 
-export { SERVICE_CLIENT_REF };
-export type { ServiceClientEmitDeps };
+// `@Service`/RPC is a base-language concern the compiler owns end-to-end: the bundle shell
+// calls this emitter directly on `ir.services`. No domain pack participates.
 
 /**
  * Emit `service-client.hpp`: one struct per service in `<nsRoot>::client`, with a static
@@ -138,4 +140,3 @@ function addTypeIncludes(type: IRType, deps: ServiceClientEmitDeps, out: Set<str
         if (ref !== undefined) out.add(includePath(ref));
     }
 }
-

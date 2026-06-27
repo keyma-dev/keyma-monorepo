@@ -24,3 +24,8 @@ export type { ReturnLowerer } from "./emit-validators.js";
 export { includePath, cppSanitizer } from "./module-path.js";
 export { exprToCpp } from "./emit-expression.js";
 export { emitSupportHpp } from "./emit-support.js";
+
+// Built-in `@Service` emission (compiler-owned, base-language concern) — the bundle shell
+// emits these directly; exported for tests and direct consumers.
+export { emitServicesCpp } from "./emit-service.js";
+export { emitServiceClientCpp } from "./emit-service-client.js";

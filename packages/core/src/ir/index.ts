@@ -39,6 +39,8 @@ export type { IRValidationResult, IRValidationError, IRDocumentValidator } from 
 export {
     checkEnvelopeHead,
     checkEnvelopeTail,
+    checkServices,
+    checkParam,
     checkType,
     checkExpression,
     checkStatement,

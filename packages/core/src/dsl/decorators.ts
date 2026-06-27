@@ -1,16 +1,8 @@
-import type { ValidatorFn, FormatterFn } from "./types.js";
-
-/**
- * Attaches validators to a field. Each argument is a {@link ValidatorFn} produced
- * by calling a validator factory, e.g. `@Validate(minLength(2), isEmail())`. The
- * compiler resolves each factory to its declaration, lowers its body to IR, and
- * re-emits the implementation directly into the generated schema.
- *
- * No-op at runtime — the decorator implementation does nothing.
- */
-export function Validate(..._validators: ValidatorFn<any>[]): PropertyDecorator {
-    return () => undefined;
-}
+// Domain-neutral DSL decorators. The schema-domain field decorators @Validate/@Format
+// (and the validator/formatter contract types they consume) live in `@keyma/schema/dsl`.
+//
+// No-op at runtime — every decorator implementation does nothing. Decorators are
+// compile-time annotations only; the Keyma compiler reads them via the TS API.
 
 export type FormFieldOptions = {
     /** Human-readable label for the field in generated forms. */
@@ -43,39 +35,6 @@ export function FormField(_options?: FormFieldOptions): PropertyDecorator {
  * No-op at runtime — the decorator implementation does nothing.
  */
 export function Deprecated(_reason?: string): PropertyDecorator {
-    return () => undefined;
-}
-
-/**
- * Named lifecycle phases for `@Format`. Use these constants for autocomplete and
- * typo safety — `@Format(Phase.Save, ...)` is identical to `@Format("save", ...)`.
- *
- * - `Change` — on every keystroke (e.g. trim, lowercase)
- * - `Blur`   — when the field loses focus (e.g. normalize)
- * - `Submit` — before form submission validation
- * - `Save`   — before persisting to the database
- */
-export const Phase = {
-    Change: "change",
-    Blur: "blur",
-    Submit: "submit",
-    Save: "save",
-} as const;
-
-/** A `@Format` lifecycle phase — a value of {@link Phase} (or the bare string literal). */
-export type FormatPhase = (typeof Phase)[keyof typeof Phase];
-
-/**
- * Attaches formatters to a field for a specific input lifecycle phase.
- * A field may carry multiple @Format decorators for different phases. Pass a
- * {@link Phase} constant or the equivalent string literal.
- *
- * No-op at runtime — the decorator implementation does nothing.
- */
-export function Format(
-    _phase: FormatPhase,
-    ..._formatters: FormatterFn<any>[]
-): PropertyDecorator {
     return () => undefined;
 }
 

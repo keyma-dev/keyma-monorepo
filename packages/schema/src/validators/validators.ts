@@ -1,4 +1,4 @@
-import type { ValidatorFn, Json } from "@keyma/core/dsl";
+import type { ValidatorFn, Json } from "@keyma/schema/dsl";
 
 // Built-in validators. Each is a plain factory function returning a `ValidatorFn`
 // — `(value, field) => ValidationError | null`. The Keyma compiler resolves each

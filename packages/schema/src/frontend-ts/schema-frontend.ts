@@ -1,6 +1,6 @@
 import ts from "typescript";
 import { unwrapArray, inheritedFields } from "@keyma/core/util";
-import type { IRClassDeclaration, IRService, IRType, IRDiagnostic, IREnumDeclaration } from "@keyma/core/ir";
+import type { IRClassDeclaration, IRType, IRDiagnostic, IREnumDeclaration } from "@keyma/core/ir";
 import { schemaEdge, schemaEphemeral, schemaIndexes, fieldIndexes } from "../ir/extensions.js";
 import { assignTags, stripTagHints } from "./assign-tags.js";
 import { discoverSchemas } from "./discover.js";
@@ -9,8 +9,6 @@ import { createFunctionCollector } from "@keyma/compiler/frontend-ts";
 import { createValidatorFormatterCollector, isFactoryReturnType } from "./discover-validators.js";
 import { lowerValidatorFactory, lowerFormatterFactory, type LowerDeps } from "./lower-validator.js";
 import { extractSchema } from "./extract-schema.js";
-import { discoverServices } from "./discover-services.js";
-import { extractService } from "./extract-service.js";
 import { checkInheritance } from "./check-inheritance.js";
 import {
     mkError,
@@ -24,8 +22,6 @@ import {
     KEYMA064,
     KEYMA070,
     KEYMA072,
-    KEYMA096,
-    KEYMA097,
 } from "./diagnostics.js";
 import type { FrontendDomain, FrontendDomainContext, FrontendContribution } from "@keyma/compiler/frontend-ts";
 
@@ -33,13 +29,15 @@ import type { FrontendDomain, FrontendDomainContext, FrontendContribution } from
 const SCHEMA_MARKERS = { validator: "ValidatorFn", formatter: "FormatterFn" };
 
 /**
- * The **schema** frontend domain: the full @Schema/@Edge/@Service authoring pipeline
+ * The **schema** frontend domain: the full @Schema/@Edge authoring pipeline
  * — discover → extract own members → validate inheritance → post-checks → lower
- * validators/formatters/functions → extract services → normalize names → assign binary tags.
+ * validators/formatters/functions → normalize names → assign binary tags.
  * This is the entire schema-domain frontend; the generic orchestrator (`compileProgram` in
  * `@keyma/compiler/frontend-ts`) just runs `produce` and folds the contribution into the IR
- * envelope. The CLI registers this domain (via `config.domains`); the compiler references no
- * schema symbol, and a UI domain plugs in alongside it additively.
+ * envelope. (`@Service` is no longer a schema concern — the compiler discovers and extracts
+ * services in a built-in base pass after every domain finalizes its classes.) The CLI registers
+ * this domain (via `config.domains`); the compiler references no schema symbol, and a UI domain
+ * plugs in alongside it additively.
  */
 export const schemaFrontendDomain: FrontendDomain = {
     name: "schema",
@@ -56,9 +54,6 @@ export const schemaFrontendDomain: FrontendDomain = {
 
         // Pass 1b: discover TS enum declarations referenced by schema fields
         const enums = discoverEnums(program);
-
-        // Pass 1c: discover @Service classes (remote-call contracts)
-        const discoveredServices = discoverServices(program, discoverCtx);
 
         const schemaClassNames = new Set(discovered.map((d) => d.className));
 
@@ -146,27 +141,14 @@ export const schemaFrontendDomain: FrontendDomain = {
         );
         const functionDeclarations = [...validatorFns, ...formatterFns, ...functionCollector.drain()];
 
-        // Pass 7: extract @Service contracts (signatures only — no bodies). Runs after
-        // schemas so param/return types can resolve schema class names.
-        const services = discoveredServices.map((d) =>
-            extractService(d, {
-                checker,
-                dslModuleName,
-                schemaClassNames,
-                ...(enums !== undefined && { enums }),
-                diagnostics,
-            }),
-        );
-        checkServiceVisibilityLeaks(schemas, services, diagnostics);
-        checkServiceNameCollisions(schemas, services, diagnostics);
-
-        // Final pass: apply the configured prefix to every schema/service `name` and
-        // rewrite all cross-references (reference/embedded/edge targets, service
-        // param/return schemas) from the authored class name (`sourceName`) to the
-        // target's final `name`. After this, `name` is the single identity used by
-        // every backend, the runtime, and DB adapters. Runs last so the post-checks
-        // above (which resolve by `sourceName`) see the un-rewritten IR.
-        normalizeSchemaNames(schemas, services, ctx.schemaPrefix);
+        // Final pass: apply the configured prefix to every schema `name` and rewrite all
+        // cross-references (reference/embedded/edge targets) from the authored class name
+        // (`sourceName`) to the target's final `name`. After this, `name` is the single
+        // identity used by every backend, the runtime, and DB adapters. Runs last so the
+        // post-checks above (which resolve by `sourceName`) see the un-rewritten IR.
+        // (Services are normalized separately by the compiler's base service pass, which
+        // resolves against these now-finalized schema names.)
+        normalizeSchemaNames(schemas, ctx.schemaPrefix);
 
         // Binary tag assignment — runs after flatten + normalize so it sees each schema's
         // final, prefixed, self-contained field list. Gated behind binary being enabled so
@@ -187,7 +169,6 @@ export const schemaFrontendDomain: FrontendDomain = {
             schemas,
             enums: localEnums,
             functionDeclarations,
-            services,
             ...(tagManifest !== undefined ? { tagManifest } : {}),
         };
     },
@@ -202,7 +183,6 @@ export const schemaFrontendDomain: FrontendDomain = {
  */
 function normalizeSchemaNames(
     schemas: IRClassDeclaration[],
-    services: IRService[],
     prefix: string,
 ): void {
     // Authored class name (sourceName) -> final identity (prefixed name).
@@ -214,10 +194,6 @@ function normalizeSchemaNames(
             rewrite(type.of);
         } else if (type.kind === "reference" || type.kind === "embedded") {
             type.schema = finalName.get(type.schema) ?? type.schema;
-        } else if (type.kind === "instance") {
-            // `instance` appears in service/behaviour param/return positions; its
-            // target carries the same canonical identity as reference/embedded.
-            type.name = finalName.get(type.name) ?? type.name;
         }
     };
 
@@ -231,89 +207,6 @@ function normalizeSchemaNames(
         s.name = prefix + s.name;
         // The traversal label is this edge schema's own (now prefixed) name.
         if (edge !== undefined) edge.label = s.name;
-    }
-
-    for (const svc of services) {
-        for (const m of svc.methods) {
-            for (const p of m.params) rewrite(p.type);
-            if (m.returnType !== undefined) rewrite(m.returnType);
-        }
-        svc.name = prefix + svc.name;
-        svc.id = `service:${svc.name}`;
-    }
-}
-
-/** A public service method must not expose a private schema via a param/return type. */
-function checkServiceVisibilityLeaks(
-    schemas: IRClassDeclaration[],
-    services: IRService[],
-    diagnostics: IRDiagnostic[],
-): void {
-    const privateSchemas = new Set(
-        schemas.filter((s) => s.visibility === "private").map((s) => s.sourceName),
-    );
-    const leakedSchema = (t: IRType): string | undefined => {
-        const inner = t.kind === "array" ? t.of : t;
-        if ((inner.kind === "reference" || inner.kind === "embedded") && privateSchemas.has(inner.schema)) {
-            return inner.schema;
-        }
-        if (inner.kind === "instance" && privateSchemas.has(inner.name)) {
-            return inner.name;
-        }
-        return undefined;
-    };
-
-    for (const service of services) {
-        if (service.visibility !== "public") continue;
-        for (const method of service.methods) {
-            if (method.visibility !== "public") continue;
-            const types: IRType[] = [...method.params.map((p) => p.type)];
-            if (method.returnType !== undefined) types.push(method.returnType);
-            for (const t of types) {
-                const leaked = leakedSchema(t);
-                if (leaked !== undefined) {
-                    diagnostics.push(
-                        mkError(
-                            KEYMA096,
-                            `Public service "${service.sourceName}" method "${method.name}" exposes private schema "${leaked}"`,
-                            method.source,
-                        ),
-                    );
-                }
-            }
-        }
-    }
-}
-
-/** Service names must be unique and must not collide with a schema name. */
-function checkServiceNameCollisions(
-    schemas: IRClassDeclaration[],
-    services: IRService[],
-    diagnostics: IRDiagnostic[],
-): void {
-    const schemaNames = new Set(schemas.map((s) => s.name));
-    const seen = new Set<string>();
-    for (const service of services) {
-        if (schemaNames.has(service.name)) {
-            diagnostics.push(
-                mkError(
-                    KEYMA097,
-                    `Service name "${service.name}" collides with a schema of the same name`,
-                    service.source,
-                ),
-            );
-        }
-        if (seen.has(service.name)) {
-            diagnostics.push(
-                mkError(
-                    KEYMA097,
-                    `Duplicate service name "${service.name}"`,
-                    service.source,
-                ),
-            );
-        } else {
-            seen.add(service.name);
-        }
     }
 }
 

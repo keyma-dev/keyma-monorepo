@@ -25,6 +25,16 @@ export const KEYMA087 = "KEYMA087"; // Unsupported `instanceof` right-hand const
 // Method / setter behavior errors
 export const KEYMA092 = "KEYMA092"; // Method/setter parameter or return type must be explicitly annotated (portable subset)
 
+// Service (@Service / remote function call) errors. `@Service` is a base-language concern the
+// compiler owns end-to-end (discovery → extraction → checks live in the service base pass), so
+// its codes live here. Numbers are historically allocated in the 09x band and are NEVER
+// renumbered (see CLAUDE.md) — only their ownership moved here from the schema domain.
+export const KEYMA093 = "KEYMA093"; // Service method must be abstract (a signature with no body)
+export const KEYMA094 = "KEYMA094"; // Duplicate method name within a service
+export const KEYMA095 = "KEYMA095"; // @Service class is also a data model (same class is a @Schema/@Edge)
+export const KEYMA096 = "KEYMA096"; // Public service method exposes a private schema via a parameter/return type
+export const KEYMA097 = "KEYMA097"; // Duplicate service name, or service name collides with a schema name
+
 // Control-flow lowering — loops (011), constructor (008) and destructor (009). These live in
 // the compiler-owned reserved band KEYMA0200–0299 (see the band note above), kept distinct
 // from the schema domain's KEYMA0800+ band.
