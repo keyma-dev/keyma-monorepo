@@ -84,7 +84,7 @@ def test_encodes_to_committed_hex(fixture):
 
 def test_round_trip_scalars():
     fixtures = {f["name"]: f for f in _load_fixtures()}
-    f = fixtures["scalars-server"]
+    f = fixtures["scalars"]
     meta = _revive_meta(f["schema"], f.get("schemas"))
     record = _from_wire(f["record"])
     decoded = decode_binary(meta, encode_binary(meta, record))
