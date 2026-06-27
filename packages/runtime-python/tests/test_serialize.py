@@ -1,84 +1,75 @@
-"""Port of @keyma/runtime-js test/serialize.test.ts (describe "serialize")."""
+"""JSON serialization — target-free + visibility-blind (the RPC rewrite dropped SerializeTarget).
+
+Covers ``dateTime``→epoch-ms, ``bytes``→base64, embedded recursion via ``refs``, reference→id,
+and arrays. Drives generated-style metadata (``Class.metadata``, ``target``-keyed embedded)."""
 
 from __future__ import annotations
 
+import base64
 from datetime import datetime, timezone
-from typing import Any, Dict
 
-from keyma.runtime import serialize
+from keyma.runtime import serialize, serialize_value
 
-
-SCHEMA: Dict[str, Any] = {
-    "name": "user",
-    "sourceName": "User",
-    "fields": [
-        {"name": "id", "type": {"kind": "id"}, "readonly": True},
-        {"name": "email", "type": {"kind": "string"}},
-        {"name": "secret", "type": {"kind": "string"}, "visibility": "private", "required": False},
-        {"name": "scratch", "type": {"kind": "string"}, "required": False, "ephemeral": True},
-    ],
-}
+from _generated import Address, User
 
 
-def test_client_target_strips_private_fields():
+def test_serialize_converts_datetime_to_epoch_ms():
     out = serialize(
-        SCHEMA,
-        {"id": "u1", "email": "a@b.com", "secret": "x", "scratch": "tmp"},
-        target="client",
+        User.metadata,
+        {"id": "u1", "name": "Ada", "age": 36, "createdAt": datetime(2024, 1, 2, 3, 4, 5, tzinfo=timezone.utc)},
     )
-    assert out == {"id": "u1", "email": "a@b.com", "scratch": "tmp"}
+    assert out["createdAt"] == 1704164645000
+    assert out["id"] == "u1"
+    assert out["name"] == "Ada"
 
 
-def test_server_target_keeps_all_fields():
+def test_serialize_recurses_embedded_via_refs():
     out = serialize(
-        SCHEMA,
-        {"id": "u1", "email": "a@b.com", "secret": "x", "scratch": "tmp"},
-        target="server",
+        User.metadata,
+        {"id": "u1", "name": "Ada", "age": 1, "address": {"line1": "1 St", "city": "Town"}},
     )
-    assert out == {"id": "u1", "email": "a@b.com", "secret": "x", "scratch": "tmp"}
+    assert out["address"] == {"line1": "1 St", "city": "Town"}
 
 
-def test_database_target_strips_ephemeral_fields():
-    out = serialize(
-        SCHEMA,
-        {"id": "u1", "email": "a@b.com", "secret": "x", "scratch": "tmp"},
-        target="database",
-    )
-    assert out == {"id": "u1", "email": "a@b.com", "secret": "x"}
+def test_serialize_reads_object_instances_and_omits_getters():
+    user = User.from_value({"id": "u1", "name": "Ada", "age": 7})
+    # A non-field attribute set on the instance is never serialized (codec walks fields only).
+    user.transient = "ignore-me"
+    out = serialize(User.metadata, user)
+    assert "transient" not in out
+    assert out["name"] == "Ada"
 
 
-def test_omits_keys_not_present_in_the_value():
-    out = serialize(SCHEMA, {"id": "u1"}, target="client")
-    assert out == {"id": "u1"}
-
-
-def test_encodes_datetime_as_epoch_ms_and_bytes_as_base64():
-    schema: Dict[str, Any] = {
-        "name": "wire",
-        "sourceName": "Wire",
+def test_serialize_is_visibility_blind():
+    # A private field is still serialized — private-field exclusion is the compile-time bundle
+    # split, not a codec concern.
+    meta = {
+        "name": "secretful",
+        "sourceName": "Secretful",
         "fields": [
-            {"name": "when", "type": {"kind": "dateTime"}},
-            {"name": "blob", "type": {"kind": "bytes"}},
+            {"name": "id", "type": {"kind": "id"}},
+            {"name": "secret", "type": {"kind": "string"}, "visibility": "private"},
         ],
     }
-    out = serialize(
-        schema,
-        {
-            "when": datetime(2024, 1, 2, 3, 4, 5, tzinfo=timezone.utc),
-            "blob": bytes([0, 1, 2, 253, 254, 255]),
-        },
-        target="server",
+    out = serialize(meta, {"id": "x", "secret": "shh"})
+    assert out == {"id": "x", "secret": "shh"}
+
+
+def test_serialize_value_bytes_to_base64():
+    raw = bytes([0, 1, 2, 250])
+    assert serialize_value(raw, {"kind": "bytes"}, None) == base64.b64encode(raw).decode("ascii")
+
+
+def test_serialize_value_array_of_embedded():
+    out = serialize_value(
+        [{"line1": "a", "city": "b"}, {"line1": "c", "city": "d"}],
+        {"kind": "array", "of": {"kind": "embedded", "target": "address"}},
+        {"address": Address},
     )
-    assert out["when"] == 1704164645000
-    assert isinstance(out["when"], int)
-    assert out["blob"] == "AAEC/f7/"
+    assert out == [{"line1": "a", "city": "b"}, {"line1": "c", "city": "d"}]
 
 
-def test_serializes_naive_datetime_as_utc_epoch_ms():
-    schema: Dict[str, Any] = {
-        "name": "wire",
-        "sourceName": "Wire",
-        "fields": [{"name": "when", "type": {"kind": "dateTime"}}],
-    }
-    out = serialize(schema, {"when": datetime(2024, 1, 2, 3, 4, 5)}, target="server")
-    assert out["when"] == 1704164645000  # naive assumed UTC, not local
+def test_serialize_value_reference_to_bare_id():
+    # A reference value reduces to its target's bare id, from an object, a dict, or a scalar.
+    assert serialize_value({"id": "u9"}, {"kind": "reference", "target": "user"}, None) == "u9"
+    assert serialize_value("u9", {"kind": "reference", "target": "user"}, None) == "u9"

@@ -287,15 +287,19 @@ function arrayQuantifierToPython(recv: string, pred: IRExpression | undefined, q
 /**
  * Extra import lines a generated module needs for the math/coercion intrinsics it
  * references. Scans the already-emitted module body (string match on the emitted call
- * shapes): `import math` covers floor/ceil/sqrt/pow; the keyma.runtime shims cover the
+ * shapes): `import math` covers floor/ceil/sqrt/pow; the coercion shims cover the
  * JS-semantics round/trunc/sign and the String()/Number() coercion. Empty when none used.
+ *
+ * `helperSpec` is the `from … import` prefix the shims are pulled from. The bundle shell passes
+ * the bundle-local baked runtime module (so generated code imports no `keyma-runtime` package);
+ * it defaults to the authored package for any caller that has no bundle context.
  */
-export function intrinsicImports(code: string): string[] {
+export function intrinsicImports(code: string, helperSpec = "from keyma.runtime import"): string[] {
     const out: string[] = [];
     if (/\bmath\.(floor|ceil|sqrt|pow)\(/.test(code)) out.push("import math");
     const helpers = ["to_string", "to_number", "math_round", "math_trunc", "math_sign"]
         .filter((h) => new RegExp(`\\b${h}\\(`).test(code));
-    if (helpers.length > 0) out.push(`from keyma.runtime import ${helpers.join(", ")}`);
+    if (helpers.length > 0) out.push(`${helperSpec} ${helpers.join(", ")}`);
     return out;
 }
 

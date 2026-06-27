@@ -1,23 +1,27 @@
-"""Binary wire codec — port of ``@keyma/runtime-js`` ``binary.ts`` (see
-``packages/runtime-js/binary-format.md`` for the canonical spec).
+"""Binary wire codec — port of ``@keyma/runtime`` ``binary.ts``.
 
-An alternative encoder of the same per-field data as :func:`serialize`, parallel to JSON:
-:func:`encode_binary` mirrors ``serialize``'s per-field traversal (same type switch, same
-``dateTime``→epoch-ms / ``embedded``→recurse-via-``refs`` / ``array``→element-map /
-``reference``→bare-id conversions) but emits tag-keyed TLV tokens; ``bytes`` stay raw (not
-base64). :func:`decode_binary` is the inverse, hydrating like :func:`deserialize`. Field
-identity on the wire is ``field["tag"]`` when present, else the 1-based declaration index.
-"""
+An alternative encoder of the same per-field data as :func:`serialize`, parallel to JSON, kept
+**byte-identical** across the JS / Python / C++ runtimes (varint, zigzag, length-prefixed strings,
+per-type encoders — unchanged by the RPC rewrite). :func:`encode_binary` mirrors ``serialize``'s
+per-field traversal (same type switch, same ``dateTime``→epoch-ms / ``embedded``→recurse-via-``refs``
+/ ``array``→element-map / ``reference``→bare-id conversions) but emits tag-keyed TLV tokens;
+``bytes`` stay raw (not base64). :func:`decode_binary` is the inverse, hydrating like
+:func:`deserialize`. Field identity on the wire is ``field["tag"]`` when present, else the 1-based
+declaration index. Target-free + visibility-blind.
+
+:func:`encode_arg` / :func:`decode_arg` expose the per-value (no-tag) payload codec the RPC
+marshaller uses for positional service arguments and return payloads."""
 
 from __future__ import annotations
 
 import struct
 from datetime import datetime
-from typing import Any, Dict, List, Optional, Tuple
+from typing import Any, Dict, List, Optional
 
 from ._iso import from_epoch_ms, to_epoch_ms
+from ._shared import Metadata, _class_meta, _hydrate, _is_record, _read, _ref_name
 from .fields import all_fields, all_refs
-from .types import FieldType, SchemaMetadata, SerializeTarget
+from .types import FieldType
 
 # Wire types — the low 3 bits of each field key (= tag * 8 + wiretype).
 WIRE_VARINT = 0
@@ -54,19 +58,15 @@ def zigzag_decode(u: int) -> int:
 # ── Encoding ───────────────────────────────────────────────────────────────────
 
 
-def encode_binary(schema: SchemaMetadata, value: Any, *, target: SerializeTarget) -> bytes:
+def encode_binary(meta: Metadata, value: Any) -> bytes:
     out = bytearray()
-    _encode_record(out, schema, value, target)
+    _encode_record(out, meta, value)
     return bytes(out)
 
 
-def _encode_record(out: bytearray, schema: SchemaMetadata, value: Any, target: SerializeTarget) -> None:
-    refs: Optional[Dict[str, Any]] = all_refs(schema)  # own + inherited (real inheritance)
-    for i, field in enumerate(all_fields(schema)):
-        if target == "client" and field.get("visibility") == "private":
-            continue
-        if target == "database" and field.get("ephemeral"):
-            continue
+def _encode_record(out: bytearray, meta: Metadata, value: Any) -> None:
+    refs = all_refs(meta)  # own + inherited (real inheritance)
+    for i, field in enumerate(all_fields(meta)):
         present, fv = _read(value, field["name"])
         if not present:
             continue
@@ -77,7 +77,7 @@ def _encode_record(out: bytearray, schema: SchemaMetadata, value: Any, target: S
             _write_key(out, tag, WIRE_NULL)
             continue
         _write_key(out, tag, _wiretype_of(field["type"]))
-        _encode_payload(out, field["type"], fv, refs, target)
+        _encode_payload(out, field["type"], fv, refs)
 
 
 def _write_key(out: bytearray, tag: int, wiretype: int) -> None:
@@ -96,7 +96,7 @@ def _wiretype_of(type_: FieldType) -> int:
     return WIRE_LENGTH
 
 
-def _encode_payload(out: bytearray, type_: FieldType, value: Any, refs: Optional[Dict[str, Any]], target: SerializeTarget) -> None:
+def _encode_payload(out: bytearray, type_: FieldType, value: Any, refs: Optional[Dict[str, Any]]) -> None:
     kind = type_["kind"]
     if kind == "boolean":
         write_varint(out, 1 if value else 0)
@@ -113,11 +113,12 @@ def _encode_payload(out: bytearray, type_: FieldType, value: Any, refs: Optional
         _write_len_bytes(out, str(value).encode("utf-8"))
     elif kind == "bytes":
         _write_len_bytes(out, bytes(value) if isinstance(value, (bytes, bytearray)) else b"")
-    elif kind == "embedded":
-        sub = (refs or {}).get(type_["schema"])
+    elif kind in ("embedded", "instance"):
+        sub = (refs or {}).get(_ref_name(type_))
+        sub_meta = _class_meta(sub)
         body = bytearray()
-        if sub is not None and _is_record(value):
-            _encode_record(body, sub.schema, value, target)
+        if sub_meta is not None and _is_record(value):
+            _encode_record(body, sub_meta, value)
         _write_len_bytes(out, bytes(body))
     elif kind == "reference":
         rid = _ref_id(value)
@@ -131,7 +132,7 @@ def _encode_payload(out: bytearray, type_: FieldType, value: Any, refs: Optional
         body = bytearray()
         write_varint(body, len(arr))
         for el in arr:
-            _encode_element(body, type_["of"], el, refs, target)
+            _encode_element(body, type_["of"], el, refs)
         _write_len_bytes(out, bytes(body))
     elif kind == "json":
         body = bytearray()
@@ -141,12 +142,12 @@ def _encode_payload(out: bytearray, type_: FieldType, value: Any, refs: Optional
         _write_len_bytes(out, str(value).encode("utf-8"))
 
 
-def _encode_element(out: bytearray, type_: FieldType, value: Any, refs: Optional[Dict[str, Any]], target: SerializeTarget) -> None:
+def _encode_element(out: bytearray, type_: FieldType, value: Any, refs: Optional[Dict[str, Any]]) -> None:
     if value is None:
         out.append(WIRE_NULL)
         return
     out.append(_wiretype_of(type_))
-    _encode_payload(out, type_, value, refs, target)
+    _encode_payload(out, type_, value, refs)
 
 
 def _write_len_bytes(out: bytearray, b: bytes) -> None:
@@ -200,19 +201,6 @@ def _ref_id(value: Any) -> Any:
     return getattr(value, "id", value)
 
 
-def _is_record(value: Any) -> bool:
-    return isinstance(value, dict) or (hasattr(value, "__dict__") and not isinstance(value, (list, str, bytes, bytearray)))
-
-
-def _read(obj: Any, name: str) -> Tuple[bool, Any]:
-    """Return ``(present, value)`` for ``name`` on a dict or an object instance."""
-    if isinstance(obj, dict):
-        return (name in obj, obj.get(name))
-    if hasattr(obj, name):
-        return (True, getattr(obj, name))
-    return (False, None)
-
-
 # ── Decoding ───────────────────────────────────────────────────────────────────
 
 
@@ -225,13 +213,13 @@ class _Reader:
         self.end = end
 
 
-def decode_binary(schema: SchemaMetadata, data: bytes) -> Dict[str, Any]:
-    return _decode_record(schema, _Reader(data, 0, len(data)))
+def decode_binary(meta: Metadata, data: bytes) -> Dict[str, Any]:
+    return _decode_record(meta, _Reader(data, 0, len(data)))
 
 
-def _decode_record(schema: SchemaMetadata, r: _Reader) -> Dict[str, Any]:
-    by_tag = _fields_by_tag(schema)
-    refs: Optional[Dict[str, Any]] = all_refs(schema)  # own + inherited (real inheritance)
+def _decode_record(meta: Metadata, r: _Reader) -> Dict[str, Any]:
+    by_tag = _fields_by_tag(meta)
+    refs = all_refs(meta)  # own + inherited (real inheritance)
     out: Dict[str, Any] = {}
     while r.pos < r.end:
         key = _read_varint(r)
@@ -248,9 +236,9 @@ def _decode_record(schema: SchemaMetadata, r: _Reader) -> Dict[str, Any]:
     return out
 
 
-def _fields_by_tag(schema: SchemaMetadata) -> Dict[int, Any]:
+def _fields_by_tag(meta: Metadata) -> Dict[int, Any]:
     m: Dict[int, Any] = {}
-    for i, f in enumerate(all_fields(schema)):  # own + inherited (real inheritance)
+    for i, f in enumerate(all_fields(meta)):  # own + inherited (real inheritance)
         tag = f.get("tag")
         if tag is None:
             tag = i + 1
@@ -281,12 +269,13 @@ def _decode_value(r: _Reader, type_: FieldType, wiretype: int, refs: Optional[Di
         return _read_len_bytes(r).decode("utf-8")
     if kind == "bytes":
         return bytes(_read_len_bytes(r))
-    if kind == "embedded":
+    if kind in ("embedded", "instance"):
         inner = _read_len_window(r)
-        sub = (refs or {}).get(type_["schema"])
-        if sub is None:
+        sub = (refs or {}).get(_ref_name(type_))
+        sub_meta = _class_meta(sub)
+        if sub_meta is None:
             return {}
-        return sub(_decode_record(sub.schema, inner))
+        return _hydrate(sub, _decode_record(sub_meta, inner))
     if kind == "reference":
         id_type = type_.get("idType")
         if id_type and id_type.get("kind") == "integer":
@@ -384,3 +373,23 @@ def _read_len_window(r: _Reader) -> _Reader:
     start = r.pos
     r.pos += n
     return _Reader(r.buf, start, start + n)
+
+
+# ── Per-value (no-tag) payload codec — positional RPC service arguments / returns ──
+#
+# Each service argument and return value is encoded by *its type's payload encoder* with no tag
+# key (declared param order carries identity). Length-prefixed/varint payloads stay self-
+# delimiting, so the decoder reads them back positionally. `instance` (a live class value) encodes
+# like an `embedded` record.
+
+
+def encode_arg(out: bytearray, type_: FieldType, value: Any, refs: Optional[Dict[str, Any]]) -> None:
+    _encode_payload(out, type_, value, refs)
+
+
+def decode_arg(r: _Reader, type_: FieldType, refs: Optional[Dict[str, Any]]) -> Any:
+    return _decode_value(r, type_, _wiretype_of(type_), refs)
+
+
+def reader(data: bytes) -> _Reader:
+    return _Reader(data, 0, len(data))

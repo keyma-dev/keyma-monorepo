@@ -1,9 +1,13 @@
 """Cross-runtime binary parity for keyma.runtime.
 
 Reads the SAME canonical fixtures the JS reference codec generates
-(``packages/runtime/test/binary-fixtures.json``) and asserts byte-identical
-output, plus round-trips and the unknown-tag skip (durability) guarantee.
-"""
+(``packages/runtime/test/binary-fixtures.json``) and asserts byte-identical output, plus
+round-trips and the unknown-tag skip (durability) guarantee.
+
+The codec is now **target-free** (the RPC rewrite dropped SerializeTarget): it encodes every
+declared field. That matches the ``server``-target fixtures exactly (server kept all fields), so
+the byte cross-check is run over those; the field-dropping ``client``/``database`` fixtures no
+longer correspond to a target-free encoder and are skipped."""
 
 from __future__ import annotations
 
@@ -37,7 +41,8 @@ def _from_wire(v: Any) -> Any:
 
 def _make_stub(meta: Dict[str, Any]):
     class Stub:
-        schema = meta
+        # Generated classes carry metadata as `.metadata` (the cross-language contract).
+        metadata = meta
 
         def __init__(self, value: Optional[Dict[str, Any]] = None) -> None:
             if value:
@@ -47,7 +52,7 @@ def _make_stub(meta: Dict[str, Any]):
     return Stub
 
 
-def _revive_schema(meta: Dict[str, Any], schemas: Optional[Dict[str, Any]]) -> Dict[str, Any]:
+def _revive_meta(meta: Dict[str, Any], schemas: Optional[Dict[str, Any]]) -> Dict[str, Any]:
     """Rebuild a metadata dict with a shared ``refs`` map of stub model classes."""
     refs: Dict[str, Any] = {}
     for name, sub in (schemas or {}).items():
@@ -64,20 +69,25 @@ def _load_fixtures():
     return data["fixtures"]
 
 
-@pytest.mark.parametrize("fixture", _load_fixtures(), ids=lambda f: f["name"])
+# A target-free encoder matches the server-target fixtures (server kept every field).
+def _server_fixtures():
+    return [f for f in _load_fixtures() if f.get("target", "server") == "server"]
+
+
+@pytest.mark.parametrize("fixture", _server_fixtures(), ids=lambda f: f["name"])
 def test_encodes_to_committed_hex(fixture):
-    schema = _revive_schema(fixture["schema"], fixture.get("schemas"))
+    meta = _revive_meta(fixture["schema"], fixture.get("schemas"))
     record = _from_wire(fixture["record"])
-    out = encode_binary(schema, record, target=fixture["target"])
+    out = encode_binary(meta, record)
     assert out.hex() == fixture["hex"]
 
 
 def test_round_trip_scalars():
     fixtures = {f["name"]: f for f in _load_fixtures()}
     f = fixtures["scalars-server"]
-    schema = _revive_schema(f["schema"], f.get("schemas"))
+    meta = _revive_meta(f["schema"], f.get("schemas"))
     record = _from_wire(f["record"])
-    decoded = decode_binary(schema, encode_binary(schema, record, target="server"))
+    decoded = decode_binary(meta, encode_binary(meta, record))
     assert decoded["title"] == "héllo"
     assert decoded["count"] == 300
     assert decoded["negative"] == -7
@@ -94,18 +104,18 @@ def test_round_trip_scalars():
 def test_round_trip_arrays_and_embedded():
     fixtures = {f["name"]: f for f in _load_fixtures()}
     arrays = fixtures["arrays"]
-    schema = _revive_schema(arrays["schema"], arrays.get("schemas"))
+    meta = _revive_meta(arrays["schema"], arrays.get("schemas"))
     record = _from_wire(arrays["record"])
-    decoded = decode_binary(schema, encode_binary(schema, record, target="server"))
+    decoded = decode_binary(meta, encode_binary(meta, record))
     assert decoded["tags"] == ["a", "bb", "ccc"]
     assert decoded["nums"] == [1, -2, 300]
     assert decoded["empty"] == []
     assert decoded["sparse"] == ["x", None, "z"]
 
     emb = fixtures["embedded"]
-    schema = _revive_schema(emb["schema"], emb.get("schemas"))
+    meta = _revive_meta(emb["schema"], emb.get("schemas"))
     record = _from_wire(emb["record"])
-    decoded = decode_binary(schema, encode_binary(schema, record, target="server"))
+    decoded = decode_binary(meta, encode_binary(meta, record))
     assert decoded["address"].street == "1 Main"
     assert decoded["address"].zip == "00000"
 
@@ -129,7 +139,7 @@ def test_skips_unknown_tags():
             {"name": "n", "type": {"kind": "integer"}, "tag": 3},
         ],
     }
-    bytes_ = encode_binary(writer, {"id": "z1", "extra": "dropme", "n": 5}, target="server")
+    bytes_ = encode_binary(writer, {"id": "z1", "extra": "dropme", "n": 5})
     decoded = decode_binary(reader, bytes_)
     assert decoded["id"] == "z1"
     assert decoded["n"] == 5

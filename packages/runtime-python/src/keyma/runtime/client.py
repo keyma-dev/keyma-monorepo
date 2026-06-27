@@ -1,34 +1,36 @@
-"""In-process transport — port of ``@keyma/runtime-js`` ``client.ts``.
+"""The per-service client base a generated client class extends.
 
-Hands a request directly to a :class:`KeymaServer`. Useful for tests and for
-embedding the server in the same process as the client (e.g. SSR). An optional
-``context_factory`` (sync or async) runs per request and supplies a
-``RequestContext`` (e.g. identity) to the server and its plugins.
-"""
+A generated ``UserService(transport)`` subclass binds to a :class:`Transport` and exposes one
+``async def`` per method. Each method marshals its arguments (via ``marshal.encode_args`` against
+the bound transport's ``encoding``), calls :meth:`_invoke`, and hydrates the return payload. The
+base unwraps the envelope and **raises** :class:`KeymaError` on failure — exceptions, not result
+objects, cross the call boundary in Python."""
 
 from __future__ import annotations
 
-import inspect
-from typing import Any, Awaitable, Callable, Optional, Union
+from typing import Any
 
-from .protocol import KeymaBatchResponse, KeymaRequest, Transport
-from .types import RequestContext
-
-ContextFactory = Callable[[], Union[RequestContext, Awaitable[RequestContext]]]
+from .errors import HANDLER_ERROR, KeymaError
+from .transport import CallRequest, Transport
+from .types import Encoding
 
 
-def create_direct_transport(server: Any, context_factory: Optional[ContextFactory] = None) -> Transport:
-    if context_factory is None:
+class ServiceClient:
+    """Base for generated service clients. Subclasses set ``service_name`` and define the methods."""
 
-        async def transport(request: KeymaRequest) -> KeymaBatchResponse:
-            return await server.handle(request)
+    #: The wire service identity — set by the generated subclass.
+    service_name: str = ""
 
-        return transport
+    def __init__(self, transport: Transport) -> None:
+        self._transport = transport
 
-    async def transport_with_ctx(request: KeymaRequest) -> KeymaBatchResponse:
-        context = context_factory()
-        if inspect.isawaitable(context):
-            context = await context
-        return await server.handle(request, context)
+    @property
+    def _encoding(self) -> Encoding:
+        return self._transport.encoding
 
-    return transport_with_ctx
+    async def _invoke(self, method: str, args: Any) -> Any:
+        """Send one call; return the encoded return payload or raise the unwrapped error."""
+        result = await self._transport.invoke(CallRequest(self.service_name, method, args))
+        if not result.ok:
+            raise KeymaError(result.code or HANDLER_ERROR, result.message or "RPC call failed")
+        return result.data
