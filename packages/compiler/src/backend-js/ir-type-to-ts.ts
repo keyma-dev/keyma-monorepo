@@ -1,4 +1,5 @@
 import type { IRType } from "@keyma/core/ir";
+import { defaultRuntimeSymbols } from "../driver/runtime-symbols.js";
 
 /**
  * Map an IRType to a TypeScript type string for use in `.d.ts` files.
@@ -45,6 +46,11 @@ export function irTypeToTs(
         // A live value of a class T (param/return position) — reference the class by symbol.
         case "instance":
             return embeddedNames?.get(type.name) ?? type.name;
+
+        // A runtime-provided type, resolved to its emitted symbol via the runtime symbol table
+        // (falls back to the canonical name verbatim when unregistered).
+        case "external":
+            return defaultRuntimeSymbols.resolve("js", type.name) ?? type.name;
 
         default:
             // `function` (param/return-position vocabulary) gains `.d.ts` emission in a later slice.

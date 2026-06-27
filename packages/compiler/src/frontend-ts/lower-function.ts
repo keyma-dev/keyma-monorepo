@@ -262,6 +262,10 @@ function lowerFunctionBody(node: CallableNode, ctx: BodyLowerCtx): IRStatement[]
         return expr !== null ? [{ kind: "return", value: expr }] : [];
     }
     const block = node.body as ts.Block;
-    // lowerStatements drives the shared engine (loop/switch/C-style-`for` desugar).
-    return lowerStatements(block.statements, ctx);
+    // lowerStatements drives the shared engine (loop/switch/C-style-`for` desugar). Out-of-vocabulary
+    // in a function body is a hard error with no partial emission (decision 10): if any statement
+    // failed to lower, discard the whole body — the pushed diagnostic halts the build.
+    const before = ctx.diagnostics.length;
+    const statements = lowerStatements(block.statements, ctx);
+    return ctx.diagnostics.length > before ? [] : statements;
 }

@@ -1,4 +1,5 @@
 import type { IRExpression } from "@keyma/core/ir";
+import { intrinsicByOp } from "@keyma/core/ir";
 import { renderStatements } from "./emit-validators.js";
 
 /**
@@ -229,10 +230,14 @@ function intrinsicToPython(expr: Extract<IRExpression, { kind: "intrinsic" }>): 
             return typeIsToPython(recv, literalText(expr.args[0]));
         case "instance-of":
             return instanceOfToPython(recv, literalText(expr.args[0]));
-        default:
+        default: {
+            // Domain-contributed op with a registry-provided native snippet (decision 11).
+            const custom = intrinsicByOp(expr.op)?.emit?.python;
+            if (custom !== undefined) return custom(expr.receiver !== null ? recv : null, args);
             // Unknown op — emit a clearly-invalid marker so it surfaces in review/runtime
             // rather than silently producing wrong behavior.
             return `__keyma_unsupported_intrinsic__(${JSON.stringify(expr.op)})`;
+        }
     }
 }
 

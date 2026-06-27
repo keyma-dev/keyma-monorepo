@@ -12,4 +12,11 @@ export type {
 export { loadConfig, resolveConfig } from "./config.js";
 export { drive } from "./driver.js";
 export { BackendRegistry } from "./backend-registry.js";
+export { scanIntrinsicCompatibility } from "./intrinsic-scan.js";
+export {
+    RuntimeSymbolRegistry,
+    defaultRuntimeSymbols,
+} from "./runtime-symbols.js";
+export type { RuntimeSymbols, RuntimeSymbolLang } from "./runtime-symbols.js";
 export type { KeymaDomain, KeymaDomainEmitterPacks } from "./domain.js";
+export type { IntrinsicDef } from "@keyma/core/ir";

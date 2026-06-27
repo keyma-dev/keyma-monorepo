@@ -1,4 +1,5 @@
 import type { IRType, IRMember } from "@keyma/core/ir";
+import { defaultRuntimeSymbols } from "../driver/runtime-symbols.js";
 
 /**
  * Map an IRType to its C++ type (std::pmr throughout). `cppTypeByName` resolves an
@@ -56,6 +57,10 @@ export function irTypeToCpp(
             // A live value of a class T (param/return position) — a shared,
             // allocator-aware handle to the object, like the runtime's model objects.
             return `std::shared_ptr<${cppTypeByName?.get(type.name) ?? type.name}>`;
+        // A runtime-provided type, resolved to its emitted symbol via the runtime symbol table
+        // (falls back to the canonical name verbatim when unregistered).
+        case "external":
+            return defaultRuntimeSymbols.resolve("cpp", type.name) ?? type.name;
         default:
             // `function` (param/return-position vocabulary) gains C++ emission in a later slice.
             throw new Error(`irTypeToCpp: unsupported IR type kind "${(type as { kind: string }).kind}"`);

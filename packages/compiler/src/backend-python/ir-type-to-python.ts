@@ -1,4 +1,5 @@
 import type { IRType } from "@keyma/core/ir";
+import { defaultRuntimeSymbols } from "../driver/runtime-symbols.js";
 
 /**
  * Map an IRType to a Python type hint string.
@@ -43,6 +44,11 @@ export function irTypeToPython(
         // A live value of a class T (param/return position) — reference the class.
         case "instance":
             return embeddedNames?.get(type.name) ?? type.name;
+
+        // A runtime-provided type, resolved to its emitted symbol via the runtime symbol table
+        // (falls back to the canonical name verbatim when unregistered).
+        case "external":
+            return defaultRuntimeSymbols.resolve("python", type.name) ?? type.name;
 
         default:
             // `function` (param/return-position vocabulary) gains Python emission in a later slice.

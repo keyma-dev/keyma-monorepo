@@ -44,6 +44,7 @@ export const KEYMA0204 = "KEYMA0204"; // Unsupported loop binding — `for…of`
 export const KEYMA0205 = "KEYMA0205"; // Labeled `break`/`continue` is not portable
 export const KEYMA0206 = "KEYMA0206"; // A destructor must be a no-parameter, void-returning, synchronous method
 export const KEYMA0207 = "KEYMA0207"; // A constructor may not be async
+export const KEYMA0208 = "KEYMA0208"; // Intrinsic op has no registered emitter for a configured target (driver pre-emit compatibility scan)
 
 // TS-type → IR-type mapping (the generic `map-type` engine, shared by a domain's class
 // extraction and the generic method/function lowering, stays in the compiler).

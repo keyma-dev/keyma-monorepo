@@ -51,7 +51,7 @@ export async function runBuild(opts: BuildOptions = {}): Promise<BuildResult> {
     // Resolve the domains for this project (explicit `config.domains`, else auto-detect),
     // registering their IR validators and assembling the per-language backends. The CLI is
     // the only place that names domain packages; `@keyma/compiler` stays domain-neutral.
-    const setup = await prepareDomains(config.domains);
+    const setup = await prepareDomains(config.domains, config.targets.map((t) => t.language));
     const frontend = createTsFrontend(cwd, setup.frontendDomains);
     const backends = opts.backends ?? setup.backends;
     const driveResult = await drive(config, frontend, backends);

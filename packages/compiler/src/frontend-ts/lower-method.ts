@@ -286,7 +286,11 @@ function lowerBody(
         allowAssign: true,
         ...(ctx.classifyFunction !== undefined ? { classifyFunction: ctx.classifyFunction } : {}),
     };
-    // lowerStatements drives the shared engine (loop/switch/C-style-`for` desugar) and
-    // threads `const` scope; a statement that fails to lower pushed its own diagnostic.
-    return lowerStatements(body.statements, exprCtx);
+    // lowerStatements drives the shared engine (loop/switch/C-style-`for` desugar) and threads
+    // `const` scope. Out-of-vocabulary in a method body is a hard error with no partial emission
+    // (decision 10): if any statement failed to lower (pushing a diagnostic), discard the whole
+    // body rather than emitting a partial one — the diagnostic halts the build.
+    const before = ctx.diagnostics.length;
+    const statements = lowerStatements(body.statements, exprCtx);
+    return ctx.diagnostics.length > before ? [] : statements;
 }

@@ -1,6 +1,7 @@
 import { validateIR } from "@keyma/core/ir";
 import type { IRDiagnostic } from "@keyma/core/ir";
 import { mkError } from "@keyma/core/util";
+import { scanIntrinsicCompatibility } from "./intrinsic-scan.js";
 import type { ResolvedConfig, KeymaFrontend, KeymaBackend, EmitFile, DriveResult } from "./types.js";
 
 const IR_VALIDATION_CODE = "KEYMA000";
@@ -31,6 +32,12 @@ export async function drive(
         for (const err of validation.errors) {
             allDiagnostics.push(mkError(IR_VALIDATION_CODE, `IR validation: ${err}`));
         }
+    } else {
+        // Step 2b: pre-emit compatibility scan — every intrinsic op a reachable body uses must
+        // be emittable for every configured target (decision 11). Gated on a structurally valid
+        // IR so the body walkers never traverse malformed nodes. Inert for built-in-only
+        // documents (no domain-contributed intrinsics → nothing to fail).
+        allDiagnostics.push(...scanIntrinsicCompatibility(ir, config.targets.map((t) => t.language)));
     }
 
     // Step 3: halt if there are errors

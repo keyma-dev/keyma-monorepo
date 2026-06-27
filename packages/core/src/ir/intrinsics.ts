@@ -25,6 +25,27 @@ export type IntrinsicReceiver = "string" | "array" | "regexp" | "date" | "value"
 /** How the intrinsic is written in TypeScript source — a method call or a property read. */
 export type IntrinsicForm = "method" | "property";
 
+/**
+ * A native-snippet emitter for a (usually domain-contributed) intrinsic op. It receives the
+ * **already-emitted** receiver source (`null` for a free-standing op with no receiver) and the
+ * **already-emitted** argument sources, and returns the target-language expression string. The
+ * backend renders receiver/args with its own expression emitter, then hands the strings here, so
+ * the emitter carries no IR knowledge — it is pure target syntax (decision 11, "native-snippet
+ * only"). */
+export type IntrinsicEmitter = (receiver: string | null, args: readonly string[]) => string;
+
+/**
+ * Per-language native-snippet emitters for an intrinsic op. Each language is **optional**: a
+ * domain may emit for JS + C++ but not Python. A configured target that lacks an emitter for an
+ * op its bodies use is caught by the driver's pre-emit compatibility scan (decision 11). The
+ * built-in core intrinsics leave `emit` undefined — they are translated by each backend's own
+ * (hardcoded) intrinsic table, not through the registry. */
+export type IntrinsicEmit = {
+    js?: IntrinsicEmitter;
+    python?: IntrinsicEmitter;
+    cpp?: IntrinsicEmitter;
+};
+
 export type IntrinsicDef = {
     /** Canonical op id, e.g. "string.includes". Unique across the registry. */
     op: string;
@@ -36,6 +57,12 @@ export type IntrinsicDef = {
     minArgs: number;
     maxArgs: number;
     tier: IntrinsicTier;
+    /**
+     * Optional per-language native-snippet emitters. Set by a domain that contributes a NEW
+     * primitive op the backends have no built-in translation for; omitted by the built-in core
+     * intrinsics (which the backends translate directly). A backend consults this only when its
+     * own intrinsic table has no entry for `op`. */
+    emit?: IntrinsicEmit;
 };
 
 export const INTRINSICS: readonly IntrinsicDef[] = [
@@ -148,6 +175,13 @@ export class IntrinsicRegistry {
         return [...this.byOp.values()];
     }
 }
+
+/**
+ * The op ids of the **built-in** core intrinsics. These are translated directly by each
+ * backend's own intrinsic table (not through a registry `emit` snippet), so the driver's
+ * pre-emit compatibility scan treats them as emittable for every target. A domain-contributed
+ * op (one NOT in this set) must instead provide an `emit` snippet for each configured target. */
+export const BUILTIN_INTRINSIC_OPS: ReadonlySet<string> = new Set(INTRINSICS.map((d) => d.op));
 
 /** The default registry, seeded with the built-in language-neutral intrinsics. */
 export const defaultIntrinsics = new IntrinsicRegistry();

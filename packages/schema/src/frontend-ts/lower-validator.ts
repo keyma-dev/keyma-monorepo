@@ -16,7 +16,7 @@ import {
     type FnRefVerdict,
     type TypeMapContext,
 } from "@keyma/compiler/frontend-ts";
-import { mkError, KEYMA081, KEYMA083 } from "./diagnostics.js";
+import { mkError, KEYMA026, KEYMA081, KEYMA083 } from "./diagnostics.js";
 import type { CollectedFactory } from "./discover-validators.js";
 
 /** Dependencies threaded from the schema frontend for type-aware body lowering. */
@@ -81,8 +81,36 @@ function typeMapCtxOf(ctx: LowerCtx): TypeMapContext {
 
 // ─── Factory lowering ─────────────────────────────────────────────────────────
 
+/** True when a callable node is declared `async` (works for all three callable node forms). */
+function isAsyncCallable(node: ts.FunctionDeclaration | ts.ArrowFunction | ts.FunctionExpression): boolean {
+    return node.modifiers?.some((m) => m.kind === ts.SyntaxKind.AsyncKeyword) ?? false;
+}
+
+/** A self-contained no-op factory IR, used when the factory is rejected (a diagnostic was pushed
+ *  and the build will halt) so the document stays well-formed. */
+function noOpFactory(collected: CollectedFactory, params: IRFunctionParam[]): IRFunctionDeclaration {
+    return {
+        name: collected.name,
+        params,
+        returnType: { kind: "function", params: [], returns: { kind: "json" } },
+        statements: [],
+        source: collected.source,
+    };
+}
+
 function lowerFactory(collected: CollectedFactory, ctx: LowerCtx): IRFunctionDeclaration {
     const func = collected.node;
+
+    // Validators/formatters are synthesized into plain synchronous methods (decision 12) — an
+    // `async` factory or inner function has no synchronous lowering. Reject at the frontend.
+    if (isAsyncCallable(func)) {
+        ctx.diagnostics.push(mkError(
+            KEYMA026,
+            "A validator/formatter factory may not be `async` — validators and formatters must be synchronous",
+            getLocation(func, ctx.sourceFile),
+        ));
+        return noOpFactory(collected, []);
+    }
 
     // Factory (outer) params become the function's typed params. A param is `optional`
     // (a call site may omit it) when it has a `?` or a default initializer — typed
@@ -101,13 +129,15 @@ function lowerFactory(collected: CollectedFactory, ctx: LowerCtx): IRFunctionDec
     const inner = extractInnerFunction(func, ctx);
     if (inner === undefined) {
         // Malformed factory — emit a self-contained no-op so the IR stays well-formed.
-        return {
-            name: collected.name,
-            params,
-            returnType: { kind: "function", params: [], returns: { kind: "json" } },
-            statements: [],
-            source: collected.source,
-        };
+        return noOpFactory(collected, params);
+    }
+    if (isAsyncCallable(inner)) {
+        ctx.diagnostics.push(mkError(
+            KEYMA026,
+            "A validator/formatter inner function may not be `async` — validators and formatters must be synchronous",
+            getLocation(inner, ctx.sourceFile),
+        ));
+        return noOpFactory(collected, params);
     }
 
     // Inner params by position: 0=value, 1=field, 2=context. The first carries the
@@ -185,20 +215,26 @@ function extractInnerFunction(
     return innerFn;
 }
 
-/** Lower the inner function's body to portable statements (concise arrow → a single return). */
+/**
+ * Lower the inner function's body to portable statements (concise arrow → a single return).
+ * Out-of-vocabulary in a validator/formatter body is a hard error with no partial emission
+ * (decision 10): if any statement fails to lower (pushing a diagnostic), discard the whole body
+ * rather than emitting a partial one — the diagnostic halts the build.
+ */
 function lowerInnerBody(inner: ts.ArrowFunction | ts.FunctionExpression, ctx: LowerCtx): IRStatement[] {
+    const before = ctx.diagnostics.length;
     const statements: IRStatement[] = [];
     if (ts.isArrowFunction(inner) && !ts.isBlock(inner.body)) {
         const expr = lowerExpr(inner.body, ctx);
         if (expr !== null) statements.push({ kind: "return", value: expr });
-        return statements;
+        return ctx.diagnostics.length > before ? [] : statements;
     }
     const block = inner.body as ts.Block;
     for (const s of block.statements) {
         const irStmt = lowerStatement(s, ctx);
         if (irStmt !== null) statements.push(irStmt);
     }
-    return statements;
+    return ctx.diagnostics.length > before ? [] : statements;
 }
 
 /**

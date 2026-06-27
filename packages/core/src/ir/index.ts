@@ -89,6 +89,7 @@ export {
 
 export {
     INTRINSICS,
+    BUILTIN_INTRINSIC_OPS,
     intrinsicByOp,
     intrinsicByMember,
     IntrinsicRegistry,
@@ -96,6 +97,8 @@ export {
 } from "./intrinsics.js";
 export type {
     IntrinsicDef,
+    IntrinsicEmit,
+    IntrinsicEmitter,
     IntrinsicTier,
     IntrinsicReceiver,
     IntrinsicForm,

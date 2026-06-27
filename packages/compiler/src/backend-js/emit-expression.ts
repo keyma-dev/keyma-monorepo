@@ -1,4 +1,5 @@
 import type { IRExpression, IRStatement } from "@keyma/core/ir";
+import { intrinsicByOp } from "@keyma/core/ir";
 
 export type ExprEmitOptions = {
     /**
@@ -146,6 +147,9 @@ export function exprToJs(expr: IRExpression, opts: ExprEmitOptions = {}): string
                 if (e.op.startsWith("math.")) return `Math.${e.op.slice(5)}(${args.join(", ")})`;
                 const method = JS_METHOD[e.op];
                 if (method !== undefined) return `${recv}.${method}(${args.join(", ")})`;
+                // Domain-contributed op with a registry-provided native snippet (decision 11).
+                const custom = intrinsicByOp(e.op)?.emit?.js;
+                if (custom !== undefined) return custom(e.receiver !== null ? recv : null, args);
                 return `__keyma_unsupported_intrinsic__(${JSON.stringify(e.op)})`;
             }
         }

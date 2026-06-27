@@ -56,6 +56,7 @@ export const KEYMA018 = "KEYMA018"; // (obsolete) Computed getter dependency cyc
 export const KEYMA019 = "KEYMA019"; // @Computed applied to a non-getter (plain property)
 
 // Validator / formatter errors
+export const KEYMA026 = "KEYMA026"; // Validator/formatter (factory or inner function) may not be async — synthesized methods are synchronous
 export const KEYMA020 = "KEYMA020"; // Unknown validator
 export const KEYMA021 = "KEYMA021"; // Unknown formatter
 export const KEYMA022 = "KEYMA022"; // Unknown custom validator (not registered)

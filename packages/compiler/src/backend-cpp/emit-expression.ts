@@ -1,4 +1,5 @@
 import type { IRExpression, IRType } from "@keyma/core/ir";
+import { intrinsicByOp } from "@keyma/core/ir";
 // Block-body arrows re-emit statements; stmtToCpp/plainReturn live in emit-validators, which
 // imports exprToCpp from here. The cycle is safe — both directions are used only at emit time
 // (inside functions), never during module initialization.
@@ -188,10 +189,14 @@ function intrinsicToCpp(expr: Extract<IRExpression, { kind: "intrinsic" }>, opts
             return `keyma::type_is(${recv}, ${cppStr(literalText(expr.args[0]))})`;
         case "instance-of":
             return `keyma::instance_of(${recv}, ${cppStr(literalText(expr.args[0]))})`;
-        default:
-            // Every registry op is handled above; an unknown op surfaces as an
+        default: {
+            // Domain-contributed op with a registry-provided native snippet (decision 11).
+            const custom = intrinsicByOp(expr.op)?.emit?.cpp;
+            if (custom !== undefined) return custom(expr.receiver !== null ? recv : null, args);
+            // Every built-in registry op is handled above; an unknown op surfaces as an
             // undeclared call naming the op, failing the build loudly.
             return `keyma::unsupported_intrinsic_${expr.op.replace(/[^A-Za-z0-9_]/g, "_")}()`;
+        }
     }
 }
 

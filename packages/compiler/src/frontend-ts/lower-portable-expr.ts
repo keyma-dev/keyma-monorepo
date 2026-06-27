@@ -383,9 +383,13 @@ function statementContainsContinue(node: ts.Node): boolean {
 /**
  * Lower a statement list, threading lexical scope: each `const` binding becomes
  * visible to the statements that follow it (so in field mode a later bare reference
- * resolves to that local, not a class field). A statement that fails to lower is
- * dropped (its diagnostic was already pushed); callers that must reject a partial
- * result (e.g. getters) check for new diagnostics.
+ * resolves to that local, not a class field).
+ *
+ * A statement that fails to lower pushes an `error` diagnostic and is skipped here, but
+ * out-of-vocabulary in a body is a **hard error with no partial emission** (decision 10):
+ * every body-lowering entry point (method, function, getter, arrow, validator/formatter
+ * inner) compares `diagnostics.length` before and after and discards the *whole* body when
+ * any statement failed, so a partial statement list never reaches `validateIR` or a backend.
  */
 export function lowerStatements(stmts: readonly ts.Statement[], ctx: PortableExprCtx): IRStatement[] {
     const out: IRStatement[] = [];

@@ -69,6 +69,69 @@ export function collectStatementIdentifiers(stmt: IRStatement, out: Set<string>)
     }
 }
 
+/** Collect every intrinsic `op` used anywhere in an IRExpression tree into `out`. Used by the
+ *  driver's pre-emit compatibility scan to find which intrinsic ops a body relies on. */
+export function collectIntrinsicOps(expr: IRExpression, out: Set<string>): void {
+    switch (expr.kind) {
+        case "intrinsic":
+            out.add(expr.op);
+            if (expr.receiver) collectIntrinsicOps(expr.receiver, out);
+            expr.args.forEach((a) => collectIntrinsicOps(a, out));
+            break;
+        case "member": collectIntrinsicOps(expr.object, out); break;
+        case "call": collectIntrinsicOps(expr.callee, out); expr.args.forEach((a) => collectIntrinsicOps(a, out)); break;
+        case "new": collectIntrinsicOps(expr.callee, out); expr.args.forEach((a) => collectIntrinsicOps(a, out)); break;
+        case "typeof": collectIntrinsicOps(expr.operand, out); break;
+        case "unary": collectIntrinsicOps(expr.operand, out); break;
+        case "await": collectIntrinsicOps(expr.operand, out); break;
+        case "template": expr.parts.forEach((p) => collectIntrinsicOps(p, out)); break;
+        case "binary": collectIntrinsicOps(expr.left, out); collectIntrinsicOps(expr.right, out); break;
+        case "conditional":
+            collectIntrinsicOps(expr.condition, out);
+            collectIntrinsicOps(expr.whenTrue, out);
+            collectIntrinsicOps(expr.whenFalse, out);
+            break;
+        case "object": expr.properties.forEach((p) => collectIntrinsicOps(p.value, out)); break;
+        case "arrow":
+            if (expr.body) collectIntrinsicOps(expr.body, out);
+            (expr.statements ?? []).forEach((s) => collectIntrinsicOpsInStatement(s, out));
+            break;
+    }
+}
+
+/** Collect every intrinsic `op` used anywhere in an IRStatement tree into `out`. */
+export function collectIntrinsicOpsInStatement(stmt: IRStatement, out: Set<string>): void {
+    switch (stmt.kind) {
+        case "return": if (stmt.value) collectIntrinsicOps(stmt.value, out); break;
+        case "expression": collectIntrinsicOps(stmt.expr, out); break;
+        case "const": collectIntrinsicOps(stmt.init, out); break;
+        case "assign": collectIntrinsicOps(stmt.target, out); collectIntrinsicOps(stmt.value, out); break;
+        case "if":
+            collectIntrinsicOps(stmt.condition, out);
+            stmt.consequent.forEach((s) => collectIntrinsicOpsInStatement(s, out));
+            (stmt.alternate ?? []).forEach((s) => collectIntrinsicOpsInStatement(s, out));
+            break;
+        case "forOf":
+            collectIntrinsicOps(stmt.iterable, out);
+            stmt.body.forEach((s) => collectIntrinsicOpsInStatement(s, out));
+            break;
+        case "while":
+            collectIntrinsicOps(stmt.condition, out);
+            stmt.body.forEach((s) => collectIntrinsicOpsInStatement(s, out));
+            break;
+        case "switch":
+            collectIntrinsicOps(stmt.discriminant, out);
+            stmt.cases.forEach((c) => {
+                if (c.test) collectIntrinsicOps(c.test, out);
+                c.body.forEach((s) => collectIntrinsicOpsInStatement(s, out));
+            });
+            break;
+        case "break":
+        case "continue":
+            break;
+    }
+}
+
 /** Collect every `typeVar` name referenced anywhere in an IRType tree into `out`. */
 export function collectTypeVarsInType(type: IRType, out: Set<string>): void {
     switch (type.kind) {
