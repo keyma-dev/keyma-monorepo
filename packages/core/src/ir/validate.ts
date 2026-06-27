@@ -328,6 +328,10 @@ export function checkExpression(expr: unknown, path: string): IRValidationError[
             });
             return errors;
         }
+        case "array": {
+            if (!isArr(expr["elements"])) return [e(`${path}.elements`, "must be an array")];
+            return expr["elements"].flatMap((el, i) => checkExpression(el, `${path}.elements[${i}]`));
+        }
         case "regexp": {
             const errors: IRValidationError[] = [];
             if (!isStr(expr["pattern"])) errors.push(e(`${path}.pattern`, "must be a string"));

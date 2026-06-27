@@ -83,6 +83,9 @@ export function exprToPython(expr: IRExpression): string {
             return `{ ${props} }`;
         }
 
+        case "array":
+            return `[${expr.elements.map(exprToPython).join(", ")}]`;
+
         case "regexp":
             return regexpLiteralToPython(expr.pattern, expr.flags); // Requires import re
 
@@ -226,6 +229,9 @@ function intrinsicToPython(expr: Extract<IRExpression, { kind: "intrinsic" }>): 
         case "date.now":
             // Static Date.now() — epoch milliseconds for the current instant.
             return `int(datetime.now().timestamp() * 1000)`;
+        case "self":
+            // The whole record under a synthesized instance method.
+            return `self`;
         case "type-is":
             return typeIsToPython(recv, literalText(expr.args[0]));
         case "instance-of":

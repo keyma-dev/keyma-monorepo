@@ -15,6 +15,7 @@ import type {
     IRArrowParam,
     IRFunctionParam,
     IRMethod,
+    IRStaticMember,
     IRFunctionDeclaration,
     IRSourceLocation,
 } from "./types.js";
@@ -86,6 +87,11 @@ export function newExpr(callee: IRExpression, args: IRExpression[] = []): IRExpr
 /** An object literal. Keys preserve insertion order. */
 export function obj(properties: Record<string, IRExpression>): IRExpression {
     return { kind: "object", properties: Object.entries(properties).map(([key, value]) => ({ key, value })) };
+}
+
+/** An array literal, `[e0, e1, …]`, in element order. */
+export function arrayExpr(elements: IRExpression[]): IRExpression {
+    return { kind: "array", elements };
 }
 
 export function template(parts: IRExpression[]): IRExpression {
@@ -176,6 +182,22 @@ export function method(opts: {
     if (opts.async !== undefined) m.async = opts.async;
     if (opts.bodyAudience !== undefined) m.bodyAudience = opts.bodyAudience;
     return m;
+}
+
+/**
+ * Build an `IRStaticMember`. `type`/`audience` are attached only when given (a plain static
+ * holds the same `value` for every audience).
+ */
+export function staticMember(opts: {
+    name: string;
+    value: IRExpression;
+    type?: IRType;
+    audience?: IRStaticMember["audience"];
+}): IRStaticMember {
+    const s: IRStaticMember = { name: opts.name, value: opts.value };
+    if (opts.type !== undefined) s.type = opts.type;
+    if (opts.audience !== undefined) s.audience = opts.audience;
+    return s;
 }
 
 /**

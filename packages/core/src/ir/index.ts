@@ -2,6 +2,7 @@ export type {
     KeymaIR,
     IRClassDeclaration,
     IRMember,
+    IRStaticMember,
     IRType,
     IRExpression,
     IRArrowParam,
@@ -71,6 +72,7 @@ export {
     call,
     newExpr,
     obj,
+    arrayExpr,
     template,
     binary,
     unary,
@@ -84,6 +86,7 @@ export {
     assign,
     ifStmt,
     method,
+    staticMember,
     funcDecl,
 } from "./build.js";
 

@@ -91,10 +91,33 @@
           "type": "array",
           "items": { "$ref": "#/$defs/IRMethod" }
         },
+        "statics": {
+          "type": "array",
+          "items": { "$ref": "#/$defs/IRStaticMember" }
+        },
         "extends": { "type": "string" },
         "extendsSource": { "type": "string" },
         "extensions": { "type": "object" },
         "source": { "$ref": "#/$defs/IRSourceLocation" }
+      }
+    },
+    "IRStaticMember": {
+      "type": "object",
+      "required": ["name", "value"],
+      "additionalProperties": false,
+      "properties": {
+        "name": { "type": "string", "minLength": 1 },
+        "value": { "$ref": "#/$defs/IRExpression" },
+        "type": { "$ref": "#/$defs/IRType" },
+        "audience": {
+          "type": "object",
+          "required": ["audiences", "fallback"],
+          "additionalProperties": false,
+          "properties": {
+            "audiences": { "type": "array", "items": { "enum": ["server", "library"] }, "minItems": 1 },
+            "fallback": { "$ref": "#/$defs/IRExpression" }
+          }
+        }
       }
     },
     "IRMethod": {

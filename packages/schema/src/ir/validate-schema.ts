@@ -108,6 +108,14 @@ function checkSchema(schema: unknown, path: string): IRValidationError[] {
         }
     }
 
+    if ("statics" in schema && schema["statics"] !== undefined) {
+        if (!isArr(schema["statics"])) {
+            errors.push(e(`${path}.statics`, "must be an array when present"));
+        } else {
+            schema["statics"].forEach((s, i) => errors.push(...checkStaticMember(s, `${path}.statics[${i}]`)));
+        }
+    }
+
     // Schema-domain metadata (edge / composite indexes / ephemeral) rides in the
     // `extensions['schema']` slice; other domains' slices are tolerated and ignored here.
     const sExts = schema["extensions"];
@@ -473,5 +481,37 @@ function checkMethod(m: unknown, path: string): IRValidationError[] {
         }
     }
     errors.push(...checkSourceLocation(m["source"], `${path}.source`));
+    return errors;
+}
+
+/**
+ * Validate a static class member `{ name, value, type?, audience? }`. `value` is a portable
+ * expression; `audience` (when present) mirrors a method's `bodyAudience` but its `fallback`
+ * is a single expression (the client-reduced value), not a statement list.
+ */
+function checkStaticMember(s: unknown, path: string): IRValidationError[] {
+    if (!isObj(s)) return [e(path, "must be an object")];
+    const errors: IRValidationError[] = [];
+    if (!isStr(s["name"]) || s["name"] === "") errors.push(e(`${path}.name`, "must be a non-empty string"));
+    errors.push(...checkExpression(s["value"], `${path}.value`));
+    if ("type" in s && s["type"] !== undefined) errors.push(...checkType(s["type"], `${path}.type`));
+    if ("audience" in s && s["audience"] !== undefined) {
+        const a = s["audience"];
+        if (!isObj(a)) {
+            errors.push(e(`${path}.audience`, "must be an object when present"));
+        } else {
+            if (!isArr(a["audiences"])) {
+                errors.push(e(`${path}.audience.audiences`, "must be an array"));
+            } else {
+                if (a["audiences"].length === 0) errors.push(e(`${path}.audience.audiences`, "must not be empty"));
+                a["audiences"].forEach((aud, i) => {
+                    if (aud !== "server" && aud !== "library") {
+                        errors.push(e(`${path}.audience.audiences[${i}]`, 'must be "server" or "library"'));
+                    }
+                });
+            }
+            errors.push(...checkExpression(a["fallback"], `${path}.audience.fallback`));
+        }
+    }
     return errors;
 }

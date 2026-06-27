@@ -132,6 +132,12 @@ export const INTRINSICS: readonly IntrinsicDef[] = [
     // ── Coercion (free-standing `String(x)` / `Number(x)`; synthesized by the frontend) ────────
     { op: "to-string",          receiver: "value",  form: "method",   tsName: "",            minArgs: 1, maxArgs: 1, tier: "recommended" },
     { op: "to-number",          receiver: "value",  form: "method",   tsName: "",            minArgs: 1, maxArgs: 1, tier: "recommended" },
+
+    // ── The current instance (free-standing; no receiver, no args; synthesized only) ───────────
+    // `self`: the whole record under a synthesized instance method — `this` (JS) / `self` (Python)
+    // / `(*this)` (C++). Used to build the validator/formatter `{ object: <self> }` context. Empty
+    // `tsName` keeps it out of BY_RECEIVER_NAME (never recognized from source; resolve via op id).
+    { op: "self",               receiver: "value",  form: "method",   tsName: "",            minArgs: 0, maxArgs: 0, tier: "required" },
 ];
 
 /**

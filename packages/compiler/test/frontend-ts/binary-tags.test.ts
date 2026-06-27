@@ -38,14 +38,14 @@ describe("binary tag assignment (end to end, no domains)", () => {
         const r = cv(USER, { binaryTags: true });
         assert.deepEqual(errorCodes(r), []);
         assert.deepEqual(tagsOf(r, "User"), { id: 1, email: 2, name: 3 });
-        assert.equal(r.ir.irVersion, "10.1.0");
+        assert.equal(r.ir.irVersion, "11.1.0");
         assert.equal(r.tagManifest!.schemas["user"]!.fields["email"], 2);
     });
 
     it("emits NO tags and leaves irVersion untouched when binary is disabled", () => {
         const r = cv(USER);
         assert.deepEqual(tagsOf(r, "User"), { id: undefined, email: undefined, name: undefined });
-        assert.equal(r.ir.irVersion, "10.0.0");
+        assert.equal(r.ir.irVersion, "11.0.0");
         assert.equal(r.tagManifest, undefined);
     });
 

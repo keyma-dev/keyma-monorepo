@@ -23,6 +23,7 @@ export function collectIdentifiers(expr: IRExpression, out: Set<string>): void {
             collectIdentifiers(expr.whenFalse, out);
             break;
         case "object": expr.properties.forEach((p) => collectIdentifiers(p.value, out)); break;
+        case "array": expr.elements.forEach((el) => collectIdentifiers(el, out)); break;
         case "arrow":
             if (expr.body) collectIdentifiers(expr.body, out);
             (expr.statements ?? []).forEach((s) => collectStatementIdentifiers(s, out));
@@ -92,6 +93,7 @@ export function collectIntrinsicOps(expr: IRExpression, out: Set<string>): void 
             collectIntrinsicOps(expr.whenFalse, out);
             break;
         case "object": expr.properties.forEach((p) => collectIntrinsicOps(p.value, out)); break;
+        case "array": expr.elements.forEach((el) => collectIntrinsicOps(el, out)); break;
         case "arrow":
             if (expr.body) collectIntrinsicOps(expr.body, out);
             (expr.statements ?? []).forEach((s) => collectIntrinsicOpsInStatement(s, out));
@@ -172,6 +174,7 @@ export function collectTypeVarsInExpression(expr: IRExpression, out: Set<string>
             collectTypeVarsInExpression(expr.whenFalse, out);
             break;
         case "object": expr.properties.forEach((p) => collectTypeVarsInExpression(p.value, out)); break;
+        case "array": expr.elements.forEach((el) => collectTypeVarsInExpression(el, out)); break;
         case "arrow":
             expr.params.forEach((p) => { if (typeof p !== "string" && p.type) collectTypeVarsInType(p.type, out); });
             if (expr.returnType) collectTypeVarsInType(expr.returnType, out);

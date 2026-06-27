@@ -60,6 +60,9 @@ export function exprToJs(expr: IRExpression, opts: ExprEmitOptions = {}): string
                 return `{ ${props} }`;
             }
 
+            case "array":
+                return `[${e.elements.map(emit).join(", ")}]`;
+
             case "regexp":
                 return `/${e.pattern}/${e.flags}`;
 
@@ -138,6 +141,9 @@ export function exprToJs(expr: IRExpression, opts: ExprEmitOptions = {}): string
             case "date.now":
                 // Static `Date.now()` — no instance receiver.
                 return `Date.now()`;
+            case "self":
+                // The whole record under a synthesized instance method.
+                return `this`;
             case "to-string":
                 return `String(${args[0]})`;
             case "to-number":

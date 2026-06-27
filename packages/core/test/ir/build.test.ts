@@ -2,9 +2,9 @@ import { describe, it } from "node:test";
 import assert from "node:assert/strict";
 import {
     external, typeVar, instanceType, fnType, arrayType, param,
-    literal, field, ident, member, call, newExpr, obj, template,
+    literal, field, ident, member, call, newExpr, obj, arrayExpr, template,
     binary, unary, conditional, intrinsic, arrowExpr, arrowBlock,
-    ret, constDecl, exprStmt, assign, ifStmt, method, funcDecl,
+    ret, constDecl, exprStmt, assign, ifStmt, method, staticMember, funcDecl,
     checkType, checkExpression, checkStatement,
 } from "@keyma/core/ir";
 
@@ -80,6 +80,16 @@ describe("ir builders — expressions", () => {
         exprOK(obj({ a: literal(1), b: field("x") }));
     });
 
+    it("arrayExpr builds an ordered array literal and validates (incl. nested objects)", () => {
+        assert.deepEqual(
+            arrayExpr([literal(1), field("x")]),
+            { kind: "array", elements: [{ kind: "literal", value: 1 }, { kind: "field", name: "x" }] },
+        );
+        assert.deepEqual(arrayExpr([]), { kind: "array", elements: [] });
+        exprOK(arrayExpr([]));
+        exprOK(arrayExpr([obj({ name: literal("id") }), obj({ name: literal("email") })]));
+    });
+
     it("arrowExpr / arrowBlock are mutually exclusive on body/statements", () => {
         const e = arrowExpr(["v"], binary(">", ident("v"), literal(0)), { kind: "boolean" });
         assert.equal("body" in e && !("statements" in e), true);
@@ -124,6 +134,21 @@ describe("ir builders — members / declarations", () => {
             bodyAudience: { audiences: ["server", "library"], fallback: [ret(ident("value"))] },
         });
         assert.deepEqual(gated.bodyAudience, { audiences: ["server", "library"], fallback: [{ kind: "return", value: { kind: "identifier", name: "value" } }] });
+    });
+
+    it("staticMember attaches type/audience only when given; value validates as an expression", () => {
+        const plain = staticMember({ name: "metadata", value: obj({ name: literal("user") }) });
+        assert.equal("type" in plain, false);
+        assert.equal("audience" in plain, false);
+        assert.deepEqual(plain, { name: "metadata", value: { kind: "object", properties: [{ key: "name", value: { kind: "literal", value: "user" } }] } });
+        exprOK(plain.value);
+
+        const gated = staticMember({
+            name: "metadata", value: arrayExpr([literal(1)]), type: external("SchemaMetadata"),
+            audience: { audiences: ["server", "library"], fallback: arrayExpr([]) },
+        });
+        assert.deepEqual(gated.type, { kind: "external", name: "SchemaMetadata" });
+        assert.deepEqual(gated.audience, { audiences: ["server", "library"], fallback: { kind: "array", elements: [] } });
     });
 
     it("funcDecl attaches typeParams/async only when given", () => {

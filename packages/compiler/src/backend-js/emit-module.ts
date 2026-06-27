@@ -5,7 +5,7 @@ import {
     collectRefTargets, collectFunctionRefs, collectStatementIdentifiers,
     filterVisibleFields, filterVisibleMethods,
 } from "@keyma/core/util";
-import { stmtToJs } from "./emit-expression.js";
+import { stmtToJs, exprToJs } from "./emit-expression.js";
 import { irTypeToTs } from "./ir-type-to-ts.js";
 import type { BuildClassData, ClassDtsContext, ClassDtsShape, ClaimedFunctionRendering } from "./emitter-registry.js";
 import { emitLiteral } from "./emit-literal.js";
@@ -138,8 +138,21 @@ function emitClassJs(cls: IRClassDeclaration, deps: ModuleEmitDeps): string {
     });
     lines.push(`${cls.sourceName}.metadata = Object.freeze(${emitLiteral(classData)});`);
 
+    // Synthesized static members (e.g. domain `metadata`): emitted from base IR as
+    // `Class.<name> = <value>;`, audience-gated like a method body. Empty for plain classes.
+    for (const s of cls.statics ?? []) {
+        lines.push(`${cls.sourceName}.${s.name} = ${exprToJs(staticValueForBundle(s, deps.bundle))};`);
+    }
+
     lines.push("");
     return lines.join("\n");
+}
+
+/** Pick a static member's value for a bundle: the gated `value` when the bundle's audience is
+ *  listed (server/library), else the domain-provided client `fallback`. */
+function staticValueForBundle(s: NonNullable<IRClassDeclaration["statics"]>[number], bundle: "client" | "server" | "library") {
+    if (s.audience === undefined) return s.value;
+    return s.audience.audiences.includes(bundle as "server" | "library") ? s.value : s.audience.fallback;
 }
 
 /** Emit a plain project-local utility function as an ES-module export. */
@@ -182,6 +195,10 @@ function emitClassDts(cls: IRClassDeclaration, deps: ModuleEmitDeps): string {
     const ext = cls.extends !== undefined ? ` extends ${cls.extends}` : "";
     lines.push(`${declKeyword} ${declName}${ext} {`);
     lines.push(`    static readonly metadata: ClassMetadata;`);
+    // Synthesized statics declared on the type surface (empty for plain classes).
+    for (const s of cls.statics ?? []) {
+        lines.push(`    static readonly ${s.name}: ${s.type !== undefined ? irTypeToTs(s.type, deps.embeddedTypeNames) : "unknown"};`);
+    }
 
     for (const field of fields) {
         const nul = field.nullable ? " | null" : "";

@@ -101,6 +101,13 @@ export type IRExpression =
     | { kind: "unary"; op: "!" | "-" | "+"; operand: IRExpression }
     | { kind: "conditional"; condition: IRExpression; whenTrue: IRExpression; whenFalse: IRExpression }
     | { kind: "object"; properties: Array<{ key: string; value: IRExpression }> }
+    /**
+     * An array literal, `[e0, e1, …]`. The element-order companion to the `object`
+     * literal — used by synthesized `json`-typed metadata (a list of field-metadata
+     * objects, an index's field list, …) that the backend emits blindly. Erasure is
+     * accepted for this cold introspective data; the validator hot path stays typed.
+     */
+    | { kind: "array"; elements: IRExpression[] }
     | { kind: "regexp"; pattern: string; flags: string }
     /**
      * An arrow function. Exactly ONE of `body` (a concise expression arrow — the common
@@ -254,6 +261,26 @@ export type IRMethod = {
     source: IRSourceLocation;
 };
 
+/**
+ * A static class member — a value attached to the generated CLASS (not an instance), e.g.
+ * the synthesized `metadata` introspection blob. Its `value` is a portable IR expression
+ * (typically an `object`/`array` literal, typed `json`); the compiler emits it idiomatically
+ * (`Class.name = value` in JS/Python, a static accessor in C++). `type` annotates the member
+ * for typed surfaces (`.d.ts`/headers); absent ⇒ inferred / `json`.
+ *
+ * `audience` mirrors {@link IRMethod.bodyAudience}: when present the compiler emits `value`
+ * only for bundles whose audience is listed (server/library) and the domain-provided
+ * `fallback` value otherwise — so a client bundle can carry a reduced metadata (no private
+ * fields, no indexes) while the member stays present and uniformly named. Absent ⇒ the same
+ * `value` for every audience. The compiler stays audience-mechanical and domain-agnostic.
+ */
+export type IRStaticMember = {
+    name: string;
+    value: IRExpression;
+    type?: IRType;
+    audience?: { audiences: ("server" | "library")[]; fallback: IRExpression };
+};
+
 export type IRMember = {
     name: string;
     type: IRType;
@@ -313,6 +340,14 @@ export type IRClassDeclaration = {
      * generated output. Absent when there are none.
      */
     methods?: IRMethod[];
+    /**
+     * Static members attached to the generated class (not instances) — e.g. a synthesized
+     * `metadata` introspection blob whose value is a `json` object/array literal. Emitted by
+     * the compiler from base IR like any other member; a domain frontend synthesizes them so
+     * the backend reads zero `extensions` at emit time. Holds this class's OWN statics only.
+     * Absent when there are none.
+     */
+    statics?: IRStaticMember[];
     /**
      * The parent class this schema extends — its `sourceName` (the emit symbol), NOT
      * the canonical `name`. Survives to the IR emitted to backends: inheritance is REAL

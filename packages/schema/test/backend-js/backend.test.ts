@@ -362,6 +362,19 @@ describe("exprToJs", () => {
         assert.equal(exprToJs(mapExpr), "this.tags.map((t) => t.length)");
     });
 
+    it("emits an array literal, including nested object elements", () => {
+        assert.equal(exprToJs({ kind: "array", elements: [] }), "[]");
+        assert.equal(
+            exprToJs({ kind: "array", elements: [{ kind: "literal", value: 1 }, { kind: "field", name: "x" }] }),
+            "[1, this.x]",
+        );
+        const nested: IRExpression = {
+            kind: "array",
+            elements: [{ kind: "object", properties: [{ key: "name", value: { kind: "literal", value: "id" } }] }],
+        };
+        assert.equal(exprToJs(nested), `[{ "name": "id" }]`);
+    });
+
     it("emits a block-body arrow as a native block lambda", () => {
         const arrow: IRExpression = {
             kind: "arrow", params: ["n"],
@@ -1033,6 +1046,42 @@ describe("emitJs — function-level client/server reachability gate", () => {
         // never the client.
         assert.ok(server.includes("function serverHelper"), "server-reachable helper missing from server");
         assert.ok(!client.includes("serverHelper"), "server-only helper leaked into the client bundle");
+    });
+});
+
+// ─── Synthesized static members (generic IRClassDeclaration.statics emission) ────
+
+const STATICS_IR: KeymaIR = {
+    irVersion: "1.0.0",
+    compilerVersion: "0.1.0",
+    classes: [
+        {
+            name: "thing", sourceName: "Thing", visibility: "public",
+            fields: [{ name: "id", type: { kind: "id" }, visibility: "public", readonly: true, required: true, source: SRC }],
+            statics: [
+                { name: "summary", value: { kind: "object", properties: [{ key: "kind", value: { kind: "literal", value: "thing" } }] }, type: { kind: "json" } },
+                { name: "secret", value: { kind: "literal", value: 99 }, audience: { audiences: ["server", "library"], fallback: { kind: "literal", value: 0 } } },
+            ],
+            source: { file: "thing.ts", line: 1, column: 1 },
+        },
+    ],
+    diagnostics: [],
+};
+
+describe("emitJs — synthesized static members", () => {
+    it("emits a plain static as `Class.name = <value>;`", async () => {
+        const files = (await emitJs(STATICS_IR, serverOnlyTarget(), RESOLVED_CONFIG)).files;
+        const content = fileContent(files, "dist/js/server/src/thing.js");
+        assert.ok(content.includes(`Thing.summary = { "kind": "thing" };`), content);
+        const dts = fileContent(files, "dist/js/server/src/thing.d.ts");
+        assert.ok(dts.includes(`static readonly summary: unknown;`), dts);
+    });
+
+    it("audience-gates a static: server emits `value`, client emits `fallback`", async () => {
+        const server = fileContent((await emitJs(STATICS_IR, serverOnlyTarget(), RESOLVED_CONFIG)).files, "dist/js/server/src/thing.js");
+        const client = fileContent((await emitJs(STATICS_IR, clientOnlyTarget(), RESOLVED_CONFIG)).files, "dist/js/client/src/thing.js");
+        assert.ok(server.includes("Thing.secret = 99;"), server);
+        assert.ok(client.includes("Thing.secret = 0;"), client);
     });
 });
 

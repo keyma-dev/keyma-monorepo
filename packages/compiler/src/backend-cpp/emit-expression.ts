@@ -68,6 +68,9 @@ export function exprToCpp(expr: IRExpression, opts: ExprOpts = TYPED): string {
         case "object":
             return objectToCpp(expr.properties, opts);
 
+        case "array":
+            return arrayToCpp(expr.elements, opts);
+
         case "regexp":
             return `keyma::make_regex(${cppStr(expr.pattern)}, ${cppStr(expr.flags)})`;
 
@@ -185,6 +188,11 @@ function intrinsicToCpp(expr: Extract<IRExpression, { kind: "intrinsic" }>, opts
             return `keyma::to_iso8601(${recv})`;
         case "date.now":
             return `keyma::date_get_time(keyma::date_now())`;
+        case "self":
+            // The whole record under a synthesized instance method. NOTE: the validator/formatter
+            // context is `const keyma::Value&`; reconciling `*this` (concrete struct) with the Value
+            // context is finalized when C++ synthesis lands (Unit F). Unused until then.
+            return `(*this)`;
         case "type-is":
             return `keyma::type_is(${recv}, ${cppStr(literalText(expr.args[0]))})`;
         case "instance-of":
@@ -230,6 +238,14 @@ function objectToCpp(properties: ReadonlyArray<{ key: string; value: IRExpressio
         .map((p) => `__o.set(${cppStr(p.key)}, keyma::to_value(${exprToCpp(p.value, opts)}, __a));`)
         .join(" ");
     return `[&](keyma::alloc_t __a) { auto __o = keyma::Value::object(__a); ${sets} return __o; }({})`;
+}
+
+/** An array literal as a `keyma::Value` array, mirroring {@link objectToCpp}. */
+function arrayToCpp(elements: ReadonlyArray<IRExpression>, opts: ExprOpts): string {
+    const pushes = elements
+        .map((el) => `__o.push(keyma::to_value(${exprToCpp(el, opts)}, __a));`)
+        .join(" ");
+    return `[&](keyma::alloc_t __a) { auto __o = keyma::Value::array(__a); ${pushes} return __o; }({})`;
 }
 
 /** A C++ string literal for a JS string (JSON's escaping is valid for C++). */
