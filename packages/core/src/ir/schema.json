@@ -114,6 +114,18 @@
           "type": "array",
           "items": { "type": "object", "required": ["kind"], "properties": { "kind": { "type": "string" } } }
         },
+        "bodyAudience": {
+          "type": "object",
+          "required": ["audiences", "fallback"],
+          "additionalProperties": false,
+          "properties": {
+            "audiences": { "type": "array", "items": { "enum": ["server", "library"] }, "minItems": 1 },
+            "fallback": {
+              "type": "array",
+              "items": { "type": "object", "required": ["kind"], "properties": { "kind": { "type": "string" } } }
+            }
+          }
+        },
         "visibility": { "type": "string", "enum": ["public", "private"] },
         "source": { "$ref": "#/$defs/IRSourceLocation" }
       }
@@ -199,6 +211,18 @@
             "params": { "type": "array", "items": { "$ref": "#/$defs/IRFunctionParam" } },
             "returns": { "$ref": "#/$defs/IRType" }
           }
+        },
+        {
+          "type": "object",
+          "required": ["kind", "name"],
+          "additionalProperties": false,
+          "properties": { "kind": { "const": "external" }, "name": { "type": "string", "minLength": 1 } }
+        },
+        {
+          "type": "object",
+          "required": ["kind", "name"],
+          "additionalProperties": false,
+          "properties": { "kind": { "const": "typeVar" }, "name": { "type": "string", "minLength": 1 } }
         }
       ]
     },
@@ -223,6 +247,7 @@
       "additionalProperties": false,
       "properties": {
         "name": { "type": "string", "minLength": 1 },
+        "typeParams": { "type": "array", "items": { "type": "string", "minLength": 1 } },
         "params": {
           "type": "array",
           "items": { "$ref": "#/$defs/IRFunctionParam" }

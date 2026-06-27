@@ -69,6 +69,93 @@ export function collectStatementIdentifiers(stmt: IRStatement, out: Set<string>)
     }
 }
 
+/** Collect every `typeVar` name referenced anywhere in an IRType tree into `out`. */
+export function collectTypeVarsInType(type: IRType, out: Set<string>): void {
+    switch (type.kind) {
+        case "typeVar": out.add(type.name); break;
+        case "array": collectTypeVarsInType(type.of, out); break;
+        case "function":
+            type.params.forEach((p) => collectTypeVarsInType(p.type, out));
+            if (type.returns) collectTypeVarsInType(type.returns, out);
+            break;
+        case "reference":
+            if (type.idType) collectTypeVarsInType(type.idType, out);
+            break;
+    }
+}
+
+/** Collect every `typeVar` name referenced anywhere in an IRExpression tree into `out`
+ *  (through arrow param/return types, `typeArgs` bindings, and nested sub-expressions). */
+export function collectTypeVarsInExpression(expr: IRExpression, out: Set<string>): void {
+    const args = (a: Record<string, IRType> | undefined): void => {
+        if (a) for (const t of Object.values(a)) collectTypeVarsInType(t, out);
+    };
+    switch (expr.kind) {
+        case "identifier": args(expr.typeArgs); break;
+        case "member": collectTypeVarsInExpression(expr.object, out); break;
+        case "call":
+            args(expr.typeArgs);
+            collectTypeVarsInExpression(expr.callee, out);
+            expr.args.forEach((a) => collectTypeVarsInExpression(a, out));
+            break;
+        case "new": collectTypeVarsInExpression(expr.callee, out); expr.args.forEach((a) => collectTypeVarsInExpression(a, out)); break;
+        case "typeof": collectTypeVarsInExpression(expr.operand, out); break;
+        case "unary": collectTypeVarsInExpression(expr.operand, out); break;
+        case "template": expr.parts.forEach((p) => collectTypeVarsInExpression(p, out)); break;
+        case "binary": collectTypeVarsInExpression(expr.left, out); collectTypeVarsInExpression(expr.right, out); break;
+        case "conditional":
+            collectTypeVarsInExpression(expr.condition, out);
+            collectTypeVarsInExpression(expr.whenTrue, out);
+            collectTypeVarsInExpression(expr.whenFalse, out);
+            break;
+        case "object": expr.properties.forEach((p) => collectTypeVarsInExpression(p.value, out)); break;
+        case "arrow":
+            expr.params.forEach((p) => { if (typeof p !== "string" && p.type) collectTypeVarsInType(p.type, out); });
+            if (expr.returnType) collectTypeVarsInType(expr.returnType, out);
+            if (expr.body) collectTypeVarsInExpression(expr.body, out);
+            (expr.statements ?? []).forEach((s) => collectTypeVarsInStatement(s, out));
+            break;
+        case "await": collectTypeVarsInExpression(expr.operand, out); break;
+        case "intrinsic":
+            if (expr.receiver) collectTypeVarsInExpression(expr.receiver, out);
+            expr.args.forEach((a) => collectTypeVarsInExpression(a, out));
+            break;
+    }
+}
+
+/** Collect every `typeVar` name referenced anywhere in an IRStatement tree into `out`. */
+export function collectTypeVarsInStatement(stmt: IRStatement, out: Set<string>): void {
+    switch (stmt.kind) {
+        case "return": if (stmt.value) collectTypeVarsInExpression(stmt.value, out); break;
+        case "expression": collectTypeVarsInExpression(stmt.expr, out); break;
+        case "const": collectTypeVarsInExpression(stmt.init, out); break;
+        case "assign": collectTypeVarsInExpression(stmt.target, out); collectTypeVarsInExpression(stmt.value, out); break;
+        case "if":
+            collectTypeVarsInExpression(stmt.condition, out);
+            stmt.consequent.forEach((s) => collectTypeVarsInStatement(s, out));
+            (stmt.alternate ?? []).forEach((s) => collectTypeVarsInStatement(s, out));
+            break;
+        case "forOf":
+            collectTypeVarsInExpression(stmt.iterable, out);
+            stmt.body.forEach((s) => collectTypeVarsInStatement(s, out));
+            break;
+        case "while":
+            collectTypeVarsInExpression(stmt.condition, out);
+            stmt.body.forEach((s) => collectTypeVarsInStatement(s, out));
+            break;
+        case "switch":
+            collectTypeVarsInExpression(stmt.discriminant, out);
+            stmt.cases.forEach((c) => {
+                if (c.test) collectTypeVarsInExpression(c.test, out);
+                c.body.forEach((s) => collectTypeVarsInStatement(s, out));
+            });
+            break;
+        case "break":
+        case "continue":
+            break;
+    }
+}
+
 /** The set of embedded/reference schema targets named by these fields (recursing through arrays). */
 export function collectRefTargets(fields: readonly IRMember[]): Set<string> {
     const out = new Set<string>();

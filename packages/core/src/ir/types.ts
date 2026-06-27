@@ -48,8 +48,23 @@ export type IRType =
     /** A higher-order-function type — `(params) => returns`. `params` are typed;
      *  `returns` absent ⇒ a `void`-returning function (mirrors the absent-return
      *  convention on methods). Used wherever a value is itself a function (HOF
-     *  param/return positions); never a stored field. */
-    | { kind: "function"; params: IRFunctionParam[]; returns?: IRType };
+     *  param/return positions). May ALSO appear as a stored / field / metadata value
+     *  type — i.e. "function as an assignable value" — so a synthesized member can hold
+     *  a validator/formatter function. It is still never serialized to the wire (the
+     *  runtime codec ignores function-typed members); it is re-emittable code only. */
+    | { kind: "function"; params: IRFunctionParam[]; returns?: IRType }
+    /** A runtime-provided type that the compiler does not define structurally — e.g.
+     *  `ValidationError`, `ValidatorFn`. `name` is a canonical id resolved to a
+     *  per-language symbol via the compiler-side runtime symbol table (the compiler
+     *  emits the runtime that defines them, so the mapping is defensible). The frontend
+     *  lowers types imported from `@keyma/runtime` into this node. */
+    | { kind: "external"; name: string }
+    /** A generic type variable, e.g. the `T` of a generic validator factory. Bound to a
+     *  concrete `IRType` at the function-value reference site via `typeArgs` (see the
+     *  `call`/`identifier` expression nodes). The compiler is a mechanical substitutor;
+     *  the domain frontend records the bindings. An unbound `typeVar` reaching a backend
+     *  is a `validateIR` failure. */
+    | { kind: "typeVar"; name: string };
 
 /**
  * An arrow-function parameter. The bare-string form (just the name) is the common
@@ -64,9 +79,22 @@ export type IRArrowParam = string | { name: string; type?: IRType; optional?: bo
 export type IRExpression =
     | { kind: "literal"; value: string | number | boolean | null }
     | { kind: "field"; name: string }
-    | { kind: "identifier"; name: string }
+    /**
+     * A bare identifier reference. When it names a generic function used as a value (a
+     * function-value reference), `typeArgs` binds the function's `typeParams` to concrete
+     * types at this site — the domain frontend knows the bindings (e.g. "the validator's
+     * `T` binds to the enclosing class field type"); the compiler substitutes mechanically.
+     * Absent for ordinary identifiers and non-generic references.
+     */
+    | { kind: "identifier"; name: string; typeArgs?: Record<string, IRType> }
     | { kind: "member"; object: IRExpression; member: string }
-    | { kind: "call"; callee: IRExpression; args: IRExpression[] }
+    /**
+     * A call expression. When `callee` is a generic function/factory used as a
+     * function-value (e.g. a validator factory `minLength<T>(2)`), `typeArgs` binds the
+     * callee's `typeParams` to concrete types at this site (see `identifier.typeArgs`).
+     * Absent for ordinary, non-generic calls.
+     */
+    | { kind: "call"; callee: IRExpression; args: IRExpression[]; typeArgs?: Record<string, IRType> }
     | { kind: "typeof"; operand: IRExpression }
     | { kind: "template"; parts: IRExpression[] }
     | { kind: "binary"; op: "+" | "-" | "*" | "/" | "%" | "&&" | "||" | "??" | "==" | "!=" | "<" | "<=" | ">" | ">="; left: IRExpression; right: IRExpression }
@@ -144,6 +172,14 @@ export type IRFunctionParam = { name: string; type: IRType; optional?: boolean }
  */
 export type IRFunctionDeclaration = {
     name: string;
+    /**
+     * Generic type parameters, e.g. `["T"]` for a generic validator factory
+     * `function required<T>(): (value: T) => …`. Each name may be referenced by a
+     * `{ kind: "typeVar", name }` anywhere in `params`/`returnType`/`statements`. A
+     * reference site (`call`/`identifier` with `typeArgs`) binds these to concrete
+     * types; the compiler substitutes mechanically. Absent for non-generic functions.
+     */
+    typeParams?: string[];
     params: IRFunctionParam[];
     returnType: IRType;
     /**
@@ -202,6 +238,18 @@ export type IRMethod = {
      */
     async?: boolean;
     statements: IRStatement[];
+    /**
+     * Audience-gated body. When present, the compiler emits `statements` ONLY for
+     * bundles whose audience is listed in `audiences` ("server" and/or "library"); for
+     * any other bundle (notably the client) it emits the domain-provided `fallback`
+     * statements instead. This keeps the method's SIGNATURE uniform across every bundle
+     * — it is never an absent method — while letting a server-only body collapse to a
+     * no-op (e.g. `formatSave` emits the identity `return value` on the client). The
+     * compiler stays audience-mechanical and domain-agnostic: the domain decides which
+     * audiences see the real body and supplies the fallback. Absent ⇒ the body is the
+     * same `statements` for every audience.
+     */
+    bodyAudience?: { audiences: ("server" | "library")[]; fallback: IRStatement[] };
     visibility: "public" | "private";
     source: IRSourceLocation;
 };

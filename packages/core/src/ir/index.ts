@@ -42,6 +42,7 @@ export {
     checkServices,
     checkParam,
     checkType,
+    checkTypeArgs,
     checkExpression,
     checkStatement,
     checkSourceLocation,
@@ -53,6 +54,38 @@ export {
     isBool,
     isArr,
 } from "./validate.js";
+
+// Shared IR builders — typed, valid-by-construction node constructors for the compiler
+// and every domain frontend. `validateIR` remains the backstop.
+export {
+    external,
+    typeVar,
+    instanceType,
+    fnType,
+    arrayType,
+    param,
+    literal,
+    field,
+    ident,
+    member,
+    call,
+    newExpr,
+    obj,
+    template,
+    binary,
+    unary,
+    conditional,
+    intrinsic,
+    arrowExpr,
+    arrowBlock,
+    ret,
+    constDecl,
+    exprStmt,
+    assign,
+    ifStmt,
+    method,
+    funcDecl,
+} from "./build.js";
 
 export {
     INTRINSICS,

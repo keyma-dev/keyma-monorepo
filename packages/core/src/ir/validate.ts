@@ -211,6 +211,8 @@ export function checkType(type: unknown, path: string): IRValidationError[] {
             }
             return [];
         case "instance":
+        case "external":
+        case "typeVar":
             if (!isStr(type["name"]) || type["name"] === "") {
                 return [e(`${path}.name`, "must be a non-empty string")];
             }
@@ -236,6 +238,22 @@ export function checkType(type: unknown, path: string): IRValidationError[] {
     }
 }
 
+/**
+ * Validate an optional `typeArgs` map on a function-value reference (`identifier`/`call`):
+ * an object whose keys are non-empty type-parameter names and whose values are valid IR
+ * types (the concrete bindings). Absent ⇒ no error (non-generic reference).
+ */
+export function checkTypeArgs(typeArgs: unknown, path: string): IRValidationError[] {
+    if (typeArgs === undefined) return [];
+    if (!isObj(typeArgs)) return [e(path, "must be an object when present")];
+    const errors: IRValidationError[] = [];
+    for (const [key, value] of Object.entries(typeArgs)) {
+        if (key === "") errors.push(e(path, "type-arg keys must be non-empty strings"));
+        errors.push(...checkType(value, `${path}.${key}`));
+    }
+    return errors;
+}
+
 /** Validate a portable IR expression node (the restricted, re-emittable expression subset). */
 export function checkExpression(expr: unknown, path: string): IRValidationError[] {
     if (!isObj(expr)) return [e(path, "must be an object")];
@@ -251,9 +269,14 @@ export function checkExpression(expr: unknown, path: string): IRValidationError[
             return [];
         }
         case "field":
-        case "identifier":
             if (!isStr(expr["name"]) || expr["name"] === "") return [e(`${path}.name`, "must be a non-empty string")];
             return [];
+        case "identifier": {
+            const errors: IRValidationError[] = [];
+            if (!isStr(expr["name"]) || expr["name"] === "") errors.push(e(`${path}.name`, "must be a non-empty string"));
+            errors.push(...checkTypeArgs(expr["typeArgs"], `${path}.typeArgs`));
+            return errors;
+        }
         case "member": {
             const errors = checkExpression(expr["object"], `${path}.object`);
             if (!isStr(expr["member"]) || expr["member"] === "") errors.push(e(`${path}.member`, "must be a non-empty string"));
@@ -266,6 +289,7 @@ export function checkExpression(expr: unknown, path: string): IRValidationError[
             } else {
                 expr["args"].forEach((a, i) => errors.push(...checkExpression(a, `${path}.args[${i}]`)));
             }
+            errors.push(...checkTypeArgs(expr["typeArgs"], `${path}.typeArgs`));
             return errors;
         }
         case "typeof":

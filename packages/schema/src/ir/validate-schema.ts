@@ -18,7 +18,9 @@ import {
     checkParam,
     type IRValidationError,
     type IRDocumentValidator,
+    type IRFunctionDeclaration,
 } from "@keyma/core/ir";
+import { collectTypeVarsInType, collectTypeVarsInStatement } from "@keyma/core/util";
 import { SCHEMA_EXT, UI_EXT } from "./extensions.js";
 
 /**
@@ -355,6 +357,21 @@ function checkFunctionDeclaration(decl: unknown, path: string): IRValidationErro
     if (!isObj(decl)) return [e(path, "must be an object")];
     const errors: IRValidationError[] = [];
     if (!isStr(decl["name"]) || decl["name"] === "") errors.push(e(`${path}.name`, "must be a non-empty string"));
+    // Generic type parameters (optional): a list of unique, non-empty names. Every
+    // `typeVar` referenced in the declaration must be bound here (the unbound check below).
+    const typeParams: string[] = [];
+    if ("typeParams" in decl && decl["typeParams"] !== undefined) {
+        if (!isArr(decl["typeParams"])) {
+            errors.push(e(`${path}.typeParams`, "must be an array when present"));
+        } else {
+            const seen = new Set<string>();
+            decl["typeParams"].forEach((tp, i) => {
+                if (!isStr(tp) || tp === "") { errors.push(e(`${path}.typeParams[${i}]`, "must be a non-empty string")); return; }
+                if (seen.has(tp)) { errors.push(e(`${path}.typeParams[${i}]`, `duplicate type parameter "${tp}"`)); return; }
+                seen.add(tp); typeParams.push(tp);
+            });
+        }
+    }
     if (!isArr(decl["params"])) {
         errors.push(e(`${path}.params`, "must be an array"));
     } else {
@@ -370,6 +387,20 @@ function checkFunctionDeclaration(decl: unknown, path: string): IRValidationErro
         decl["statements"].forEach((s, i) => errors.push(...checkStatement(s, `${path}.statements[${i}]`)));
     }
     errors.push(...checkSourceLocation(decl["source"], `${path}.source`));
+    // Synthesized-method invariant: a `typeVar` referenced anywhere in this declaration's
+    // signature/body must be declared in `typeParams` — an unbound type variable would have
+    // nothing to substitute at emit time. Run only once the declaration is structurally sound.
+    if (errors.length === 0) {
+        const used = new Set<string>();
+        const d = decl as unknown as IRFunctionDeclaration;
+        d.params.forEach((p) => collectTypeVarsInType(p.type, used));
+        collectTypeVarsInType(d.returnType, used);
+        d.statements.forEach((s) => collectTypeVarsInStatement(s, used));
+        const declared = new Set(typeParams);
+        for (const tv of used) {
+            if (!declared.has(tv)) errors.push(e(path, `references unbound type variable "${tv}" (not declared in typeParams)`));
+        }
+    }
     return errors;
 }
 
@@ -416,6 +447,30 @@ function checkMethod(m: unknown, path: string): IRValidationError[] {
         errors.push(e(`${path}.statements`, "must be an array"));
     } else {
         m["statements"].forEach((s, i) => errors.push(...checkStatement(s, `${path}.statements[${i}]`)));
+    }
+    // Audience-gated body (optional): a non-empty subset of {"server","library"} that sees the
+    // real `statements`, plus a `fallback` statement list for every other (client) audience.
+    if ("bodyAudience" in m && m["bodyAudience"] !== undefined) {
+        const ba = m["bodyAudience"];
+        if (!isObj(ba)) {
+            errors.push(e(`${path}.bodyAudience`, "must be an object when present"));
+        } else {
+            if (!isArr(ba["audiences"])) {
+                errors.push(e(`${path}.bodyAudience.audiences`, "must be an array"));
+            } else {
+                if (ba["audiences"].length === 0) errors.push(e(`${path}.bodyAudience.audiences`, "must not be empty"));
+                ba["audiences"].forEach((aud, i) => {
+                    if (aud !== "server" && aud !== "library") {
+                        errors.push(e(`${path}.bodyAudience.audiences[${i}]`, 'must be "server" or "library"'));
+                    }
+                });
+            }
+            if (!isArr(ba["fallback"])) {
+                errors.push(e(`${path}.bodyAudience.fallback`, "must be an array"));
+            } else {
+                ba["fallback"].forEach((s, i) => errors.push(...checkStatement(s, `${path}.bodyAudience.fallback[${i}]`)));
+            }
+        }
     }
     errors.push(...checkSourceLocation(m["source"], `${path}.source`));
     return errors;

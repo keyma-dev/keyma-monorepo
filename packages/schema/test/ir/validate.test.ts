@@ -809,3 +809,149 @@ describe("validateIR — additive IR vocabulary", () => {
         assert.equal(validateIR(doc).valid, false);
     });
 });
+
+// ─── Eliminate-domain-backends Step 1: function-as-value vocabulary ──────────────
+// external / typeVar types, generic typeParams + the unbound-typeVar invariant, typeArgs
+// bindings on function-value references, and audience-gated method bodies. Validation must
+// ACCEPT the new shapes and reject malformed ones; nothing emits them yet.
+describe("validateIR — function-as-value vocabulary (eliminate-domain-backends step 1)", () => {
+    const fnDecl = (over: Record<string, unknown>) => ({
+        ...goldenIR,
+        functionDeclarations: [{
+            name: "f",
+            params: [{ name: "x", type: { kind: "string" } }],
+            returnType: { kind: "boolean" },
+            statements: [],
+            source: minimalSource,
+            ...over,
+        }],
+    });
+
+    // ── external type ──────────────────────────────────────────────────────────
+    it("accepts the `external` type in param/return positions", () => {
+        const r = validateIR(fnDecl({
+            params: [{ name: "e", type: { kind: "external", name: "ValidationError" } }],
+            returnType: { kind: "external", name: "ValidatorFn" },
+        }));
+        assert.equal(r.valid, true, JSON.stringify(r.errors));
+    });
+
+    it("rejects an `external` type with an empty name", () => {
+        const r = validateIR(fnDecl({ returnType: { kind: "external", name: "" } }));
+        assert.equal(r.valid, false);
+    });
+
+    // ── typeParams + typeVar (bound/unbound invariant) ───────────────────────────
+    it("accepts a generic function: typeVar bound by typeParams", () => {
+        const r = validateIR(fnDecl({
+            typeParams: ["T"],
+            params: [{ name: "v", type: { kind: "typeVar", name: "T" } }],
+            returnType: { kind: "function", params: [{ name: "x", type: { kind: "typeVar", name: "T" } }], returns: { kind: "json" } },
+        }));
+        assert.equal(r.valid, true, JSON.stringify(r.errors));
+    });
+
+    it("rejects an unbound typeVar (referenced but not declared in typeParams)", () => {
+        const r = validateIR(fnDecl({
+            params: [{ name: "v", type: { kind: "typeVar", name: "T" } }],
+        }));
+        assert.equal(r.valid, false);
+        assert.ok(r.errors.some((e) => e.message.includes("unbound type variable")), JSON.stringify(r.errors));
+    });
+
+    it("rejects a typeVar with an empty name", () => {
+        const r = validateIR(fnDecl({ typeParams: ["T"], returnType: { kind: "typeVar", name: "" } }));
+        assert.equal(r.valid, false);
+    });
+
+    it("rejects duplicate typeParams", () => {
+        const r = validateIR(fnDecl({ typeParams: ["T", "T"] }));
+        assert.equal(r.valid, false);
+    });
+
+    it("rejects a non-string typeParam", () => {
+        const r = validateIR(fnDecl({ typeParams: [42] }));
+        assert.equal(r.valid, false);
+    });
+
+    it("flags a typeVar buried in the body as unbound", () => {
+        const r = validateIR(fnDecl({
+            statements: [{ kind: "expression", expr: { kind: "arrow", params: [{ name: "v", type: { kind: "typeVar", name: "U" } }], body: { kind: "identifier", name: "v" } } }],
+        }));
+        assert.equal(r.valid, false);
+        assert.ok(r.errors.some((e) => e.message.includes("unbound type variable")), JSON.stringify(r.errors));
+    });
+
+    // ── typeArgs on function-value references (call / identifier) ─────────────────
+    it("accepts typeArgs on a call expression (generic factory binding)", () => {
+        const r = validateIR(fnDecl({
+            statements: [{ kind: "expression", expr: { kind: "call", callee: { kind: "identifier", name: "minLength" }, args: [{ kind: "literal", value: 2 }], typeArgs: { T: { kind: "string" } } } }],
+        }));
+        assert.equal(r.valid, true, JSON.stringify(r.errors));
+    });
+
+    it("accepts typeArgs on an identifier (generic function-value reference)", () => {
+        const r = validateIR(fnDecl({
+            statements: [{ kind: "expression", expr: { kind: "identifier", name: "required", typeArgs: { T: { kind: "id" } } } }],
+        }));
+        assert.equal(r.valid, true, JSON.stringify(r.errors));
+    });
+
+    it("rejects typeArgs whose bound value is an invalid type", () => {
+        const r = validateIR(fnDecl({
+            statements: [{ kind: "expression", expr: { kind: "call", callee: { kind: "identifier", name: "f" }, args: [], typeArgs: { T: { kind: "nope" } } } }],
+        }));
+        assert.equal(r.valid, false);
+    });
+
+    it("rejects non-object typeArgs", () => {
+        const r = validateIR(fnDecl({
+            statements: [{ kind: "expression", expr: { kind: "identifier", name: "f", typeArgs: "T=string" } }],
+        }));
+        assert.equal(r.valid, false);
+    });
+
+    // ── bodyAudience on methods ──────────────────────────────────────────────────
+    const methodDoc = (over: Record<string, unknown>) => ({
+        ...goldenIR,
+        classes: [{
+            ...minimalSchema,
+            fields: [minimalField, { ...minimalField, name: "value", type: { kind: "string" } }],
+            methods: [{
+                name: "formatSave", kind: "method",
+                params: [{ name: "value", type: { kind: "string" } }],
+                returnType: { kind: "string" },
+                statements: [{ kind: "return", value: { kind: "identifier", name: "value" } }],
+                visibility: "public", source: minimalSource,
+                ...over,
+            }],
+        }],
+    });
+
+    it("accepts a method with a well-formed bodyAudience (server real body, client fallback)", () => {
+        const r = validateIR(methodDoc({
+            bodyAudience: { audiences: ["server", "library"], fallback: [{ kind: "return", value: { kind: "identifier", name: "value" } }] },
+        }));
+        assert.equal(r.valid, true, JSON.stringify(r.errors));
+    });
+
+    it("rejects bodyAudience with empty audiences", () => {
+        const r = validateIR(methodDoc({ bodyAudience: { audiences: [], fallback: [] } }));
+        assert.equal(r.valid, false);
+    });
+
+    it("rejects bodyAudience with an unknown audience (e.g. client)", () => {
+        const r = validateIR(methodDoc({ bodyAudience: { audiences: ["client"], fallback: [] } }));
+        assert.equal(r.valid, false);
+    });
+
+    it("rejects bodyAudience whose fallback is not an array", () => {
+        const r = validateIR(methodDoc({ bodyAudience: { audiences: ["server"], fallback: "noop" } }));
+        assert.equal(r.valid, false);
+    });
+
+    it("rejects bodyAudience with a malformed fallback statement", () => {
+        const r = validateIR(methodDoc({ bodyAudience: { audiences: ["server"], fallback: [{ kind: "bogus" }] } }));
+        assert.equal(r.valid, false);
+    });
+});
