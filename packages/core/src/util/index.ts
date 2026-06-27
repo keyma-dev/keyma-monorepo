@@ -11,6 +11,7 @@ export * from "./module-path.js";
 // Language-neutral IR traversal, visibility filtering, and code-emission helpers.
 export * from "./ir-walk.js";
 export * from "./visibility.js";
+export * from "./audience.js";
 export * from "./inheritance.js";
 export * from "./emit-literal.js";
 export * from "./diagnostics.js";

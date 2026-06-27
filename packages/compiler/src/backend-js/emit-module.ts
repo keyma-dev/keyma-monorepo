@@ -3,7 +3,7 @@ import type {
 } from "@keyma/core/ir";
 import {
     collectRefTargets, collectFunctionRefs, collectStatementIdentifiers,
-    filterVisibleFields, filterVisibleMethods,
+    filterVisibleFields, filterVisibleMethods, methodBodyForBundle, staticValueForBundle,
 } from "@keyma/core/util";
 import { stmtToJs, exprToJs } from "./emit-expression.js";
 import { irTypeToTs } from "./ir-type-to-ts.js";
@@ -121,7 +121,7 @@ function emitClassJs(cls: IRClassDeclaration, deps: ModuleEmitDeps): string {
             : method.kind === "destructor" ? `    destructor() {`
             : `    ${asyncKw}${method.name}(${params}) {`;
         lines.push(signature);
-        for (const stmt of method.statements) lines.push(stmtToJs(stmt, "        "));
+        for (const stmt of methodBodyForBundle(method, deps.bundle)) lines.push(stmtToJs(stmt, "        "));
         lines.push(`    }`);
     }
 
@@ -146,13 +146,6 @@ function emitClassJs(cls: IRClassDeclaration, deps: ModuleEmitDeps): string {
 
     lines.push("");
     return lines.join("\n");
-}
-
-/** Pick a static member's value for a bundle: the gated `value` when the bundle's audience is
- *  listed (server/library), else the domain-provided client `fallback`. */
-function staticValueForBundle(s: NonNullable<IRClassDeclaration["statics"]>[number], bundle: "client" | "server" | "library") {
-    if (s.audience === undefined) return s.value;
-    return s.audience.audiences.includes(bundle as "server" | "library") ? s.value : s.audience.fallback;
 }
 
 /** Emit a plain project-local utility function as an ES-module export. */

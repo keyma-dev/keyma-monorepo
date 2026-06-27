@@ -2,7 +2,7 @@ import type {
     IRClassDeclaration, IRMember, IRType, IRMethod, IREnumDeclaration,
     IRFunctionDeclaration, IRDiagnostic,
 } from "@keyma/core/ir";
-import { collectRefTargets, collectFunctionRefs, collectStatementIdentifiers, unwrapArray, filterVisible, filterVisibleFields, filterVisibleMethods, inheritedFields } from "@keyma/core/util";
+import { collectRefTargets, collectFunctionRefs, collectStatementIdentifiers, unwrapArray, filterVisible, filterVisibleFields, filterVisibleMethods, inheritedFields, methodBodyForBundle } from "@keyma/core/util";
 import { exprToCpp, type ExprOpts } from "./emit-expression.js";
 import { stmtToCpp, plainReturn, factoryIdent, type ReturnLowerer } from "./emit-validators.js";
 import { irTypeToCpp, memberType, traitsArg, whereValueType, fieldKind, refTargetType, binaryFieldPlan, type BinaryFieldPlan } from "./ir-type-to-cpp.js";
@@ -381,7 +381,7 @@ function emitMethod(method: IRMethod, C: string, opts: ExprOpts, deps: ModuleEmi
     }
     const ret: ReturnLowerer = (v, indent) =>
         v === null ? `${indent}return;` : `${indent}return ${exprToCpp(v, opts)};`;
-    const body = method.statements.map((s) => stmtToCpp(s, "        ", ret, opts));
+    const body = methodBodyForBundle(method, deps.bundle).map((s) => stmtToCpp(s, "        ", ret, opts));
     if (method.kind === "getter") {
         // A getter is a const accessor with a deduced (`auto`) return type.
         return [`    auto ${method.name}() const {`, ...body, `    }`];

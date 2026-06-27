@@ -128,6 +128,35 @@ describe("emitModulePython — async (010)", () => {
     });
 });
 
+// ─── bodyAudience — method body gated per bundle ──────────────────────────────
+describe("emitModulePython — bodyAudience (method body gated per bundle)", () => {
+    const model = cls({
+        name: "Doc", sourceName: "Doc", fields: [field("title")],
+        methods: [method({
+            kind: "method", name: "format_save",
+            statements: [assign("title", "scrubbed")],
+            bodyAudience: { audiences: ["server", "library"], fallback: [] },
+        })],
+    });
+
+    it("emits the real body for a server/library bundle", () => {
+        for (const bundle of ["server", "library"] as const) {
+            const py = emitModulePython("src/doc", content([model]), { ...deps, bundle });
+            assert.ok(py.includes("    def format_save(self):"), py);
+            assert.ok(py.includes("self.title = scrubbed"), py);
+        }
+    });
+
+    it("emits the identity fallback (`pass`) for the client bundle, same signature", () => {
+        const py = emitModulePython("src/doc", content([model]), { ...deps, bundle: "client" });
+        assert.ok(py.includes("    def format_save(self):"), py);
+        assert.ok(!py.includes("self.title = scrubbed"), py);
+        // An empty gated body renders as a valid `pass`.
+        const chunk = py.slice(py.indexOf("def format_save"));
+        assert.ok(chunk.includes("pass"), chunk);
+    });
+});
+
 // ─── 008 from_value walks the inheritance chain ───────────────────────────────
 describe("emitModulePython — from_value under real inheritance (008)", () => {
     it("a subclass _hydrate delegates to super()._hydrate", () => {

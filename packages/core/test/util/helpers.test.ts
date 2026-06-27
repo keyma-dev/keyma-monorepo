@@ -4,6 +4,7 @@ import type { IRExpression, IRStatement, IRMember, IRClassDeclaration, IRType, I
 import { mkRaw, isRaw } from "../../src/util/emit-literal.js";
 import { mkError, mkWarning } from "../../src/util/diagnostics.js";
 import { filterVisible, filterVisibleFields, filterVisibleMethods } from "../../src/util/visibility.js";
+import { methodBodyForBundle, staticValueForBundle } from "../../src/util/audience.js";
 import {
     unwrapArray,
     collectIdentifiers,
@@ -53,6 +54,34 @@ test("visibleFields / visibleMethods read schema shape (methods may be absent)",
     assert.deepEqual(filterVisibleMethods(schema, false), []);
     assert.deepEqual(filterVisibleMethods(schema, true).map((m) => m.name), ["m"]);
     assert.deepEqual(filterVisibleMethods({ fields: [] } as unknown as IRClassDeclaration, false), []); // undefined methods
+});
+
+// ─── audience gating ─────────────────────────────────────────────────────────
+
+test("methodBodyForBundle picks statements vs domain fallback by bundle audience", () => {
+    const real: IRStatement[] = [{ kind: "return", value: { kind: "literal", value: 1 } }];
+    const fallback: IRStatement[] = [{ kind: "return", value: null }];
+    const ungated = { statements: real } as unknown as Parameters<typeof methodBodyForBundle>[0];
+    const gated = { statements: real, bodyAudience: { audiences: ["server", "library"], fallback } } as unknown as Parameters<typeof methodBodyForBundle>[0];
+
+    // No bodyAudience ⇒ the same statements for every bundle.
+    for (const b of ["client", "server", "library"] as const) assert.equal(methodBodyForBundle(ungated, b), real);
+    // Gated ⇒ real for listed audiences, fallback for the client.
+    assert.equal(methodBodyForBundle(gated, "server"), real);
+    assert.equal(methodBodyForBundle(gated, "library"), real);
+    assert.equal(methodBodyForBundle(gated, "client"), fallback);
+});
+
+test("staticValueForBundle picks value vs domain fallback by bundle audience", () => {
+    const value: IRExpression = { kind: "literal", value: 99 };
+    const fallback: IRExpression = { kind: "literal", value: 1 };
+    const ungated = { name: "m", value } as unknown as Parameters<typeof staticValueForBundle>[0];
+    const gated = { name: "m", value, audience: { audiences: ["server", "library"], fallback } } as unknown as Parameters<typeof staticValueForBundle>[0];
+
+    for (const b of ["client", "server", "library"] as const) assert.equal(staticValueForBundle(ungated, b), value);
+    assert.equal(staticValueForBundle(gated, "server"), value);
+    assert.equal(staticValueForBundle(gated, "library"), value);
+    assert.equal(staticValueForBundle(gated, "client"), fallback);
 });
 
 // ─── IR traversal ──────────────────────────────────────────────────────────────

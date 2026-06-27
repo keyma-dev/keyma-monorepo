@@ -1,5 +1,5 @@
 import type { IRClassDeclaration, IRMember, IRMethod, IRFunctionDeclaration } from "@keyma/core/ir";
-import { collectRefTargets, collectFunctionRefs, collectStatementIdentifiers, filterVisibleFields, filterVisibleMethods } from "@keyma/core/util";
+import { collectRefTargets, collectFunctionRefs, collectStatementIdentifiers, filterVisibleFields, filterVisibleMethods, methodBodyForBundle, type Bundle } from "@keyma/core/util";
 import { renderStatements, factoryIdent } from "./emit-validators.js";
 import { intrinsicImports } from "./emit-expression.js";
 import { irTypeToPython } from "./ir-type-to-python.js";
@@ -170,7 +170,7 @@ function emitClass(cls: IRClassDeclaration, deps: ModuleEmitDeps): string[] {
     ];
     for (const method of ordered) {
         lines.push("");
-        lines.push(...emitMethodPython(method, getterNames, deps.classNameByName));
+        lines.push(...emitMethodPython(method, getterNames, deps.classNameByName, deps.bundle));
     }
     lines.push("");
 
@@ -268,9 +268,11 @@ function emitMethodPython(
     method: IRMethod,
     getterNames: ReadonlySet<string>,
     classNameByName: ReadonlyMap<string, string>,
+    bundle: Bundle,
 ): string[] {
     const lines: string[] = [];
-    const body = method.statements.length === 0 ? ["        pass"] : [renderStatements(method.statements, "        ")];
+    const stmts = methodBodyForBundle(method, bundle);
+    const body = stmts.length === 0 ? ["        pass"] : [renderStatements(stmts, "        ")];
 
     if (method.kind === "getter") {
         const ret = method.returnType !== undefined ? irTypeToPython(method.returnType, classNameByName) : "Any";

@@ -188,6 +188,81 @@ describe("emitModuleJs — async (010)", () => {
     });
 });
 
+// ─── bodyAudience — method body gated per bundle ──────────────────────────────
+describe("emitModuleJs — bodyAudience (method body gated per bundle)", () => {
+    // A `formatSave`-style method: the real body runs only server/library; the client gets the
+    // domain-provided identity (no-op) fallback. The SIGNATURE is uniform across bundles.
+    const model = cls({
+        name: "Doc",
+        sourceName: "Doc",
+        fields: [field("title")],
+        methods: [
+            method({
+                kind: "method",
+                name: "formatSave",
+                statements: [assign("title", "scrubbed")],
+                bodyAudience: { audiences: ["server", "library"], fallback: [] },
+            }),
+        ],
+    });
+
+    it("emits the real body for a server/library bundle", () => {
+        for (const bundle of ["server", "library"] as const) {
+            const js = emitModuleJs("src/doc", content([model]), { ...deps, bundle });
+            assert.ok(js.includes("formatSave() {"), js);
+            assert.ok(js.includes("this.title = scrubbed;"), js);
+        }
+    });
+
+    it("emits the identity fallback (no body) for the client bundle, same signature", () => {
+        const js = emitModuleJs("src/doc", content([model]), { ...deps, bundle: "client" });
+        assert.ok(js.includes("formatSave() {"), js);
+        assert.ok(!js.includes("this.title = scrubbed;"), js);
+    });
+});
+
+// ─── statics — synthesized static members + audience gating ───────────────────
+describe("emitModuleJs — static members + audience", () => {
+    const num = (v: number): IRExpression => ({ kind: "literal", value: v });
+    const withStatics = cls({
+        name: "Cfg",
+        sourceName: "Cfg",
+        fields: [field("id", { kind: "id" })],
+        statics: [
+            { name: "version", value: num(2) },
+            {
+                name: "shape",
+                value: num(99),                       // full (server/library)
+                audience: { audiences: ["server", "library"], fallback: num(1) },  // reduced (client)
+            },
+        ],
+    });
+
+    it("emits each static as `Class.<name> = <value>` for the bundle audience", () => {
+        const js = emitModuleJs("src/cfg", content([withStatics]), { ...deps, bundle: "library" });
+        assert.ok(js.includes("Cfg.version = 2;"), js);
+        assert.ok(js.includes("Cfg.shape = 99;"), js);
+    });
+
+    it("picks the audience fallback value for the client bundle", () => {
+        const js = emitModuleJs("src/cfg", content([withStatics]), { ...deps, bundle: "client" });
+        assert.ok(js.includes("Cfg.version = 2;"), js);
+        assert.ok(js.includes("Cfg.shape = 1;"), js);
+        assert.ok(!js.includes("Cfg.shape = 99;"), js);
+    });
+
+    it(".d.ts declares each static (type when given, else unknown)", () => {
+        const typed = cls({
+            name: "Cfg",
+            sourceName: "Cfg",
+            fields: [field("id", { kind: "id" })],
+            statics: [{ name: "version", value: num(2), type: { kind: "number" } }],
+        });
+        const dts = emitModuleDts("src/cfg", content([typed]), deps);
+        assert.ok(dts.includes("static readonly version: number;"), dts);
+    });
+});
+
 // ─── 008 fromValue walks the inheritance chain ────────────────────────────────
 describe("emitModuleJs — fromValue under real inheritance (008)", () => {
     it("a subclass _hydrate delegates to super._hydrate", () => {
