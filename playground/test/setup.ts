@@ -6,9 +6,7 @@
  * consumer of this schema library would do. `keyma build` must run first
  * (the `pretest` script handles that).
  */
-import { KeymaServer, createDirectTransport } from "@keyma/runtime/schema";
-import type { RequestContext, ServiceProvider } from "@keyma/runtime/schema";
-import { InMemoryAdapter } from "@keyma/runtime/schema/testing";
+
 
 import {
     Author,
@@ -49,19 +47,19 @@ export {
 
 /** Every schema the server should know about (persisted + ephemeral wire types). */
 export const ALL_SCHEMAS = [
-    Author.schema,
-    Post.schema,
-    Seo.schema,
-    Comment.schema,
-    Tag.schema,
-    Credentials.schema,
-    Follows.schema,
-    Related.schema,
-    Showcase.schema,
-    SignupInput.schema,
-    SignupResult.schema,
-    InviteInput.schema,
-    InviteResult.schema,
+    Author.metadata,
+    Post.metadata,
+    Seo.metadata,
+    Comment.metadata,
+    Tag.metadata,
+    Credentials.metadata,
+    Follows.metadata,
+    Related.metadata,
+    Showcase.metadata,
+    SignupInput.metadata,
+    SignupResult.metadata,
+    InviteInput.metadata,
+    InviteResult.metadata,
 ];
 
 let tokenSeq = 0;
@@ -87,52 +85,6 @@ export class AccountServiceImpl extends AccountService {
     async pending(): Promise<InviteResult[]> {
         return this.invites.map((i) => ({ id: i.id, token: i.token }));
     }
-}
-
-/** A working implementation of the generated (private) AdminService contract. */
-export class AdminServiceImpl extends AdminService {
-    purged: string[] = [];
-
-    async purge(email: string): Promise<boolean> {
-        this.purged.push(email);
-        return true;
-    }
-
-    async stats(): Promise<unknown> {
-        return { purged: this.purged.length };
-    }
-}
-
-export type Harness = {
-    server: KeymaServer;
-    adapter: InMemoryAdapter;
-    transport: ReturnType<typeof createDirectTransport>;
-    account: AccountServiceImpl;
-    admin: AdminServiceImpl;
-};
-
-/**
- * Build a fresh server backed by an in-memory adapter and a direct transport.
- * `context` lets a test impersonate a system identity (needed to reach private
- * services); it is threaded through every request.
- */
-export function makeHarness(context: RequestContext = {}): Harness {
-    const adapter = new InMemoryAdapter();
-    const account = new AccountServiceImpl();
-    const admin = new AdminServiceImpl();
-    const services: ServiceProvider[] = [account, admin];
-    const server = new KeymaServer({ schemas: ALL_SCHEMAS, adapter, services });
-    const transport = createDirectTransport(server, () => context);
-    return { server, adapter, transport, account, admin };
-}
-
-/** Seed an adapter store directly (bypassing validation), keyed by schema name. */
-export function seed(
-    adapter: InMemoryAdapter,
-    schemaName: string,
-    rows: Record<string, Record<string, unknown>>,
-): void {
-    adapter.stores.set(schemaName, new Map(Object.entries(rows)));
 }
 
 // ── Valid-payload factories ──────────────────────────────────────────────────

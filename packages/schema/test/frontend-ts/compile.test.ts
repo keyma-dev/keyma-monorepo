@@ -163,76 +163,9 @@ describe("compile all-types schema", () => {
 
 // ─── Golden IR — numeric width types ──────────────────────────────────────────
 
-describe("compile numeric-types schema", () => {
-    const result = compile({ files: [fixture("numeric-types.ts")] });
-
-    it("produces no errors", () => {
-        assert.deepEqual(errorCodes(result), [], `Errors: ${JSON.stringify(result.diagnostics)}`);
-    });
-
-    it("lowers Integer/Unsigned/Float widths, omitting bits at the default (64)", () => {
-        const schema = schemaByName(result, "NumericTypes");
-        const byName = (n: string) => {
-            const f = schema.fields.find((f) => f.name === n);
-            assert.ok(f, `field "${n}" not found`);
-            return f;
-        };
-
-        assert.deepEqual(byName("i8").type, { kind: "integer", bits: 8 });
-        assert.deepEqual(byName("i16").type, { kind: "integer", bits: 16 });
-        assert.deepEqual(byName("i32").type, { kind: "integer", bits: 32 });
-        assert.deepEqual(byName("i64").type, { kind: "integer" }); // 64 default → bits omitted
-
-        assert.deepEqual(byName("u8").type, { kind: "integer", bits: 8, unsigned: true });
-        assert.deepEqual(byName("u32").type, { kind: "integer", bits: 32, unsigned: true });
-        assert.deepEqual(byName("u64").type, { kind: "integer", unsigned: true }); // 64 default → bits omitted
-
-        assert.deepEqual(byName("f").type, { kind: "number" }); // 64 default → bits omitted
-        assert.deepEqual(byName("f32").type, { kind: "number", bits: 32 });
-    });
-
-    it("recurses through array and optional positions", () => {
-        const schema = schemaByName(result, "NumericTypes");
-        const byName = (n: string) => {
-            const f = schema.fields.find((f) => f.name === n);
-            assert.ok(f, `field "${n}" not found`);
-            return f;
-        };
-        assert.deepEqual(byName("ints").type, { kind: "array", of: { kind: "integer", bits: 16 } });
-        assert.deepEqual(byName("maybeBig").type, { kind: "integer", unsigned: true });
-        assert.equal(byName("maybeBig").required, false);
-    });
-});
-
-describe("KEYMA099 — invalid numeric width", () => {
-    it("emits KEYMA099 for a non-allowed Integer width", () => {
-        const result = cv({
-            "schema.ts": `
-                import { Schema } from "@keyma/schema/dsl";
-                import type { Integer } from "@keyma/schema/dsl";
-                @Schema() class Foo {
-                    declare bad: Integer<7>;
-                }
-            `,
-        });
-        assert.ok(hasError(result, CODES.KEYMA099), `Expected KEYMA099. Got: ${JSON.stringify(result.diagnostics)}`);
-    });
-
-    it("emits KEYMA099 for a non-allowed Float width", () => {
-        const result = cv({
-            "schema.ts": `
-                import { Schema } from "@keyma/schema/dsl";
-                import type { Float } from "@keyma/schema/dsl";
-                @Schema() class Foo {
-                    declare bad: Float<16>;
-                }
-            `,
-        });
-        assert.ok(hasError(result, CODES.KEYMA099), `Expected KEYMA099. Got: ${JSON.stringify(result.diagnostics)}`);
-    });
-});
-
 // ─── Golden IR — inheritance ──────────────────────────────────────────────────
+// (Numeric-width type mapping + KEYMA099 are domain-neutral; covered in
+//  @keyma/compiler's frontend-ts/map-type.test.ts.)
 
 describe("compile inheritance", () => {
     const result = compile({ files: [fixture("inheritance.ts")] });
@@ -289,41 +222,8 @@ describe("compile inheritance", () => {
     });
 });
 
-// ─── KEYMA034 — override subtype compatibility ───────────────────────────────
-
-describe("KEYMA034 — field override compatibility", () => {
-    function overrides(parentType: string, childType: string): ReturnType<typeof compile> {
-        return cv({
-            "schema.ts": `
-                import { Schema } from "@keyma/schema/dsl";
-                @Schema({ name: "base" }) class Base { declare x: ${parentType}; }
-                @Schema({ name: "child" }) class Child extends Base { declare x: ${childType}; }
-            `,
-        });
-    }
-
-    const ok: Array<[string, string]> = [
-        ["number", "number"],
-        ["string | null", "string"],          // narrowing: drop null
-        ['"a" | "b" | "c"', '"a" | "b"'],      // enum subset
-    ];
-    for (const [p, c] of ok) {
-        it(`allows ${p} → ${c}`, () => {
-            assert.ok(!hasError(overrides(p, c), CODES.KEYMA034), JSON.stringify(overrides(p, c).diagnostics));
-        });
-    }
-
-    const bad: Array<[string, string]> = [
-        ["string", "number"],                  // unrelated
-        ["string", "string | null"],           // widening: add null
-        ['"a" | "b"', '"a" | "b" | "c"'],      // enum superset
-    ];
-    for (const [p, c] of bad) {
-        it(`rejects ${p} → ${c}`, () => {
-            assert.ok(hasError(overrides(p, c), CODES.KEYMA034), JSON.stringify(overrides(p, c).diagnostics));
-        });
-    }
-});
+// KEYMA034 (field-override subtype compatibility) is a domain-neutral inheritance check; the full
+// ok/bad matrix moved to @keyma/compiler's frontend-ts/check-inheritance.test.ts.
 
 // ─── Golden IR — visibility ───────────────────────────────────────────────────
 

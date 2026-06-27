@@ -4,8 +4,10 @@ import type { IRDiagnostic } from "@keyma/core/ir";
 import {
     createProgram,
     DEFAULT_COMPILER_OPTIONS,
+    lowerGetterBody,
     type PortableExprCtx,
     type MethodLowerCtx,
+    type GetterLowerDeps,
 } from "../../src/frontend-ts/index.js";
 
 export type Built = { program: ts.Program; sf: ts.SourceFile; checker: ts.TypeChecker };
@@ -64,6 +66,40 @@ export function classMethod(cls: ts.ClassDeclaration, name: string): ts.MethodDe
         if (ts.isMethodDeclaration(m) && ts.isIdentifier(m.name) && m.name.text === name) return m;
     }
     throw new Error(`method "${name}" not found`);
+}
+
+export function classGetter(cls: ts.ClassDeclaration, name: string): ts.GetAccessorDeclaration {
+    for (const m of cls.members) {
+        if (ts.isGetAccessorDeclaration(m) && ts.isIdentifier(m.name) && m.name.text === name) return m;
+    }
+    throw new Error(`getter "${name}" not found`);
+}
+
+export function classSetter(cls: ts.ClassDeclaration, name: string): ts.SetAccessorDeclaration {
+    for (const m of cls.members) {
+        if (ts.isSetAccessorDeclaration(m) && ts.isIdentifier(m.name) && m.name.text === name) return m;
+    }
+    throw new Error(`setter "${name}" not found`);
+}
+
+/** Dependencies for lowering a computed getter body (the field-reference portable mode). */
+export function getterDeps(b: Built, diagnostics: IRDiagnostic[]): GetterLowerDeps {
+    return {
+        diagnostics,
+        sourceFile: b.sf,
+        checker: b.checker,
+        dslModuleName: "@keyma/schema/dsl",
+        classNames: new Set<string>(),
+    };
+}
+
+/**
+ * Lower a single computed getter's body (built from a one-class source) and return the
+ * lowered statement list — the common shape for getter-expression tests. Throws on a
+ * missing class/getter; pushed diagnostics surface through `diags`.
+ */
+export function lowerGetter(b: Built, className: string, getterName: string, diags: IRDiagnostic[]) {
+    return lowerGetterBody(classGetter(findClass(b.sf, className), getterName), getterDeps(b, diags));
 }
 
 export function classCtor(cls: ts.ClassDeclaration): ts.ConstructorDeclaration {

@@ -2,14 +2,18 @@ import { describe, it } from "node:test";
 import assert from "node:assert/strict";
 import path from "node:path";
 import { fileURLToPath } from "node:url";
-import { compileVirtual } from "./harness.js";
+import { compileVirtual } from "../../src/frontend-ts/index.js";
 import type { TagManifest } from "@keyma/core/ir";
 
+// End-to-end binary-tag assignment is domain-neutral: `@Tag`/`@RenamedFrom` are core field
+// decorators handled by the base class lowering, and `assignTags` runs over every lowered class
+// (the tag manifest is keyed by the class's canonical `name`). No `@Schema`/domain is involved.
+
 const __dirname = path.dirname(fileURLToPath(import.meta.url));
-const VIRTUAL_BASE = path.join(__dirname, "..", "..", "..", "src", "frontend-ts");
+const BASE = path.join(__dirname, "..", "..", "src", "frontend-ts");
 
 function cv(source: string, extra: Record<string, unknown> = {}) {
-    return compileVirtual({ "binmodel.ts": source }, { baseDir: VIRTUAL_BASE, ...extra });
+    return compileVirtual({ "binmodel.ts": source }, { baseDir: BASE, ...extra });
 }
 
 function tagsOf(result: ReturnType<typeof cv>, sourceName: string): Record<string, number | undefined> {
@@ -21,10 +25,7 @@ function tagsOf(result: ReturnType<typeof cv>, sourceName: string): Record<strin
 const errorCodes = (r: ReturnType<typeof cv>) => r.diagnostics.filter((d) => d.severity === "error").map((d) => d.code);
 
 const USER = `
-import { Schema } from "@keyma/schema/dsl";
-import type { ID } from "@keyma/schema/dsl";
-
-@Schema()
+import type { ID } from "@keyma/core/dsl";
 export class User {
     id!: ID;
     email!: string;
@@ -32,7 +33,7 @@ export class User {
 }
 `;
 
-describe("binary tag assignment (end to end)", () => {
+describe("binary tag assignment (end to end, no domains)", () => {
     it("assigns declaration-index tags and bumps irVersion when binary is enabled", () => {
         const r = cv(USER, { binaryTags: true });
         assert.deepEqual(errorCodes(r), []);
@@ -48,12 +49,11 @@ describe("binary tag assignment (end to end)", () => {
         assert.equal(r.tagManifest, undefined);
     });
 
-    it("honors an explicit @Tag pin", () => {
+    it("honors an explicit @Tag pin and routes the allocator around it", () => {
         const r = cv(
             `
-            import { Schema, Tag } from "@keyma/schema/dsl";
-            import type { ID } from "@keyma/schema/dsl";
-            @Schema()
+            import { Tag } from "@keyma/core/dsl";
+            import type { ID } from "@keyma/core/dsl";
             export class Post {
                 @Tag(10) id!: ID;
                 title!: string;
@@ -68,8 +68,7 @@ describe("binary tag assignment (end to end)", () => {
     it("rejects an invalid @Tag with KEYMA102", () => {
         const r = cv(
             `
-            import { Schema, Tag } from "@keyma/schema/dsl";
-            @Schema()
+            import { Tag } from "@keyma/core/dsl";
             export class P { @Tag(0) a!: string; }
             `,
             { binaryTags: true },
@@ -83,9 +82,8 @@ describe("binary tag assignment (end to end)", () => {
             schemas: { user: { nextTag: 4, fields: { id: 1, email: 2, name: 3 }, tombstones: [] } },
         };
         const renamed = `
-            import { Schema, RenamedFrom } from "@keyma/schema/dsl";
-            import type { ID } from "@keyma/schema/dsl";
-            @Schema()
+            import { RenamedFrom } from "@keyma/core/dsl";
+            import type { ID } from "@keyma/core/dsl";
             export class User {
                 id!: ID;
                 @RenamedFrom("email") emailAddress!: string;
@@ -103,16 +101,14 @@ describe("binary tag assignment (end to end)", () => {
             schemas: { user: { nextTag: 4, fields: { id: 1, email: 2, name: 3 }, tombstones: [] } },
         };
         const renamed = `
-            import { Schema } from "@keyma/schema/dsl";
-            import type { ID } from "@keyma/schema/dsl";
-            @Schema()
+            import type { ID } from "@keyma/core/dsl";
             export class User { id!: ID; emailAddress!: string; name!: string; }
         `;
         assert.ok(errorCodes(cv(renamed, { binaryTags: true, tagManifest: prev })).includes("KEYMA100"));
 
         const accepted = cv(renamed, { binaryTags: true, tagManifest: prev, acceptTags: true });
         assert.deepEqual(errorCodes(accepted), []);
-        assert.equal(tagsOf(accepted, "User")["emailAddress"], 4); // fresh tag; old "email" (2) tombstoned
+        assert.equal(tagsOf(accepted, "User")["emailAddress"], 4);
         assert.deepEqual(accepted.tagManifest!.schemas["user"]!.tombstones, [2]);
     });
 });
