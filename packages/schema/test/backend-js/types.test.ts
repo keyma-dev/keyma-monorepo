@@ -40,9 +40,13 @@ const config = { source: [], outDir: "dist", namePrefix: "", targets: [target] }
 // `types.d.ts` is the concatenation of the two. These tests guard that split (and the new
 // contract names) instead of a verbatim-against-runtime-source equality.
 
+// The RPC rewrite made the host type-agnostic (positional dispatch), so per-param runtime
+// metadata is gone — `ServiceParamMetadata` no longer exists. The surface is the slim
+// resolve/gate contract plus the wire envelope/transport types.
 const SERVICE_SURFACE = [
-    "ServiceMetadata", "ServiceMethodMetadata", "ServiceParamMetadata",
+    "ServiceMetadata", "ServiceMethodMetadata",
     "ServiceClass", "ServiceProvider", "ServiceInstance", "RequestContext",
+    "WireEncoding", "CallRequest", "CallResult", "Transport",
 ];
 const SCHEMA_SURFACE = [
     "ClassMetadata", "ValidatorFn", "FormatterFn", "FormatterEntry",
