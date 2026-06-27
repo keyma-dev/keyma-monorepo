@@ -1,7 +1,7 @@
 import { describe, it } from "node:test";
 import assert from "node:assert/strict";
 import type {
-    IRClassDeclaration, IRField, IRMethod, IRFunctionDeclaration, IRType, IRStatement, IRExpression,
+    IRClassDeclaration, IRMember, IRMethod, IRFunctionDeclaration, IRType, IRStatement, IRExpression,
 } from "@keyma/core/ir";
 import {
     emitModuleJs, emitModuleDts, type ModuleContent, type ModuleEmitDeps,
@@ -10,7 +10,7 @@ import {
 const SRC = { file: "x.ts", line: 1, column: 1 };
 
 // ─── IR builders ──────────────────────────────────────────────────────────────
-function field(name: string, type: IRType = { kind: "string" }): IRField {
+function field(name: string, type: IRType = { kind: "string" }): IRMember {
     return { name, type, visibility: "public", readonly: false, required: true, source: SRC };
 }
 
@@ -26,19 +26,18 @@ function content(classes: IRClassDeclaration[], functions: IRFunctionDeclaration
     return { classes, functions };
 }
 
-// Minimal deps — buildSchemaData returns an empty literal; the class-shell emission is what's
+// Minimal deps — buildClassData returns an empty literal; the class-shell emission is what's
 // under test, so the domain metadata object is irrelevant here.
 const deps: ModuleEmitDeps = {
     includePrivate: true,
-    includeIndexes: false,
-    formPhasesOnly: false,
+    bundle: "library",
     includeDefaults: false,
-    schemaModule: new Map(),
+    classModule: new Map(),
     functionModule: new Map(),
     embeddedTypeNames: new Map(),
     functionDecls: new Map(),
     claimedFunctionNames: new Set(),
-    buildSchemaData: () => ({}),
+    buildClassData: () => ({}),
 };
 
 const assign = (fieldName: string, from: string): IRStatement => ({

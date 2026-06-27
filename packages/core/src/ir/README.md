@@ -20,7 +20,7 @@ import {
     validateIR,
     INTRINSICS, intrinsicByOp, intrinsicByMember,
 } from "@keyma/ir";
-import type { KeymaIR, IRSchema, IRField, IRType } from "@keyma/ir";
+import type { KeymaIR, IRSchema, IRMember, IRType } from "@keyma/ir";
 ```
 
 ### Core types
@@ -30,7 +30,7 @@ import type { KeymaIR, IRSchema, IRField, IRType } from "@keyma/ir";
 | `KeymaIR` | Top-level IR document (`irVersion`, `compilerVersion`, `schemas`, `diagnostics`, …). |
 | `IRClassDeclaration` | A compiled class/schema. Holds OWN fields/methods; `extends` drives real inheritance in the output. |
 | `IREdge` | Edge metadata on an edge schema (`from`/`to`/`label`/`directed`). |
-| `IRField` | A single field within a schema. |
+| `IRMember` | A single field within a schema. |
 | `IRType` | Discriminated union of all supported field types. |
 | `IRComputed` | Computed-field descriptor. |
 | `IRExpression` | Discriminated union for getter / method / body expressions. |

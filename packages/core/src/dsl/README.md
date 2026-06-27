@@ -4,7 +4,7 @@ Type-only declarations for the Keyma authoring DSL: decorators, semantic types, 
 
 ## Purpose
 
-This is what you import when writing Keyma schemas. It:
+This is what you import when writing with Keyma. It:
 
 - Type-checks cleanly in any TypeScript editor.
 - Ships no-op runtime implementations so schemas can be imported in test/editor environments. **Decorators are compile-time annotations only** — the Keyma compiler reads them from the AST; they are never executed and never emitted into generated output.
@@ -124,8 +124,8 @@ Key authoring rules:
 | `Json` | `{ kind: "json" }` | Arbitrary JSON value |
 | `Bytes` | `{ kind: "bytes" }` | Binary blob (wire: base64 string) |
 | `Nullable<T>` | field flag `nullable: true` | Value may be `null` (orthogonal to optionality) |
-| `Reference<T>` | `{ kind: "reference", schema, idType }` | Foreign reference (stores the target's id) |
-| `Embedded<T>` | `{ kind: "embedded", schema }` | Inline sub-document |
+| `Reference<T>` | `{ kind: "reference", target, idType }` | Foreign reference (stores the target's id) |
+| `Embedded<T>` | `{ kind: "embedded", target }` | Inline sub-document |
 
 > `Nullable<T>` is a field-level boolean in the IR, not a type wrapper, so a value may be both optional (`?`) and nullable. Bare `@Schema` class fields are rejected — always write `Reference<T>` or `Embedded<T>`.
 

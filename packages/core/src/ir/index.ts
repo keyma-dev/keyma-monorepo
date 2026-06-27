@@ -1,7 +1,7 @@
 export type {
     KeymaIR,
     IRClassDeclaration,
-    IRField,
+    IRMember,
     IRType,
     IRExpression,
     IRArrowParam,

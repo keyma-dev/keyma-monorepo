@@ -39,7 +39,7 @@ Thumbs.db
 .env.*.local
 
 # Claude Code
-.claude/
-
+.claude/settings.local.json
+.claude/*.local.json
 
 .junie/

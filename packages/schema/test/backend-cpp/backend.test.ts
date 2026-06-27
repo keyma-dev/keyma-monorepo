@@ -1,7 +1,7 @@
 import { describe, it } from "node:test";
 import assert from "node:assert/strict";
 import type { ResolvedConfig } from "@keyma/compiler";
-import type { KeymaIR, IRField, IRType } from "@keyma/core/ir";
+import type { KeymaIR, IRMember, IRType } from "@keyma/core/ir";
 import { emitCpp, cppBackend } from "./harness.js";
 import { emitSupportHpp } from "@keyma/compiler/backend-cpp";
 import { sampleIR, fileBySuffix } from "./fixtures.js";
@@ -101,7 +101,7 @@ describe("emitCpp — library bundle", async () => {
         assert.ok(paths.includes("out/src/secret.hpp"));
     });
 
-    it("emits getter accessors, method, from_value, schema(), apply_defaults — and NO materializer", () => {
+    it("emits getter accessors, method, from_value, metadata(), apply_defaults — and NO materializer", () => {
         const u = fileBySuffix(files, "src/user.hpp");
         assert.ok(u.includes("auto fullName() const {"));
         assert.ok(u.includes("auto badge() const {"));
@@ -109,7 +109,7 @@ describe("emitCpp — library bundle", async () => {
         assert.ok(u.includes("return this->primaryTag->id;")); // ref member access via ->
         assert.ok(u.includes("auto greet()"));
         assert.ok(u.includes("static User from_value(const keyma::Value& v, const allocator_type& a);"));
-        assert.ok(u.includes("inline const keyma::SchemaMeta& User::schema()"));
+        assert.ok(u.includes("inline const keyma::ClassMetadata& User::metadata()"));
         assert.ok(!u.includes("materialize_User"), "materializers are removed — none should be emitted");
         assert.ok(u.includes("void apply_defaults_User("));
     });
@@ -130,8 +130,8 @@ describe("emitCpp — library bundle", async () => {
         assert.ok(u.includes("app::src::validators::minLength(2)"));
         assert.ok(u.includes("keyma::Phase::Change, app::src::formatters::trim()"));
         assert.ok(u.includes("keyma::Phase::Save"));                              // server/library includes save phase
-        assert.ok(u.includes("&app::src::address::Address::schema"));
-        assert.ok(u.includes("&app::src::tag::Tag::schema"));
+        assert.ok(u.includes("&app::src::address::Address::metadata"));
+        assert.ok(u.includes("&app::src::tag::Tag::metadata"));
         assert.ok(u.includes(".apply_defaults = &apply_defaults_User"));
     });
 
@@ -260,7 +260,7 @@ describe("emitCpp — vendorRuntime (zero-dependency drop)", async () => {
 
 describe("emitCpp — sized numeric member types", async () => {
     const loc = { file: "/proj/src/nums.ts", line: 1, column: 1 };
-    const f = (name: string, type: IRType): IRField => ({
+    const f = (name: string, type: IRType): IRMember => ({
         name, type, visibility: "public", readonly: false, required: true,
         source: loc,
     });

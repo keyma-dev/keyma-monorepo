@@ -6,7 +6,7 @@ import { tmpdir } from "node:os";
 import { join, dirname } from "node:path";
 import { fileURLToPath } from "node:url";
 import type { ResolvedConfig } from "@keyma/compiler";
-import type { KeymaIR, IRField, IRType } from "@keyma/core/ir";
+import type { KeymaIR, IRMember, IRType } from "@keyma/core/ir";
 import { emitCpp } from "./harness.js";
 
 // @keyma/runtime-cpp's header directory, resolved from this compiled test file (dist/test/).
@@ -21,7 +21,7 @@ function fld(
     name: string,
     type: IRType,
     opts: { tag?: number; required?: boolean; nullable?: boolean } = {},
-): IRField {
+): IRMember {
     return {
         name, type, visibility: "public", readonly: false,
         required: opts.required ?? true,
@@ -63,7 +63,7 @@ function binaryIR(): KeymaIR {
                     fld(DOC_TS, "alias", { kind: "string" }, { tag: 7, required: false, nullable: true }),
                     fld(DOC_TS, "tags", { kind: "array", of: { kind: "string" } }, { tag: 8 }),
                     fld(DOC_TS, "meta", { kind: "json" }, { tag: 9 }),
-                    fld(DOC_TS, "owner", { kind: "reference", schema: "person", idType: { kind: "id" } }, { tag: 10 }),
+                    fld(DOC_TS, "owner", { kind: "reference", target: "person", idType: { kind: "id" } }, { tag: 10 }),
                 ],
                 source: loc(DOC_TS),
             },
@@ -87,13 +87,13 @@ function binaryIR(): KeymaIR {
                 name: "rich", sourceName: "Rich", visibility: "public",
                 fields: [
                     fld(RICH_TS, "id", { kind: "id" }, { tag: 1 }),
-                    fld(RICH_TS, "addr", { kind: "embedded", schema: "addr" }, { tag: 2 }),
-                    fld(RICH_TS, "fav", { kind: "reference", schema: "cat", idType: { kind: "integer" } }, { tag: 3 }),
+                    fld(RICH_TS, "addr", { kind: "embedded", target: "addr" }, { tag: 2 }),
+                    fld(RICH_TS, "fav", { kind: "reference", target: "cat", idType: { kind: "integer" } }, { tag: 3 }),
                     fld(RICH_TS, "color", { kind: "enum", values: ["red", "green"], name: "Color" }, { tag: 4 }),
                     fld(RICH_TS, "score", { kind: "number", bits: 32 }, { tag: 5 }),
                     fld(RICH_TS, "ucount", { kind: "integer", bits: 32, unsigned: true }, { tag: 6 }),
-                    fld(RICH_TS, "addrs", { kind: "array", of: { kind: "embedded", schema: "addr" } }, { tag: 7 }),
-                    fld(RICH_TS, "cats", { kind: "array", of: { kind: "reference", schema: "cat", idType: { kind: "integer" } } }, { tag: 8 }),
+                    fld(RICH_TS, "addrs", { kind: "array", of: { kind: "embedded", target: "addr" } }, { tag: 7 }),
+                    fld(RICH_TS, "cats", { kind: "array", of: { kind: "reference", target: "cat", idType: { kind: "integer" } } }, { tag: 8 }),
                 ],
                 source: loc(RICH_TS),
             },

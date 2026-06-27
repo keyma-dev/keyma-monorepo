@@ -32,7 +32,7 @@ const CORE_DSL_MODULE = "@keyma/core/dsl";
 export type ServicePassContext = {
     checker: ts.TypeChecker;
     diagnostics: IRDiagnostic[];
-    schemaPrefix: string;
+    namePrefix: string;
     /** Explicit DSL-module override from config, if any (for marker resolution). */
     dslModuleName?: string;
 };
@@ -43,26 +43,28 @@ export type ServicePassContext = {
  * checks, and service-name normalization all live here rather than in any domain.
  *
  * It runs in `compileProgram` AFTER every registered domain has produced its class surface, so
- * it sees the full, finalized set of classes (`schemas`) to resolve service param/return types
+ * it sees the full, finalized set of classes (`classes`) to resolve service param/return types
  * and to enforce visibility/collision rules — without any inter-domain seam. The pass stays
  * domain-agnostic: it knows only "`@Service` classes I discovered" (matched by their
- * `@keyma/core/dsl` identity) and "classes some domain produced" (`schemas`); it never names a
- * `@Schema`/`@Edge` decorator. The contributed schemas are already finalized (their `name` is
+ * `@keyma/core/dsl` identity) and "classes some domain produced" (`classes`); it never names a
+ * domain's class decorator. The contributed classes are already finalized (their `name` is
  * the prefixed canonical identity); `sourceName` is normalization-stable, so service param/
  * return targets resolve correctly.
  */
 export function runServicePass(
     program: ts.Program,
     ctx: ServicePassContext,
-    schemas: readonly IRClassDeclaration[],
+    classes: readonly IRClassDeclaration[],
+    dataModelDecoratedNames: ReadonlySet<string>,
 ): IRService[] {
     const { checker, diagnostics } = ctx;
     const dslModuleName = ctx.dslModuleName ?? CORE_DSL_MODULE;
 
-    // The full class surface every domain produced — used to resolve service param/return
-    // types (`schemaClassNames`), to flag the service/data-class overlap (KEYMA095), and to
-    // resolve final names during normalization.
-    const schemaClassNames = new Set(schemas.map((s) => s.sourceName));
+    // The full lowered data-class surface — used to resolve service param/return types
+    // (`classNames`) and to resolve final names during normalization. `@Service` classes are
+    // NOT lowered as data classes, so the KEYMA095 service/data-model overlap is detected via
+    // `dataModelDecoratedNames` (classes bearing a registered domain class-decorator) instead.
+    const classNames = new Set(classes.map((s) => s.sourceName));
     const enums = discoverEnums(program);
 
     const services: IRService[] = [];
@@ -73,11 +75,11 @@ export function runServicePass(
             const decorator = findCoreServiceDecorator(node, checker);
             if (decorator === undefined) return;
 
-            // KEYMA095: a class that is BOTH a service and a data model. Instead of re-scanning
-            // for @Schema/@Edge (which would couple this pass to those decorators), flag a
-            // @Service whose authored name also appears among the contributed schemas — domain-
-            // agnostic, and it generalizes to any future data-producing domain.
-            if (schemaClassNames.has(node.name.text)) {
+            // KEYMA095: a class that is BOTH a service and a data model. A @Service class is not
+            // base-lowered as a data class, so we flag a @Service that ALSO bears a registered
+            // domain class-decorator (`@Schema`/`@Edge`/…) — domain-agnostic, and it generalizes
+            // to any future data-producing domain.
+            if (dataModelDecoratedNames.has(node.name.text)) {
                 diagnostics.push(
                     mkError(
                         KEYMA095,
@@ -93,7 +95,7 @@ export function runServicePass(
                 extractService(node, node.name.text, sourceFile, opts, {
                     checker,
                     dslModuleName,
-                    schemaClassNames,
+                    classNames,
                     enums,
                     diagnostics,
                 }),
@@ -101,23 +103,29 @@ export function runServicePass(
         });
     }
 
-    // Public service methods must not leak a private schema (KEYMA096). Runs while service
+    // Public service methods must not leak a private class (KEYMA096). Runs while service
     // param/return targets still carry the authored `sourceName`, matched against the private
-    // schemas' `sourceName`s.
-    checkServiceVisibilityLeaks(schemas, services, diagnostics);
+    // classes' `sourceName`s.
+    checkServiceVisibilityLeaks(classes, services, diagnostics);
 
     // Apply the configured prefix to every service `name`/`id` and rewrite its param/return
     // reference/embedded/instance targets from the authored class name (`sourceName`) to the
-    // target schema's final `name`. The contributed schemas are already normalized, so their
+    // target class's final `name`. The contributed classes are already normalized, so their
     // `name` is the final identity to point at.
-    normalizeServiceNames(schemas, services, ctx.schemaPrefix);
+    normalizeServiceNames(classes, services, ctx.namePrefix);
 
-    // Service names must be unique and must not collide with a schema name (KEYMA097). Runs on
+    // Service names must be unique and must not collide with a class name (KEYMA097). Runs on
     // the final (prefixed) names of both sides — equivalent to comparing the un-prefixed names
     // since the prefix is common.
-    checkServiceNameCollisions(schemas, services, diagnostics);
+    checkServiceNameCollisions(classes, services, diagnostics);
 
     return services;
+}
+
+/** Whether a class is a `@Service` contract (matched by its `@keyma/core/dsl` identity). The
+ *  compiler driver uses this to exclude service classes from base data-class lowering. */
+export function isServiceClass(node: ts.ClassDeclaration, checker: ts.TypeChecker): boolean {
+    return findCoreServiceDecorator(node, checker) !== undefined;
 }
 
 /** Find a `@Service` class decorator by its `@keyma/core/dsl` identity (through re-exports). */
@@ -142,7 +150,7 @@ function findCoreServiceDecorator(
 type ExtractServiceContext = {
     checker: ts.TypeChecker;
     dslModuleName: string;
-    schemaClassNames: ReadonlySet<string>;
+    classNames: ReadonlySet<string>;
     enums?: ReadonlyMap<string, EnumInfo>;
     diagnostics: IRDiagnostic[];
 };
@@ -160,14 +168,14 @@ function extractService(
     ctx: ExtractServiceContext,
 ): IRService {
     // The service name is also the generated class name — keep the source casing
-    // (no lowercasing as schemas do for collection names).
+    // (no lowercasing as data-model classes do for collection names).
     const name = serviceOptions.name ?? className;
     const visibility = serviceOptions.private === true ? "private" : "public";
 
     const methodCtx: MethodLowerCtx = {
         checker: ctx.checker,
         dslModuleName: ctx.dslModuleName,
-        schemaClassNames: ctx.schemaClassNames,
+        classNames: ctx.classNames,
         ...(ctx.enums !== undefined && { enums: ctx.enums }),
         diagnostics: ctx.diagnostics,
         sourceFile,
@@ -240,24 +248,24 @@ function memberVisibility(member: ts.ClassElement): "public" | "private" {
 /**
  * Apply the configured prefix to every service `name`/`id` and rewrite each method's
  * param/return reference/embedded/instance targets from the authored class name (`sourceName`)
- * to the target schema's final (already-prefixed) `name`. In-place mutation. The contributed
- * schemas are already normalized, so `s.name` is the final identity to point at.
+ * to the target class's final (already-prefixed) `name`. In-place mutation. The contributed
+ * classes are already normalized, so `s.name` is the final identity to point at.
  */
 function normalizeServiceNames(
-    schemas: readonly IRClassDeclaration[],
+    classes: readonly IRClassDeclaration[],
     services: IRService[],
     prefix: string,
 ): void {
-    // Authored class name (sourceName) -> final identity. Schemas are already normalized, so
+    // Authored class name (sourceName) -> final identity. Classes are already normalized, so
     // their `name` already carries the prefix; do not re-apply it here.
     const finalName = new Map<string, string>();
-    for (const s of schemas) finalName.set(s.sourceName, s.name);
+    for (const s of classes) finalName.set(s.sourceName, s.name);
 
     const rewrite = (type: IRType): void => {
         if (type.kind === "array") {
             rewrite(type.of);
         } else if (type.kind === "reference" || type.kind === "embedded") {
-            type.schema = finalName.get(type.schema) ?? type.schema;
+            type.target = finalName.get(type.target) ?? type.target;
         } else if (type.kind === "instance") {
             type.name = finalName.get(type.name) ?? type.name;
         }
@@ -273,21 +281,21 @@ function normalizeServiceNames(
     }
 }
 
-/** A public service method must not expose a private schema via a param/return type. */
+/** A public service method must not expose a private class via a param/return type. */
 function checkServiceVisibilityLeaks(
-    schemas: readonly IRClassDeclaration[],
+    classes: readonly IRClassDeclaration[],
     services: readonly IRService[],
     diagnostics: IRDiagnostic[],
 ): void {
-    const privateSchemas = new Set(
-        schemas.filter((s) => s.visibility === "private").map((s) => s.sourceName),
+    const privateClasses = new Set(
+        classes.filter((s) => s.visibility === "private").map((s) => s.sourceName),
     );
-    const leakedSchema = (t: IRType): string | undefined => {
+    const leakedClass = (t: IRType): string | undefined => {
         const inner = t.kind === "array" ? t.of : t;
-        if ((inner.kind === "reference" || inner.kind === "embedded") && privateSchemas.has(inner.schema)) {
-            return inner.schema;
+        if ((inner.kind === "reference" || inner.kind === "embedded") && privateClasses.has(inner.target)) {
+            return inner.target;
         }
-        if (inner.kind === "instance" && privateSchemas.has(inner.name)) {
+        if (inner.kind === "instance" && privateClasses.has(inner.name)) {
             return inner.name;
         }
         return undefined;
@@ -300,12 +308,12 @@ function checkServiceVisibilityLeaks(
             const types: IRType[] = [...method.params.map((p) => p.type)];
             if (method.returnType !== undefined) types.push(method.returnType);
             for (const t of types) {
-                const leaked = leakedSchema(t);
+                const leaked = leakedClass(t);
                 if (leaked !== undefined) {
                     diagnostics.push(
                         mkError(
                             KEYMA096,
-                            `Public service "${service.sourceName}" method "${method.name}" exposes private schema "${leaked}"`,
+                            `Public service "${service.sourceName}" method "${method.name}" exposes private class "${leaked}"`,
                             method.source,
                         ),
                     );
@@ -315,20 +323,20 @@ function checkServiceVisibilityLeaks(
     }
 }
 
-/** Service names must be unique and must not collide with a schema name. */
+/** Service names must be unique and must not collide with a class name. */
 function checkServiceNameCollisions(
-    schemas: readonly IRClassDeclaration[],
+    classes: readonly IRClassDeclaration[],
     services: readonly IRService[],
     diagnostics: IRDiagnostic[],
 ): void {
-    const schemaNames = new Set(schemas.map((s) => s.name));
+    const classNames = new Set(classes.map((s) => s.name));
     const seen = new Set<string>();
     for (const service of services) {
-        if (schemaNames.has(service.name)) {
+        if (classNames.has(service.name)) {
             diagnostics.push(
                 mkError(
                     KEYMA097,
-                    `Service name "${service.name}" collides with a schema of the same name`,
+                    `Service name "${service.name}" collides with a class of the same name`,
                     service.source,
                 ),
             );

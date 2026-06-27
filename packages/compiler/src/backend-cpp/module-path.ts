@@ -32,8 +32,8 @@ export function cppSanitizer(segment: string): string {
 /**
  * POSIX module path (no extension) mirroring a source file's location relative to
  * `sourceRoot`, with each segment sanitized to a valid C++ identifier. Derived from
- * the SOURCE file's stem — never the schema name — so `user-credentials.ts` lands in
- * `user_credentials` and an `@Edge({ name: "KNOWS" })` in `user.ts` lands in `user`.
+ * the SOURCE file's stem — never a declaration's canonical name — so `user-credentials.ts`
+ * lands in `user_credentials` and a declaration in `user.ts` lands in `user`.
  */
 export function moduleOf(sourceFile: string, sourceRoot: string | undefined): string {
     return moduleOfWith(sourceFile, sourceRoot, cppSanitizer);

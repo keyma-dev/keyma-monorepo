@@ -1,6 +1,6 @@
 import { test } from "node:test";
 import assert from "node:assert/strict";
-import type { IRExpression, IRStatement, IRField, IRClassDeclaration, IRType, IRFunctionDeclaration } from "../../src/ir/index.js";
+import type { IRExpression, IRStatement, IRMember, IRClassDeclaration, IRType, IRFunctionDeclaration } from "../../src/ir/index.js";
 import { mkRaw, isRaw } from "../../src/util/emit-literal.js";
 import { mkError, mkWarning } from "../../src/util/diagnostics.js";
 import { filterVisible, filterVisibleFields, filterVisibleMethods } from "../../src/util/visibility.js";
@@ -58,7 +58,7 @@ test("visibleFields / visibleMethods read schema shape (methods may be absent)",
 // ─── IR traversal ──────────────────────────────────────────────────────────────
 
 test("unwrapArray peels every array layer", () => {
-    const embedded: IRType = { kind: "embedded", schema: "Addr" };
+    const embedded: IRType = { kind: "embedded", target: "Addr" };
     const nested: IRType = { kind: "array", of: { kind: "array", of: embedded } };
     assert.deepEqual(unwrapArray(nested), embedded);
     assert.deepEqual(unwrapArray(embedded), embedded);
@@ -111,10 +111,10 @@ test("collectStatementIdentifiers walks forOf / while / switch (and skips break/
 
 test("collectRefTargets gathers embedded/reference schema names through arrays", () => {
     const fields = [
-        { type: { kind: "embedded", schema: "Addr" } },
-        { type: { kind: "array", of: { kind: "reference", schema: "User" } } },
+        { type: { kind: "embedded", target: "Addr" } },
+        { type: { kind: "array", of: { kind: "reference", target: "User" } } },
         { type: { kind: "string" } },
-    ] as unknown as IRField[];
+    ] as unknown as IRMember[];
     assert.deepEqual([...collectRefTargets(fields)].sort(), ["Addr", "User"]);
 });
 

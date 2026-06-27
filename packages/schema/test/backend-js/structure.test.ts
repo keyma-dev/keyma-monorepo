@@ -20,7 +20,7 @@ const NESTED_IR: KeymaIR = {
             fields: [
                 {
                     name: "profile",
-                    type: { kind: "reference", schema: "profile" },
+                    type: { kind: "reference", target: "profile" },
                     visibility: "public",
                     readonly: false,
                     required: true,
@@ -49,7 +49,7 @@ const target: JsTargetConfig = {
 const config = {
     source: [],
     outDir: "dist",
-    schemaPrefix: "",
+    namePrefix: "",
     targets: [target]
 };
 

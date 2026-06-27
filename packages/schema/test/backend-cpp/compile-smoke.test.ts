@@ -6,7 +6,7 @@ import { tmpdir } from "node:os";
 import { join, dirname } from "node:path";
 import { fileURLToPath } from "node:url";
 import type { ResolvedConfig } from "@keyma/compiler";
-import type { KeymaIR, IRField, IRType } from "@keyma/core/ir";
+import type { KeymaIR, IRMember, IRType } from "@keyma/core/ir";
 import { emitCpp } from "./harness.js";
 import { sampleIR } from "./fixtures.js";
 
@@ -192,7 +192,7 @@ describe("compile-smoke — generated C++ compiles under -std=c++23", () => {
             return;
         }
         const loc = { file: "/proj/src/metrics.ts", line: 1, column: 1 };
-        const f = (name: string, type: IRType): IRField => ({
+        const f = (name: string, type: IRType): IRMember => ({
             name, type, visibility: "public", readonly: false, required: true,
             source: loc,
         });
@@ -274,7 +274,7 @@ int main() {
         const loc = { file: "/proj/src/people.ts", line: 1, column: 1 };
         // Chain-unique tags — exactly what assignTags produces (child tags continue past the
         // parent's max), so the metadata-driven binary codec keeps a single flat tag space.
-        const f = (name: string, type: IRType, tag: number): IRField => ({
+        const f = (name: string, type: IRType, tag: number): IRMember => ({
             name, type, visibility: "public", readonly: false, required: true, tag, source: loc,
         });
         const ir: KeymaIR = {

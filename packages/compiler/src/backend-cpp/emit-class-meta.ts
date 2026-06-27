@@ -1,13 +1,13 @@
-import type { CppSchemaData, CppFieldData } from "./emitter-registry.js";
+import type { CppClassData, CppFieldData } from "./emitter-registry.js";
 import { typeTag } from "./ir-type-to-cpp.js";
 
 /**
- * Render a schema's `keyma::SchemaMeta` accessor body from the neutral {@link CppSchemaData}
+ * Render a class's `keyma::ClassMetadata` accessor body from the neutral {@link CppClassData}
  * a domain pack produces. The generic C++ backend owns all of this language syntax — the
- * function-local static backing arrays for the per-field validators/formatters, the schema
- * indexes and refs, the `FieldMeta` array, and the final `SchemaMeta` aggregate — while the
+ * function-local static backing arrays for the per-field validators/formatters, the class
+ * indexes and refs, the `FieldMeta` array, and the final `ClassMetadata` aggregate — while the
  * domain contributes only data (which fields ride, their validator/formatter factory calls,
- * the ref targets, indexes, etc.). Mirrors the JS/Python `buildSchemaData` → `emitLiteral`
+ * the ref targets, indexes, etc.). Mirrors the JS/Python `buildClassData` → `emitLiteral`
  * split, but the C++ aggregate is span-backed, so the layout lives in a purpose-built renderer
  * rather than a generic literal walker.
  *
@@ -18,7 +18,7 @@ import { typeTag } from "./ir-type-to-cpp.js";
 const PHASE: Record<string, string> = { change: "Change", blur: "Blur", submit: "Submit", save: "Save" };
 const I = "    ";
 
-export function emitSchemaMeta(data: CppSchemaData): string {
+export function emitClassMeta(data: CppClassData): string {
     const out: string[] = [];
 
     // Per-field validator / formatter arrays (the factory calls are the domain's only C++).
@@ -32,7 +32,7 @@ export function emitSchemaMeta(data: CppSchemaData): string {
         }
     }
 
-    // Schema-level indexes (server bundles only — already gated by the domain).
+    // Class-level indexes (server bundles only — already gated by the domain).
     data.indexes.forEach((idx, n) => {
         const names = idx.fields.map((fld) => JSON.stringify(fld)).join(", ");
         out.push(`${I}static const std::string_view __idxf_${n}[] = { ${names} };`);
@@ -44,8 +44,8 @@ export function emitSchemaMeta(data: CppSchemaData): string {
 
     // refs map (embedded/reference targets → their metadata accessor).
     if (data.refs.length > 0) {
-        const entries = data.refs.map((r) => `{ ${JSON.stringify(r.name)}, &${r.cppClass}::schema }`);
-        out.push(`${I}static const std::pair<std::string_view, const keyma::SchemaMeta& (*)()> __refs[] = { ${entries.join(", ")} };`);
+        const entries = data.refs.map((r) => `{ ${JSON.stringify(r.name)}, &${r.cppClass}::metadata }`);
+        out.push(`${I}static const std::pair<std::string_view, const keyma::ClassMetadata& (*)()> __refs[] = { ${entries.join(", ")} };`);
     }
 
     // Field metadata array.
@@ -54,7 +54,7 @@ export function emitSchemaMeta(data: CppSchemaData): string {
     for (const fi of fieldInits) out.push(`${I}${I}${fi},`);
     out.push(`${I}};`);
 
-    // The SchemaMeta aggregate (designated initializers; defaults omitted).
+    // The ClassMetadata aggregate (designated initializers; defaults omitted).
     const meta: string[] = [
         `.name = ${JSON.stringify(data.name)}`,
         `.source_name = ${JSON.stringify(data.sourceName)}`,
@@ -63,11 +63,11 @@ export function emitSchemaMeta(data: CppSchemaData): string {
     if (data.ephemeral === true) meta.push(`.ephemeral = true`);
     meta.push(`.fields = std::span<const keyma::FieldMeta>{__fields}`);
     if (data.indexes.length > 0) meta.push(`.indexes = std::span<const keyma::IndexMeta>{__idx}`);
-    if (data.refs.length > 0) meta.push(`.refs = std::span<const std::pair<std::string_view, const keyma::SchemaMeta& (*)()>>{__refs}`);
-    if (data.base !== undefined) meta.push(`.base = &${data.base}::schema`);
+    if (data.refs.length > 0) meta.push(`.refs = std::span<const std::pair<std::string_view, const keyma::ClassMetadata& (*)()>>{__refs}`);
+    if (data.base !== undefined) meta.push(`.base = &${data.base}::metadata`);
     if (data.applyDefaults !== undefined) meta.push(`.apply_defaults = &${data.applyDefaults}`);
 
-    out.push(`${I}static const keyma::SchemaMeta __meta{ ${meta.join(", ")} };`);
+    out.push(`${I}static const keyma::ClassMetadata __meta{ ${meta.join(", ")} };`);
     out.push(`${I}return __meta;`);
     return out.join("\n");
 }
@@ -85,7 +85,7 @@ function buildFieldMeta(field: CppFieldData): string {
     // order; `.bits`/`.is_unsigned`/`.id_type`/`.id_unsigned` trail `.tag`.
     const core = field.type.kind === "array" ? field.type.of : field.type;
     if (field.type.kind === "array") parts.push(`.element = ${typeTag(core)}`);
-    if (core.kind === "embedded" || core.kind === "reference") parts.push(`.target = ${JSON.stringify(core.schema)}`);
+    if (core.kind === "embedded" || core.kind === "reference") parts.push(`.target = ${JSON.stringify(core.target)}`);
     if (field.validators !== undefined && field.validators.length > 0) parts.push(`.validators = std::span<const keyma::ValidatorFn>{__v_${field.name}}`);
     if (field.formatters !== undefined && field.formatters.length > 0) parts.push(`.formatters = std::span<const keyma::PhasedFormatter>{__f_${field.name}}`);
     // Stable binary wire tag (present only when binary serialization is enabled). Trailing

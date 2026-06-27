@@ -10,7 +10,7 @@ import { cppSanitizer } from "./module-path.js";
  * `namespace keyma` block once the enum is complete.
  *
  * Enums are a general language construct, so the generic C++ backend owns their emission
- * (a non-schema build with enums would emit them too); no domain pack is involved.
+ * (a build with no data-model classes but with enums would emit them too); no domain pack is involved.
  */
 
 /** The `enum class` definition (unqualified) — emitted inside the module's own namespace. */

@@ -1,15 +1,9 @@
 import { describe, it } from "node:test";
 import assert from "node:assert/strict";
-import path from "node:path";
-import { fileURLToPath } from "node:url";
-import { readFileSync } from "node:fs";
 import type { KeymaIR } from "@keyma/core/ir";
 import { emitJs } from "./harness.js";
 import { emitTypesDts } from "@keyma/compiler/backend-js";
 import type { JsTargetConfig } from "@keyma/compiler/backend-js";
-
-const __dirname = path.dirname(fileURLToPath(import.meta.url));
-const RUNTIME_TYPES = path.resolve(__dirname, "../../../../runtime/src/types.ts");
 
 const loc = { file: "/p/src/user.ts", line: 1, column: 1 };
 const IR: KeymaIR = {
@@ -37,26 +31,56 @@ const IR: KeymaIR = {
     diagnostics: [],
 };
 const target: JsTargetConfig = { language: "js", outDir: "dist" };
-const config = { source: [], outDir: "dist", schemaPrefix: "", targets: [target] };
+const config = { source: [], outDir: "dist", namePrefix: "", targets: [target] };
+
+// The runtime `types.ts` is no longer copied verbatim: the compiler now owns ONLY the
+// service/request surface (`emitTypesDts([])`), while the data-model metadata surface
+// (`ClassMetadata`, `ValidatorFn`, …) is sliced + renamed out of the runtime source by the
+// schema pack and contributed via its `runtimeTypeDecls()` hook. A full bundle's emitted
+// `types.d.ts` is the concatenation of the two. These tests guard that split (and the new
+// contract names) instead of a verbatim-against-runtime-source equality.
+
+const SERVICE_SURFACE = [
+    "ServiceMetadata", "ServiceMethodMetadata", "ServiceParamMetadata",
+    "ServiceClass", "ServiceProvider", "ServiceInstance", "RequestContext",
+];
+const SCHEMA_SURFACE = [
+    "ClassMetadata", "ValidatorFn", "FormatterFn", "FormatterEntry",
+    "FieldMetadata", "EdgeMetadata", "ClassBrand", "ValidationError",
+    "FieldType", "ClassDefaultsFn", "ClassIndex", "RecordOf",
+];
+
+function declares(dts: string, name: string): boolean {
+    return dts.includes(`export type ${name}`) || dts.includes(`export interface ${name}`);
+}
 
 describe("inlined dependency-free types", () => {
-    it("emitTypesDts is a verbatim copy of @keyma/runtime/schema types.ts (drift guard)", () => {
-        const source = readFileSync(RUNTIME_TYPES, "utf8");
-        assert.ok(
-            emitTypesDts().includes(source),
-            "emitted types.d.ts is stale — run `npm run -w @keyma/compiler/backend-js gen-types`",
-        );
+    it("the compiler base blob declares the service/request surface ONLY (no schema metadata) and imports nothing", () => {
+        const base = emitTypesDts([]);
+        for (const t of SERVICE_SURFACE) {
+            assert.ok(declares(base, t), `compiler base blob missing service decl ${t}`);
+        }
+        // The schema metadata surface is contributed by the schema pack, not the base blob.
+        // (`ClassBrand` is *referenced* by `ServiceMetadata.refs` but not declared here, so we
+        //  guard on the truly-absent declarations.)
+        for (const t of ["ClassMetadata", "SchemaMetadata", "ValidatorFn", "FormatterFn", "FieldMetadata"]) {
+            assert.ok(!declares(base, t), `schema metadata decl ${t} must NOT be in the compiler base blob`);
+        }
+        assert.ok(!base.includes("import "), "inlined types must not import anything");
     });
 
-    it("declares the core type surface and contains no imports", () => {
-        const dts = emitTypesDts();
-        for (const t of ["SchemaMetadata", "ValidatorFn", "FormatterFn", "ServiceMetadata", "RequestContext", "ValidationError"]) {
-            assert.ok(
-                dts.includes(`export type ${t}`) || dts.includes(`export interface ${t}`),
-                `missing ${t}`,
-            );
+    it("a full bundle's emitted types.d.ts carries BOTH blobs under the new contract names", async () => {
+        const { files } = await emitJs(IR, target, config);
+        const dts = files.find((f) => f.path === "dist/client/types.d.ts")!.content as string;
+
+        for (const t of [...SERVICE_SURFACE, ...SCHEMA_SURFACE]) {
+            assert.ok(declares(dts, t), `bundle types.d.ts missing declaration ${t}`);
         }
-        assert.ok(!dts.includes("import "), "inlined types must not import anything");
+        // The pre-rename names must be fully gone from the emitted surface.
+        for (const old of ["SchemaMetadata", "SchemaClass", "SchemaDefaultsFn", "SchemaIndex"]) {
+            assert.ok(!dts.includes(old), `stale pre-rename type ${old} leaked into the bundle types.d.ts`);
+        }
+        assert.ok(!dts.includes("import "), "inlined bundle types must not import anything");
     });
 
     it("every bundle emits types.{js,d.ts}; models import from it; no @keyma imports remain", async () => {

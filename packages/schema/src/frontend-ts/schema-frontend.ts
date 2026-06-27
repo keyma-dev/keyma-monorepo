@@ -1,279 +1,490 @@
 import ts from "typescript";
 import { unwrapArray, inheritedFields } from "@keyma/core/util";
-import type { IRClassDeclaration, IRType, IRDiagnostic, IREnumDeclaration } from "@keyma/core/ir";
-import { schemaEdge, schemaEphemeral, schemaIndexes, fieldIndexes } from "../ir/extensions.js";
-import { assignTags, stripTagHints } from "./assign-tags.js";
-import { discoverSchemas } from "./discover.js";
-import { discoverEnums, type EnumInfo } from "@keyma/compiler/frontend-ts";
-import { createFunctionCollector } from "@keyma/compiler/frontend-ts";
-import { createValidatorFormatterCollector, isFactoryReturnType } from "./discover-validators.js";
+import type {
+    IRClassDeclaration, IRMember, IRType, IRDiagnostic, IRFunctionDeclaration,
+} from "@keyma/core/ir";
+import {
+    fieldExt, mutFieldExt, setFieldExtSlice, mutSchemaExt, setSchemaExtSlice, setFieldForm,
+    schemaEdge, schemaEphemeral, schemaIndexes, fieldIndexes,
+    type IRFormatter, type IRFieldIndex, type IRIndex, type IREdge,
+    type FieldExtData, type SchemaExtData,
+} from "../ir/extensions.js";
+import {
+    lowerValidateArgs, lowerFormatArgs, lowerIndexedArgs, lowerFormFieldArg, type LowerContext,
+} from "./lower-decorator.js";
+import {
+    createValidatorFormatterCollector, isFactoryReturnType, type ValidatorFormatterCollector,
+} from "./discover-validators.js";
 import { lowerValidatorFactory, lowerFormatterFactory, type LowerDeps } from "./lower-validator.js";
-import { extractSchema } from "./extract-schema.js";
-import { checkInheritance } from "./check-inheritance.js";
+import { extractDecoratorOptions } from "@keyma/compiler/frontend-ts";
+import type {
+    FrontendDomain, DomainBaseContext, DomainContext, HandlerContext, DomainDecorator,
+} from "@keyma/compiler/frontend-ts";
 import {
     mkError,
     mkWarning,
-    KEYMA001,
-    KEYMA031,
+    KEYMA017,
+    KEYMA019,
     KEYMA035,
     KEYMA036,
-    KEYMA037,
     KEYMA060,
+    KEYMA061,
     KEYMA064,
+    KEYMA065,
+    KEYMA066,
     KEYMA070,
     KEYMA072,
 } from "./diagnostics.js";
-import type { FrontendDomain, FrontendDomainContext, FrontendContribution } from "@keyma/compiler/frontend-ts";
+
+/** The module the schema-authoring decorators ship in — what discovery resolves against. */
+const SCHEMA_DSL = "@keyma/schema/dsl";
 
 /** DSL marker type names that identify a validator/formatter factory (the schema domain owns these). */
 const SCHEMA_MARKERS = { validator: "ValidatorFn", formatter: "FormatterFn" };
 
 /**
- * The **schema** frontend domain: the full @Schema/@Edge authoring pipeline
- * — discover → extract own members → validate inheritance → post-checks → lower
- * validators/formatters/functions → normalize names → assign binary tags.
- * This is the entire schema-domain frontend; the generic orchestrator (`compileProgram` in
- * `@keyma/compiler/frontend-ts`) just runs `produce` and folds the contribution into the IR
- * envelope. (`@Service` is no longer a schema concern — the compiler discovers and extracts
- * services in a built-in base pass after every domain finalizes its classes.) The CLI registers
- * this domain (via `config.domains`); the compiler references no schema symbol, and a UI domain
- * plugs in alongside it additively.
+ * The schema domain's per-compile state (built by {@link FrontendDomain.init}, threaded to every
+ * handler/hook via `ctx.state`). The validator/formatter collector resolves each `@Validate`/
+ * `@Format` factory at its use site and yields only the referenced set when drained; the two
+ * WeakMaps carry the per-class facts the member-decorator handlers accumulate (endpoint fields
+ * from `@From()`/`@To()`, and the `@Edge(...)` mark + its `directed` flag) into `finalizeClass`.
+ */
+type SchemaState = {
+    dslModuleName: string;
+    vfCollector: ValidatorFormatterCollector;
+    /** `@From()`/`@To()`-decorated field names, per class — for edge derivation + auto-indexing. */
+    endpoints: WeakMap<IRClassDeclaration, EndpointAccumulator>;
+    /** Classes decorated `@Edge(...)`, with the directed flag — for edge derivation. */
+    edgeClasses: WeakMap<IRClassDeclaration, { directed: boolean }>;
+};
+
+type EndpointAccumulator = { fromFields: string[]; toFields: string[] };
+
+/**
+ * The **schema** frontend domain in the inverted control flow: a declarative descriptor. The
+ * compiler owns DSL discovery, the base-IR build for every class, base validation, name
+ * normalization, binary tags, the function surface, enum collection, and the `@Service` base
+ * pass; this domain contributes only its slice — the `@Schema`/`@Edge` + `@Validate`/`@Format`/
+ * `@Indexed`/`@Ephemeral`/`@FormField`/`@From`/`@To`/`@Computed` decorators and their enrichment
+ * handlers, per-class aggregation (composite-index hoisting + edge derivation), the pre-normalize
+ * post-checks, the validator/formatter factory lowering, and the edge cross-reference rewrite.
+ * The CLI registers this domain (via `config.domains`); the compiler references no schema symbol,
+ * so a UI domain plugs in alongside it additively.
  */
 export const schemaFrontendDomain: FrontendDomain = {
     name: "schema",
-    produce(program: ts.Program, ctx: FrontendDomainContext): FrontendContribution {
-        const { checker, diagnostics } = ctx;
-        // The schema-authoring decorators ship in `@keyma/schema/dsl`; that is the module
-        // discovery resolves against by default (overridable via config for tests/embedding).
-        const dslModuleName = ctx.dslModuleName ?? "@keyma/schema/dsl";
+    dslModule: SCHEMA_DSL,
 
-        const discoverCtx = { checker, dslModuleName, diagnostics };
-
-        // Pass 1: discover all @Schema classes
-        const discovered = discoverSchemas(program, discoverCtx);
-
-        // Pass 1b: discover TS enum declarations referenced by schema fields
-        const enums = discoverEnums(program);
-
-        const schemaClassNames = new Set(discovered.map((d) => d.className));
-
-        // Validator/formatter collector: resolves each `@Validate`/`@Format` factory at
-        // its use site (across imports — including pure-TS library packages), enqueues
-        // its declaration, and yields only the set actually referenced when drained.
-        const vfCollector = createValidatorFormatterCollector({ checker, dslModuleName, markerNames: SCHEMA_MARKERS });
-
-        // Utility-function collector: resolves project-local functions referenced from
-        // validator/formatter bodies AND method/setter behavior bodies, compiling them
-        // (transitively) when drained. Created up front so method bodies (lowered during
-        // extraction) and validator/formatter bodies (lowered later) share one queue.
-        const functionCollector = createFunctionCollector({ checker, dslModuleName, schemaClassNames, diagnostics });
-
-        const extractCtx = {
-            checker,
+    init(ctx: DomainBaseContext): SchemaState {
+        const dslModuleName = ctx.dslModuleName ?? SCHEMA_DSL;
+        return {
             dslModuleName,
-            schemaClassNames,
-            enums,
-            diagnostics,
-            resolveValidator: vfCollector.resolveValidator,
-            resolveFormatter: vfCollector.resolveFormatter,
-            classifyFunction: functionCollector.classify,
+            vfCollector: createValidatorFormatterCollector({
+                checker: ctx.checker,
+                dslModuleName,
+                markerNames: SCHEMA_MARKERS,
+            }),
+            endpoints: new WeakMap(),
+            edgeClasses: new WeakMap(),
         };
+    },
 
-        // Pass 2: extract fields and method/setter behaviors for each schema (own only)
-        const rawSchemas = discovered.map((d) => extractSchema(d, extractCtx));
+    decorators: [
+        // ── Class decorators ──────────────────────────────────────────────────────
+        // `@Schema(...)` overrides the base-IR `name`/`visibility`/`description` and marks the
+        // class ephemeral. `@Edge(...)` shares those options and additionally records the edge
+        // (with its `directed` flag) so `finalizeClass` derives the edge from `@From()`/`@To()`.
+        {
+            name: "Schema",
+            module: SCHEMA_DSL,
+            target: "class",
+            handle(deco, ir) {
+                applyClassOptions(ir as IRClassDeclaration, deco);
+            },
+        },
+        {
+            name: "Edge",
+            module: SCHEMA_DSL,
+            target: "class",
+            handle(deco, ir, ctx) {
+                const cls = ir as IRClassDeclaration;
+                applyClassOptions(cls, deco);
+                (ctx.state as SchemaState).edgeClasses.set(cls, { directed: readEdgeDirected(deco) });
+            },
+        },
 
-        const schemasBySourceName = new Map(rawSchemas.map((s) => [s.sourceName, s]));
+        // ── Member decorators ─────────────────────────────────────────────────────
+        {
+            name: "Validate",
+            module: SCHEMA_DSL,
+            target: "member",
+            handle(deco, ir, ctx) {
+                const field = ir as IRMember;
+                const vs = lowerValidateArgs(decoratorArgs(deco), lowerCtxFrom(ctx));
+                if (vs.length > 0) {
+                    const ext = mutFieldExt(field);
+                    ext.validators = [...(ext.validators ?? []), ...vs];
+                }
+                // Promote number → integer once an `integer` validator is attached.
+                if (field.type.kind === "number" && (fieldExt(field)?.validators ?? []).some((v) => v.name === "integer")) {
+                    field.type = { kind: "integer" };
+                }
+            },
+        },
+        {
+            name: "Format",
+            module: SCHEMA_DSL,
+            target: "member",
+            handle(deco, ir, ctx) {
+                const field = ir as IRMember;
+                const fs = lowerFormatArgs(decoratorArgs(deco), lowerCtxFrom(ctx));
+                if (fs.length > 0) {
+                    const ext = mutFieldExt(field);
+                    ext.formatters = [
+                        ...(ext.formatters ?? []),
+                        ...fs.map(({ phase, spec }) => ({ phase: phase as IRFormatter["phase"], spec })),
+                    ];
+                }
+            },
+        },
+        {
+            name: "Indexed",
+            module: SCHEMA_DSL,
+            target: "member",
+            handle(deco, ir, ctx) {
+                const field = ir as IRMember;
+                const idx = lowerIndexedArgs(decoratorArgs(deco), lowerCtxFrom(ctx));
+                if (idx !== null) {
+                    const ext = mutFieldExt(field);
+                    ext.indexes = [...(ext.indexes ?? []), idx];
+                }
+            },
+        },
+        {
+            name: "Ephemeral",
+            module: SCHEMA_DSL,
+            target: "member",
+            handle(_deco, ir) {
+                mutFieldExt(ir as IRMember).ephemeral = true;
+            },
+        },
+        {
+            name: "FormField",
+            module: SCHEMA_DSL,
+            target: "member",
+            handle(deco, ir, ctx) {
+                setFieldForm(ir as IRMember, lowerFormFieldArg(decoratorArgs(deco), lowerCtxFrom(ctx)));
+            },
+        },
+        {
+            name: "From",
+            module: SCHEMA_DSL,
+            target: "member",
+            handle(_deco, ir, ctx) {
+                endpointsOf(ctx.state as SchemaState, ctx.class).fromFields.push((ir as IRMember).name);
+            },
+        },
+        {
+            name: "To",
+            module: SCHEMA_DSL,
+            target: "member",
+            handle(_deco, ir, ctx) {
+                endpointsOf(ctx.state as SchemaState, ctx.class).toFields.push((ir as IRMember).name);
+            },
+        },
+        {
+            // `@Computed()` only ever belongs on a getter (handled as a deferred behavior by the
+            // base getter lowering, KEYMA098). The driver dispatches member decorators only to
+            // stored fields, so reaching this handler means it sits on a plain property — a misuse.
+            name: "Computed",
+            module: SCHEMA_DSL,
+            target: "member",
+            handle(_deco, ir, ctx) {
+                const field = ir as IRMember;
+                ctx.diagnostics.push(
+                    mkError(
+                        KEYMA019,
+                        `@Computed() can only be applied to a getter — field "${field.name}" is a plain property`,
+                        field.source,
+                    ),
+                );
+            },
+        },
+    ],
 
-        // Pass 3: validate inheritance (no flattening — inheritance is real in the output).
-        const inheritanceCtx = { schemas: schemasBySourceName, diagnostics };
-        const schemas = checkInheritance(rawSchemas, inheritanceCtx);
+    /**
+     * Per-class aggregation after base lowering + member-decorator dispatch: auto-index the edge
+     * endpoint fields, hoist keyed field indexes into schema-level composite indexes, derive the
+     * edge from `@From()`/`@To()` endpoints, then write the schema-domain slice in its canonical
+     * shape (indexes, ephemeral, edge). A no-op on classes carrying none of these.
+     */
+    finalizeClass(cls: IRClassDeclaration, ctx: DomainContext): void {
+        const state = ctx.state as SchemaState;
+        const acc = state.endpoints.get(cls);
 
-        // Post-processing: duplicate name check
-        checkDuplicateNames(schemas, diagnostics);
-
-        // Post-processing: public schema leaks private schema
-        checkVisibilityLeaks(schemas, diagnostics);
-
-        // Post-processing: a public schema must expose at least one public field.
-        checkPublicSchemaSurface(schemas, diagnostics);
-
-        // Post-processing: persisted schemas must not reference ephemeral schemas;
-        // indexes on ephemeral schemas have no effect.
-        checkEphemeralUsage(schemas, diagnostics);
-
-        // Post-processing: edge schema structural checks (from/to fields/indexes/refs)
-        checkEdgeSchemas(schemas, diagnostics);
-
-        // Post-processing: every Reference<T> target schema must declare an ID field
-        checkReferenceTargetsHaveId(schemas, diagnostics);
-
-        // Post-processing: reject cycles in the Embedded<T> graph (infinite inline data).
-        analyzeEmbeddedCycles(schemas, diagnostics);
-
-        const lowerDeps: LowerDeps = {
-            checker,
-            dslModuleName,
-            schemaClassNames,
-            classifyFunction: functionCollector.classify,
-        };
-
-        // Pass 4: lower the validator factories referenced by @Validate (tree-shaken). Each
-        // collapses to an ordinary IRFunctionDeclaration (its body returns a typed arrow).
-        const validatorFns = vfCollector.drainValidators().map((c) =>
-            lowerValidatorFactory(c, diagnostics, lowerDeps)
-        );
-
-        // Pass 5: lower the formatter factories referenced by @Format (tree-shaken).
-        const formatterFns = vfCollector.drainFormatters().map((c) =>
-            lowerFormatterFactory(c, diagnostics, lowerDeps)
-        );
-
-        // Pass 6: enqueue the COMPLETE local utility-function surface — every project-local
-        // top-level function, referenced or not — so the IR is a complete import surface and
-        // tree-shaking is a backend (per-bundle) concern. Validator/formatter factories are
-        // excluded here (identified by their `ValidatorFn`/`FormatterFn` return type); they are
-        // lowered above, only where referenced, by the use-driven collector. Vendor functions stay
-        // reference-driven (only those reached transitively from the bodies above are kept). The
-        // drain then lowers every queued function (which may reference further functions) until the
-        // worklist is empty.
-        functionCollector.enqueueLocalSurface(program, (returnType) =>
-            isFactoryReturnType(returnType, { checker, dslModuleName, markerNames: SCHEMA_MARKERS }),
-        );
-        const functionDeclarations = [...validatorFns, ...formatterFns, ...functionCollector.drain()];
-
-        // Final pass: apply the configured prefix to every schema `name` and rewrite all
-        // cross-references (reference/embedded/edge targets) from the authored class name
-        // (`sourceName`) to the target's final `name`. After this, `name` is the single
-        // identity used by every backend, the runtime, and DB adapters. Runs last so the
-        // post-checks above (which resolve by `sourceName`) see the un-rewritten IR.
-        // (Services are normalized separately by the compiler's base service pass, which
-        // resolves against these now-finalized schema names.)
-        normalizeSchemaNames(schemas, ctx.schemaPrefix);
-
-        // Binary tag assignment — runs after flatten + normalize so it sees each schema's
-        // final, prefixed, self-contained field list. Gated behind binary being enabled so
-        // JSON-only users incur no manifest, no tags, and no `irVersion` bump.
-        let tagManifest;
-        if (ctx.binaryTags) {
-            const result = assignTags(ctx.tagManifest, schemas, { acceptTags: ctx.acceptTags });
-            diagnostics.push(...result.diagnostics);
-            tagManifest = result.manifest;
-        } else {
-            stripTagHints(schemas);
+        // Edge endpoint fields (@From()/@To()) are indexed automatically so the user need not add
+        // @Indexed; an explicit @Indexed still wins.
+        if (acc !== undefined) {
+            for (const fieldName of [...acc.fromFields, ...acc.toFields]) {
+                const field = cls.fields.find((f) => f.name === fieldName);
+                if (field !== undefined && fieldIndexes(field).length === 0) {
+                    mutFieldExt(field).indexes = [{}];
+                }
+            }
         }
 
-        // Collect the complete local enum surface (plus any referenced vendor enum).
-        const localEnums = collectLocalAndUsedEnums(schemas, enums);
+        const compositeIndexes = hoistCompositeIndexes(cls, ctx.diagnostics);
 
-        return {
-            schemas,
-            enums: localEnums,
-            functionDeclarations,
-            ...(tagManifest !== undefined ? { tagManifest } : {}),
+        let edge: IREdge | undefined;
+        const edgeMark = state.edgeClasses.get(cls);
+        if (edgeMark !== undefined) {
+            edge = deriveEdge(cls, acc ?? { fromFields: [], toFields: [] }, edgeMark.directed, ctx.diagnostics);
+        }
+
+        // Schema-domain metadata (composite indexes, ephemeral, edge) lives under
+        // `cls.extensions['schema']` — written in canonical order so the slice is stable.
+        const slice: SchemaExtData = {};
+        if (compositeIndexes.length > 0) slice.indexes = compositeIndexes;
+        if (schemaEphemeral(cls)) slice.ephemeral = true;
+        if (edge !== undefined) slice.edge = edge;
+        setSchemaExtSlice(cls, slice);
+    },
+
+    /**
+     * Pre-normalize extra checks (resolved by `sourceName`) + lower the referenced validator/
+     * formatter factories. The post-checks reject ephemeral misuse, structural edge problems,
+     * Reference<T> targets without an id, and Embedded<T> cycles; each factory collapses to an
+     * ordinary `IRFunctionDeclaration` returned to the driver's function surface.
+     */
+    check(classes: readonly IRClassDeclaration[], ctx: DomainContext): { functionDeclarations?: IRFunctionDeclaration[] } {
+        const state = ctx.state as SchemaState;
+        const { diagnostics } = ctx;
+
+        // Persisted schemas must not reference ephemeral schemas; indexes on ephemeral schemas
+        // have no effect.
+        checkEphemeralUsage(classes, diagnostics);
+        // Edge schema structural checks (from/to fields/indexes/refs).
+        checkEdgeSchemas(classes, diagnostics);
+        // Every Reference<T> target schema must declare an ID field.
+        checkReferenceTargetsHaveId(classes, diagnostics);
+        // Reject cycles in the Embedded<T> graph (infinite inline data).
+        analyzeEmbeddedCycles(classes, diagnostics);
+
+        const lowerDeps: LowerDeps = {
+            checker: ctx.checker,
+            dslModuleName: state.dslModuleName,
+            schemaClassNames: ctx.classNames,
+            classifyFunction: ctx.classify,
         };
+        const validatorFns = state.vfCollector.drainValidators().map((c) => lowerValidatorFactory(c, diagnostics, lowerDeps));
+        const formatterFns = state.vfCollector.drainFormatters().map((c) => lowerFormatterFactory(c, diagnostics, lowerDeps));
+        return { functionDeclarations: [...validatorFns, ...formatterFns] };
+    },
+
+    /** A project-local function whose return type is `ValidatorFn`/`FormatterFn` is a factory:
+     *  excluded from the eager local-function surface (it is lowered above, only where referenced). */
+    excludeFromFunctionSurface(returnType, ctx: DomainContext): boolean {
+        const state = ctx.state as SchemaState;
+        return isFactoryReturnType(returnType, {
+            checker: ctx.checker,
+            dslModuleName: state.dslModuleName,
+            markerNames: SCHEMA_MARKERS,
+        });
+    },
+
+    /** Rewrite each edge's `from`/`to` (and its `label`) from the authored class `sourceName` to
+     *  the now-prefixed final `name`, using the compiler's `sourceName → finalName` map. */
+    afterNormalize(classes: readonly IRClassDeclaration[], nameMap: ReadonlyMap<string, string>): void {
+        for (const cls of classes) {
+            const edge = schemaEdge(cls);
+            if (edge === undefined) continue;
+            edge.from = nameMap.get(edge.from) ?? edge.from;
+            edge.to = nameMap.get(edge.to) ?? edge.to;
+            // The traversal label is this edge schema's own (now prefixed) name.
+            edge.label = cls.name;
+        }
     },
 };
 
-/**
- * Apply the schema-name prefix and normalize every cross-reference to the target
- * schema's final `name`. In-place mutation of the (already flattened, validated)
- * IR arrays. Reference/embedded/edge targets are authored as class names
- * (`sourceName`); here they become the prefixed `name` so the IR — and everything
- * downstream — addresses schemas by a single canonical identity.
- */
-function normalizeSchemaNames(
-    schemas: IRClassDeclaration[],
-    prefix: string,
-): void {
-    // Authored class name (sourceName) -> final identity (prefixed name).
-    const finalName = new Map<string, string>();
-    for (const s of schemas) finalName.set(s.sourceName, prefix + s.name);
+// ─── Handler helpers ─────────────────────────────────────────────────────────────
 
-    const rewrite = (type: IRType): void => {
-        if (type.kind === "array") {
-            rewrite(type.of);
-        } else if (type.kind === "reference" || type.kind === "embedded") {
-            type.schema = finalName.get(type.schema) ?? type.schema;
-        }
+const EMPTY_ARGS = ts.factory.createNodeArray<ts.Expression>([]);
+
+/** The decorator-call argument list, or an empty list for a bare `@Decorator` (no parens). */
+function decoratorArgs(deco: ts.Decorator): ts.NodeArray<ts.Expression> {
+    const expr = deco.expression;
+    return ts.isCallExpression(expr) ? expr.arguments : EMPTY_ARGS;
+}
+
+/** Build the decorator-argument lowering context from a handler context + the domain's state. */
+function lowerCtxFrom(ctx: HandlerContext): LowerContext {
+    const state = ctx.state as SchemaState;
+    return {
+        checker: ctx.checker,
+        diagnostics: ctx.diagnostics,
+        sourceFile: ctx.sourceFile,
+        dslModuleName: ctx.dslModuleName,
+        schemaClassNames: ctx.classNames,
+        resolveValidator: state.vfCollector.resolveValidator,
+        resolveFormatter: state.vfCollector.resolveFormatter,
+        classifyFunction: ctx.classify,
     };
-
-    for (const s of schemas) {
-        for (const f of s.fields) rewrite(f.type);
-        const edge = schemaEdge(s);
-        if (edge !== undefined) {
-            edge.from = finalName.get(edge.from) ?? edge.from;
-            edge.to = finalName.get(edge.to) ?? edge.to;
-        }
-        s.name = prefix + s.name;
-        // The traversal label is this edge schema's own (now prefixed) name.
-        if (edge !== undefined) edge.label = s.name;
-    }
 }
 
-function checkDuplicateNames(schemas: IRClassDeclaration[], diagnostics: IRDiagnostic[]): void {
-    const seen = new Map<string, string>(); // name → sourceName
-    for (const schema of schemas) {
-        const existing = seen.get(schema.name);
-        if (existing !== undefined) {
-            diagnostics.push(
-                mkError(KEYMA001, `Duplicate schema name "${schema.name}" (used by both "${existing}" and "${schema.sourceName}")`, schema.source)
-            );
-        } else {
-            seen.set(schema.name, schema.sourceName);
-        }
+/** Get-or-create the per-class endpoint accumulator in the domain state. */
+function endpointsOf(state: SchemaState, cls: IRClassDeclaration): EndpointAccumulator {
+    let acc = state.endpoints.get(cls);
+    if (acc === undefined) {
+        acc = { fromFields: [], toFields: [] };
+        state.endpoints.set(cls, acc);
     }
+    return acc;
 }
 
-function checkVisibilityLeaks(schemas: IRClassDeclaration[], diagnostics: IRDiagnostic[]): void {
-    const privateSchemas = new Set(schemas.filter((s) => s.visibility === "private").map((s) => s.sourceName));
+/** Apply `@Schema`/`@Edge` options over the base IR: `name`/`private`/`description`/`ephemeral`. */
+function applyClassOptions(cls: IRClassDeclaration, deco: ts.Decorator): void {
+    const opts = extractDecoratorOptions(deco);
+    if (opts.name !== undefined) cls.name = opts.name;
+    if (opts.private === true) cls.visibility = "private";
+    if (opts.description !== undefined) cls.description = opts.description;
+    if (opts.ephemeral === true) mutSchemaExt(cls).ephemeral = true;
+}
 
-    for (const schema of schemas) {
-        if (schema.visibility !== "public") continue;
-        for (const field of schema.fields) {
-            if (field.visibility === "private") continue;
-            const t = field.type;
-            if ((t.kind === "reference" || t.kind === "embedded") && privateSchemas.has(t.schema)) {
-                diagnostics.push(
-                    mkError(
-                        KEYMA031,
-                        `Public schema "${schema.sourceName}" exposes private schema "${t.schema}" via field "${field.name}"`,
-                        field.source
-                    )
-                );
+/** Read `@Edge({ directed })` — defaults to true (a directed edge) when omitted. */
+function readEdgeDirected(deco: ts.Decorator): boolean {
+    const expr = deco.expression;
+    if (!ts.isCallExpression(expr) || expr.arguments.length === 0) return true;
+    const arg = expr.arguments[0];
+    if (arg === undefined || !ts.isObjectLiteralExpression(arg)) return true;
+    for (const prop of arg.properties) {
+        if (!ts.isPropertyAssignment(prop) || !ts.isIdentifier(prop.name)) continue;
+        if (prop.name.text !== "directed") continue;
+        if (prop.initializer.kind === ts.SyntaxKind.FalseKeyword) return false;
+        if (prop.initializer.kind === ts.SyntaxKind.TrueKeyword) return true;
+    }
+    return true;
+}
+
+// ─── finalizeClass helpers ───────────────────────────────────────────────────────
+
+/**
+ * Group keyed field indexes (`@Indexed({ key })`) into schema-level composite `IRIndex` entries
+ * and strip them from the fields (non-keyed single-field indexes stay on the field). Fields appear
+ * in declaration order, so the iteration order is already correct. Emits KEYMA017 on a composite
+ * key whose members disagree on unique/sparse.
+ */
+function hoistCompositeIndexes(cls: IRClassDeclaration, diagnostics: IRDiagnostic[]): IRIndex[] {
+    const compositeGroups = new Map<string, Array<{ fieldName: string; idx: IRFieldIndex }>>();
+    for (const field of cls.fields) {
+        const ext = fieldExt(field);
+        if (ext?.indexes === undefined) continue;
+        const keyed = ext.indexes.filter((idx) => idx.key !== undefined);
+        for (const idx of keyed) {
+            const key = idx.key!;
+            if (!compositeGroups.has(key)) compositeGroups.set(key, []);
+            compositeGroups.get(key)!.push({ fieldName: field.name, idx });
+        }
+        // Keyed entries live only in schema-level indexes, not on the field. Preserve the rest of
+        // the slice (ephemeral + validator/formatter attachments) — only `indexes` changes.
+        const remaining = ext.indexes.filter((idx) => idx.key === undefined);
+        const newExt: FieldExtData = { ...ext };
+        if (remaining.length > 0) newExt.indexes = remaining;
+        else delete newExt.indexes;
+        setFieldExtSlice(field, newExt);
+    }
+
+    const compositeIndexes: IRIndex[] = [];
+    for (const [key, entries] of compositeGroups) {
+        let unique: boolean | undefined;
+        let sparse: boolean | undefined;
+        let conflict = false;
+        for (const { idx } of entries) {
+            if (idx.unique !== undefined) {
+                if (unique !== undefined && unique !== idx.unique) conflict = true;
+                unique = idx.unique;
+            }
+            if (idx.sparse !== undefined) {
+                if (sparse !== undefined && sparse !== idx.sparse) conflict = true;
+                sparse = idx.sparse;
             }
         }
+        if (conflict) {
+            diagnostics.push(mkWarning(KEYMA017, `Composite index "${key}" has conflicting unique/sparse values across fields`));
+        }
+        const irIndex: IRIndex = {
+            name: key,
+            fields: entries.map(({ fieldName, idx }) => ({ name: fieldName, direction: idx.direction ?? 1 })),
+        };
+        if (unique !== undefined) irIndex.unique = unique;
+        if (sparse !== undefined) irIndex.sparse = sparse;
+        compositeIndexes.push(irIndex);
     }
+    return compositeIndexes;
 }
 
-// KEYMA037: a public schema whose fields are *all* private has no public surface.
-// It would emit into the client bundle with nothing readable, while on the server
-// its default (unprojected) read produces an empty projection — which adapters
-// treat as "return the whole record", leaking the private data the author meant
-// to hide. The fix is mechanical: mark the schema private (so only the system
-// identity can reach it) or make at least one field public. A field counts as
-// public surface whatever its kind — stored, reference, or embedded. Getters are
-// behaviors (re-emitted accessors), not stored/projected data, so they do not
-// count. Fieldless schemas are exempt (nothing to leak and nothing to expose).
-function checkPublicSchemaSurface(schemas: IRClassDeclaration[], diagnostics: IRDiagnostic[]): void {
-    const bySourceName = new Map(schemas.map((s) => [s.sourceName, s]));
-    for (const schema of schemas) {
-        if (schema.visibility !== "public") continue;
-        // Inheritance is real: an instance's public surface includes inherited fields, so a
-        // child with only own-private fields still passes if it inherits a public one.
-        const all = inheritedFields(schema, bySourceName);
-        if (all.length === 0) continue;
-        if (all.some((f) => f.visibility === "public")) continue;
+/** Core (array-unwrapped) reference target schema of a field type. */
+function referenceTargetOf(type: IRType): string | undefined {
+    let t: IRType = type;
+    while (t.kind === "array") t = t.of;
+    return t.kind === "reference" || t.kind === "embedded" ? t.target : undefined;
+}
+
+/**
+ * Build the IREdge from the `@From()`/`@To()`-decorated endpoint fields. The traversal label is
+ * the schema `name`. Emits KEYMA065 (missing endpoint), KEYMA066 (duplicate endpoint), and
+ * KEYMA061 (endpoint field not a reference type). Returns undefined when the edge cannot be formed.
+ */
+function deriveEdge(
+    cls: IRClassDeclaration,
+    endpoints: EndpointAccumulator,
+    directed: boolean,
+    diagnostics: IRDiagnostic[],
+): IREdge | undefined {
+    const { fromFields, toFields } = endpoints;
+
+    if (fromFields.length > 1 || toFields.length > 1) {
         diagnostics.push(
             mkError(
-                KEYMA037,
-                `Public schema "${schema.sourceName}" has only private fields — a public schema must expose at least one public field. Mark it @Schema({ private: true }), or make a field public.`,
-                schema.source,
+                KEYMA066,
+                `Edge schema "${cls.sourceName}" declares multiple @From()/@To() fields — exactly one of each is allowed`,
+                cls.source,
             ),
         );
     }
+    if (fromFields.length === 0 || toFields.length === 0) {
+        diagnostics.push(
+            mkError(
+                KEYMA065,
+                `Edge schema "${cls.sourceName}" must declare one @From() and one @To() field`,
+                cls.source,
+            ),
+        );
+        return undefined;
+    }
+
+    const fromField = fromFields[0]!;
+    const toField = toFields[0]!;
+    const from = referenceTargetOf(cls.fields.find((f) => f.name === fromField)!.type);
+    const to = referenceTargetOf(cls.fields.find((f) => f.name === toField)!.type);
+
+    if (from === undefined || to === undefined) {
+        const bad = from === undefined ? fromField : toField;
+        diagnostics.push(
+            mkError(
+                KEYMA061,
+                `Edge schema "${cls.sourceName}" endpoint field "${bad}" must be a node reference (a @Schema class or Reference<T>)`,
+                cls.source,
+            ),
+        );
+        return undefined;
+    }
+
+    return { from, fromField, to, toField, label: cls.name, directed };
 }
 
-function checkEphemeralUsage(schemas: IRClassDeclaration[], diagnostics: IRDiagnostic[]): void {
+// ─── Pre-normalize post-checks (resolved by sourceName) ──────────────────────────
+
+function checkEphemeralUsage(schemas: readonly IRClassDeclaration[], diagnostics: IRDiagnostic[]): void {
     const ephemeralSchemas = new Set(schemas.filter((s) => schemaEphemeral(s)).map((s) => s.sourceName));
 
     for (const schema of schemas) {
@@ -283,11 +494,11 @@ function checkEphemeralUsage(schemas: IRClassDeclaration[], diagnostics: IRDiagn
         if (!schemaEphemeral(schema)) {
             for (const field of schema.fields) {
                 const inner = unwrapArray(field.type);
-                if (inner.kind === "reference" && ephemeralSchemas.has(inner.schema)) {
+                if (inner.kind === "reference" && ephemeralSchemas.has(inner.target)) {
                     diagnostics.push(
                         mkError(
                             KEYMA035,
-                            `Persisted schema "${schema.sourceName}" references ephemeral schema "${inner.schema}" via field "${field.name}" — ephemeral schemas are never stored and cannot be a reference target`,
+                            `Persisted schema "${schema.sourceName}" references ephemeral schema "${inner.target}" via field "${field.name}" — ephemeral schemas are never stored and cannot be a reference target`,
                             field.source,
                         ),
                     );
@@ -310,7 +521,7 @@ function checkEphemeralUsage(schemas: IRClassDeclaration[], diagnostics: IRDiagn
     }
 }
 
-function checkEdgeSchemas(schemas: IRClassDeclaration[], diagnostics: IRDiagnostic[]): void {
+function checkEdgeSchemas(schemas: readonly IRClassDeclaration[], diagnostics: IRDiagnostic[]): void {
     const bySourceName = new Map(schemas.map((s) => [s.sourceName, s]));
     const edgeSourceNames = new Set(schemas.filter((s) => schemaEdge(s) !== undefined).map((s) => s.sourceName));
 
@@ -319,11 +530,11 @@ function checkEdgeSchemas(schemas: IRClassDeclaration[], diagnostics: IRDiagnost
         if (schemaEdge(schema) !== undefined) continue;  // checked separately below
         for (const field of schema.fields) {
             const inner = unwrapArray(field.type);
-            if ((inner.kind === "reference" || inner.kind === "embedded") && edgeSourceNames.has(inner.schema)) {
+            if ((inner.kind === "reference" || inner.kind === "embedded") && edgeSourceNames.has(inner.target)) {
                 diagnostics.push(
                     mkError(
                         KEYMA064,
-                        `Schema "${schema.sourceName}" references edge schema "${inner.schema}" via field "${field.name}" — edges are not addressable as nodes`,
+                        `Schema "${schema.sourceName}" references edge schema "${inner.target}" via field "${field.name}" — edges are not addressable as nodes`,
                         field.source,
                     ),
                 );
@@ -331,10 +542,9 @@ function checkEdgeSchemas(schemas: IRClassDeclaration[], diagnostics: IRDiagnost
         }
     }
 
-    // Per-edge structural checks. The endpoint fields, their names, and target
-    // schemas are derived from @From()/@To() in extract-schema (which also emits
-    // KEYMA061/065/066). Here we only verify the targets are node schemas — not
-    // edges — since that needs the full schema set.
+    // Per-edge structural checks. The endpoint fields, their names, and target schemas are derived
+    // from @From()/@To() in finalizeClass (which also emits KEYMA061/065/066). Here we only verify
+    // the targets are node schemas — not edges — since that needs the full schema set.
     for (const schema of schemas) {
         const edge = schemaEdge(schema);
         if (edge === undefined) continue;
@@ -354,14 +564,14 @@ function checkEdgeSchemas(schemas: IRClassDeclaration[], diagnostics: IRDiagnost
     }
 }
 
-function checkReferenceTargetsHaveId(schemas: IRClassDeclaration[], diagnostics: IRDiagnostic[]): void {
+function checkReferenceTargetsHaveId(schemas: readonly IRClassDeclaration[], diagnostics: IRDiagnostic[]): void {
     const bySourceName = new Map(schemas.map((s) => [s.sourceName, s]));
 
     for (const schema of schemas) {
         for (const field of schema.fields) {
             const inner = unwrapArray(field.type);
             if (inner.kind !== "reference") continue;
-            const target = bySourceName.get(inner.schema);
+            const target = bySourceName.get(inner.target);
             if (target === undefined) continue;
             // The id field may be inherited (the target extends a base that declares it).
             const idField = inheritedFields(target, bySourceName).find((f) => f.type.kind === "id");
@@ -369,7 +579,7 @@ function checkReferenceTargetsHaveId(schemas: IRClassDeclaration[], diagnostics:
                 diagnostics.push(
                     mkError(
                         KEYMA070,
-                        `Field "${field.name}" on schema "${schema.sourceName}" is Reference<${inner.schema}>, but "${inner.schema}" has no field of type ID — Reference<T> requires T to declare an "id: ID" field`,
+                        `Field "${field.name}" on schema "${schema.sourceName}" is Reference<${inner.target}>, but "${inner.target}" has no field of type ID — Reference<T> requires T to declare an "id: ID" field`,
                         field.source,
                     ),
                 );
@@ -382,46 +592,6 @@ function checkReferenceTargetsHaveId(schemas: IRClassDeclaration[], diagnostics:
 }
 
 /**
- * The complete local enum surface: every project-local portable enum (referenced or not, so the
- * IR is a complete import surface), plus any referenced enum regardless of origin. A non-portable
- * enum (`members === null`) is skipped — it only errors where referenced (the type mapper reports
- * KEYMA025 there). Library enums ship as declaration files (already filtered by `discoverEnums`),
- * so a non-declaration source under `node_modules` is the only vendor case to exclude from the
- * eager pass; referenced vendor enums still come in via the use-driven pass below.
- */
-function collectLocalAndUsedEnums(
-    schemas: IRClassDeclaration[],
-    enums: ReadonlyMap<string, EnumInfo>,
-): IREnumDeclaration[] {
-    const result: IREnumDeclaration[] = [];
-    const added = new Set<string>();
-    const push = (info: EnumInfo): void => {
-        if (info.members == null || added.has(info.name)) return;
-        added.add(info.name);
-        result.push({ name: info.name, members: info.members, source: info.source });
-    };
-
-    // Eager: every project-local portable enum.
-    for (const info of enums.values()) {
-        if (!info.source.file.replace(/\\/g, "/").includes("/node_modules/")) push(info);
-    }
-    // Use-driven: any enum a field references (covers a vendor enum reached by reference).
-    const used = new Set<string>();
-    const visit = (t: IRType): void => {
-        if (t.kind === "array") visit(t.of);
-        else if (t.kind === "enum" && t.name !== undefined) used.add(t.name);
-    };
-    for (const schema of schemas) {
-        for (const field of schema.fields) visit(field.type);
-    }
-    for (const name of used) {
-        const info = enums.get(name);
-        if (info !== undefined) push(info);
-    }
-    return result;
-}
-
-/**
  * Reject cycles in the Embedded<T> graph (KEYMA072, incl. a self-embed). `Embedded<T>`
  * is an inline copy, so a cycle of embeds describes infinitely-nested data and can
  * never be materialized. Only embedded edges are followed — `Reference<T>` stores
@@ -429,7 +599,7 @@ function collectLocalAndUsedEnums(
  * so embedded targets are still authored `sourceName`s. Uses a 3-colour DFS across
  * schemas.
  */
-function analyzeEmbeddedCycles(schemas: IRClassDeclaration[], diagnostics: IRDiagnostic[]): void {
+function analyzeEmbeddedCycles(schemas: readonly IRClassDeclaration[], diagnostics: IRDiagnostic[]): void {
     const known = new Set(schemas.map((s) => s.sourceName));
     const sourceOf = new Map(schemas.map((s) => [s.sourceName, s.source]));
 
@@ -442,7 +612,7 @@ function analyzeEmbeddedCycles(schemas: IRClassDeclaration[], diagnostics: IRDia
         const targets: string[] = [];
         for (const field of inheritedFields(schema, bySourceName)) {
             const inner = unwrapArray(field.type);
-            if (inner.kind === "embedded" && known.has(inner.schema)) targets.push(inner.schema);
+            if (inner.kind === "embedded" && known.has(inner.target)) targets.push(inner.target);
         }
         embedsOf.set(schema.sourceName, targets);
     }

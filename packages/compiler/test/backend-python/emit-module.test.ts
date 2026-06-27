@@ -1,14 +1,14 @@
 import { describe, it } from "node:test";
 import assert from "node:assert/strict";
 import type {
-    IRClassDeclaration, IRField, IRMethod, IRFunctionDeclaration, IRType, IRStatement, IRExpression,
+    IRClassDeclaration, IRMember, IRMethod, IRFunctionDeclaration, IRType, IRStatement, IRExpression,
 } from "@keyma/core/ir";
 import { emitModulePython, type ModuleContent, type ModuleEmitDeps } from "../../src/backend-python/emit-module.js";
 
 const SRC = { file: "x.ts", line: 1, column: 1 };
 
 // ─── IR builders ──────────────────────────────────────────────────────────────
-function field(name: string, type: IRType = { kind: "string" }): IRField {
+function field(name: string, type: IRType = { kind: "string" }): IRMember {
     return { name, type, visibility: "public", readonly: false, required: true, source: SRC };
 }
 function method(over: Partial<IRMethod> & Pick<IRMethod, "kind" | "name">): IRMethod {
@@ -23,15 +23,14 @@ function content(classes: IRClassDeclaration[], functions: IRFunctionDeclaration
 
 const deps: ModuleEmitDeps = {
     includePrivate: true,
-    includeIndexes: false,
-    formPhasesOnly: false,
+    bundle: "library",
     includeDefaults: false,
-    schemaModule: new Map(),
+    classModule: new Map(),
     functionModule: new Map(),
     classNameByName: new Map(),
     functionDecls: new Map(),
     claimedFunctionNames: new Set(),
-    buildSchemaData: () => ({}),
+    buildClassData: () => ({}),
 };
 
 const assign = (fieldName: string, from: string): IRStatement => ({

@@ -2,6 +2,7 @@ import type {
     KeymaIR,
     IRClassDeclaration,
     IRType,
+    IRMember,
     IRFunctionDeclaration,
 } from "@keyma/core/ir";
 import type { EmitFile } from "../driver/index.js";
@@ -12,14 +13,15 @@ export const SERVICES_REF = "services";
 export const SERVICE_CLIENT_REF = "service-client";
 
 /**
- * Options the generic per-module emitter passes to a domain's `buildSchemaData`. The contract
+ * Options the generic per-module emitter passes to a domain's `buildClassData`. The contract
  * between the bundle shell and the domain pack; carries only IR-derived data, so it stays
  * domain-neutral in `@keyma/compiler`.
  */
-export type SchemaDataOptions = {
+export type ClassDataOptions = {
     includePrivate: boolean;
-    includeIndexes: boolean;
-    formPhasesOnly: boolean;
+    /** Which bundle is being emitted. A domain derives its own per-bundle gating (e.g. index /
+     *  phase inclusion) from this neutral value. */
+    bundle: "client" | "server" | "library";
     /** Every project-local function declaration keyed by name — a domain pack reads a
      *  validator/formatter factory's params from here to order its direct-ref call args. */
     functionDecls: ReadonlyMap<string, IRFunctionDeclaration>;
@@ -27,12 +29,12 @@ export type SchemaDataOptions = {
     refs: readonly { name: string; cppClass: string }[];
     /** Unqualified name of the apply_defaults free function to reference, if any. */
     applyDefaultsName?: string;
-    /** Fully-qualified C++ type of the `extends` parent (for `.base = &Parent::schema`), if any. */
+    /** Fully-qualified C++ type of the `extends` parent (for `.base = &Parent::metadata`), if any. */
     baseClass?: string;
     /** Root namespace. */
     nsRoot: string;
     /** A validator/formatter factory's fully-qualified namespace (its SOURCE module's namespace,
-     *  e.g. `app::src::validators`) — the schema metadata calls it like a cross-module ref target. */
+     *  e.g. `app::src::validators`) — the class metadata calls it like a cross-module ref target. */
     functionNamespace: (name: string) => string;
 };
 
@@ -44,7 +46,7 @@ export type ServiceEmitDeps = {
     /** Complete `#include` token (with delimiters) for the runtime header. */
     runtimeInclude: string;
     /** sourceName → bundle-relative model module ref (e.g. "models/user"). */
-    schemaModule: ReadonlyMap<string, string>;
+    classModule: ReadonlyMap<string, string>;
     /** Reference/embedded target `name` → emitted C++ class (`sourceName`). */
     classNameByName: ReadonlyMap<string, string>;
     /** Reference/embedded target `name` → fully-qualified C++ struct type. */
@@ -61,7 +63,7 @@ export type ServiceClientEmitDeps = {
     includePrivate: boolean;
     nsRoot: string;
     /** sourceName → bundle-relative model module ref (e.g. "models/user"). */
-    schemaModule: ReadonlyMap<string, string>;
+    classModule: ReadonlyMap<string, string>;
     /** Reference/embedded target `name` → emitted C++ class (`sourceName`). */
     classNameByName: ReadonlyMap<string, string>;
     /** Reference/embedded target `name` → fully-qualified C++ struct type. */
@@ -73,8 +75,8 @@ export type ServiceClientEmitDeps = {
 };
 
 /**
- * One field's neutral metadata, produced by a domain's `buildSchemaData` and rendered into a
- * `keyma::FieldMeta` by the compiler's `emitSchemaMeta`. Carries the IR `type` raw — the
+ * One field's neutral metadata, produced by a domain's `buildClassData` and rendered into a
+ * `keyma::FieldMeta` by the compiler's `emitClassMeta`. Carries the IR `type` raw — the
  * compiler derives the `TypeTag` / element / target / bits / id-type tokens, so the domain
  * emits no C++ type syntax. The `validators` / `formatters` factory-call fragments are the
  * domain's sole C++ contribution (the analogue of the JS model's `mkRaw` factory calls).
@@ -99,51 +101,62 @@ export type CppFieldData = {
 };
 
 /**
- * A schema's neutral metadata, produced by a domain's `buildSchemaData`. Language-neutral
+ * A class's neutral metadata, produced by a domain's `buildClassData`. Language-neutral
  * but for the per-field validator/formatter factory-call fragments; the compiler's
- * `emitSchemaMeta` renders it into the span-backed `keyma::SchemaMeta` accessor body. The
+ * `emitClassMeta` renders it into the span-backed `keyma::ClassMetadata` accessor body. The
  * camelCase identity keys are the cross-language runtime contract.
  */
-export type CppSchemaData = {
+export type CppClassData = {
     name: string;
     sourceName: string;
     visibility?: "private";
     ephemeral?: boolean;
     /** Unqualified `apply_defaults` free-function name to reference (`&name`), if any. */
     applyDefaults?: string;
-    /** Fully-qualified C++ type of the `extends` parent — renders `.base = &Parent::schema` so the
+    /** Fully-qualified C++ type of the `extends` parent — renders `.base = &Parent::metadata` so the
      *  runtime walks the chain (metadata carries OWN fields only). */
     base?: string;
-    /** Embedded/reference targets: identity `name` + fully-qualified C++ class (for `&Class::schema`). */
+    /** Embedded/reference targets: identity `name` + fully-qualified C++ class (for `&Class::metadata`). */
     refs: readonly { name: string; cppClass: string }[];
-    /** Schema-level indexes (already gated by `includeIndexes`); `fields` are bare field names. */
+    /** Class-level indexes (already gated by the bundle); `fields` are bare field names. */
     indexes: readonly { fields: readonly string[]; unique: boolean }[];
     fields: readonly CppFieldData[];
 };
 
-/** Builds the per-schema neutral metadata the compiler renders into the `schema()` accessor. */
-export type BuildSchemaData = (schema: IRClassDeclaration, opts: SchemaDataOptions) => CppSchemaData;
+/** Builds the per-class neutral metadata the compiler renders into the `metadata()` accessor. */
+export type BuildClassData = (cls: IRClassDeclaration, opts: ClassDataOptions) => CppClassData;
 
 /**
  * A domain's C++ emission contributions. The generic backend keeps the bundle shell (file
  * layout, visibility gating, struct / value_traits / binary_traits emission, named-enum
  * emission, topological ordering, and the built-in service / service-client headers) and
- * dispatches the domain-semantic neutral `schema()` metadata to the registered pack. The
- * schema domain's pack lives in `@keyma/schema/backend-cpp`; the CLI registers it.
+ * dispatches the domain-semantic neutral `metadata()` data to the registered pack. The
+ * primary domain pack (registered by the CLI) supplies it.
  *
  * The metadata's camelCase keys (`sourceName`, `applyDefaults`, …) are the cross-language
  * runtime contract — a pack must not rename them.
  */
 export type CppEmitterPack = {
     name: string;
-    /** Build the per-schema `schema()` metadata as neutral data (the compiler renders it).
-     *  Provided by the schema domain (the primary pack); a domain that only contributes bundle
-     *  files (e.g. UI) omits it. */
-    buildSchemaData?: BuildSchemaData;
+    /** Build the per-class `metadata()` data as neutral data (the compiler renders it).
+     *  Provided by the primary domain pack; a domain that only contributes bundle files
+     *  (e.g. UI) omits it. */
+    buildClassData?: BuildClassData;
+    /**
+     * The names of the functions a class's members reference (validators + formatters in the
+     * data-model domain), so the generic backend can wire each model header's `#include` of the
+     * factory's SOURCE module and seed per-bundle tree-shaking — without reading any domain slice
+     * itself. Formatters are gated to form phases when `bundle === "client"`. The primary domain
+     * pack implements it by reading its own extension slice; omit when a domain references none.
+     */
+    referencedFunctionNames?(
+        members: readonly IRMember[],
+        ctx: { bundle: "client" | "server" | "library" },
+    ): ReadonlySet<string>;
     /**
      * Names of `functionDeclarations` this domain renders itself (with its own wrapper) via
      * `renderClaimedFunctions`, so the generic backend does not emit them as plain functions.
-     * The schema domain claims its validator/formatter factories (re-emitted with the runtime
+     * The primary domain claims its validator/formatter factories (re-emitted with the runtime
      * `ValidatorFn`/`FormatterFn` guard wrapper). Omit when the domain claims none.
      */
     claimFunctions?: (ir: KeymaIR) => ReadonlySet<string>;
@@ -158,8 +171,8 @@ export type CppEmitterPack = {
     /**
      * Contribute extra files to each bundle, derived from the domain's own IR slice
      * (e.g. `ir.extensions['ui']`). Runs for **every** registered pack (not just the primary),
-     * so a non-primary domain alongside schema can emit its own files. Omit when the domain
-     * adds none — the schema pack does, keeping single-domain bundles byte-identical.
+     * so a non-primary domain alongside the primary one can emit its own files. Omit when the
+     * domain adds none — the primary pack does, keeping single-domain bundles byte-identical.
      */
     emitBundleFiles?: (ir: KeymaIR, ctx: BundleEmitContext) => EmitFile[];
 };
@@ -168,7 +181,7 @@ export type CppEmitterPack = {
  * The per-bundle context the shell passes to a domain's `emitBundleFiles` hook: the bundle
  * being emitted, its output root, and the private/public split. C++ additionally threads the
  * root namespace and the runtime `#include` token (an asymmetry with JS, whose `emitBundleFiles`
- * needs neither) so a domain that emits a self-contained translation unit — the schema pack's
+ * needs neither) so a domain that emits a self-contained translation unit — the primary pack's
  * validators.hpp/formatters.hpp — can render its `namespace <root>::…` / `#include <runtime>`.
  */
 export type BundleEmitContext = {
@@ -193,7 +206,7 @@ export class EmitterRegistry {
         return this.packs;
     }
 
-    /** The pack owning the core schema metadata (the schema domain). */
+    /** The pack owning the core class metadata (the primary domain). */
     primary(): CppEmitterPack {
         const pack = this.packs[0];
         if (pack === undefined) throw new Error("no C++ emitter pack registered");

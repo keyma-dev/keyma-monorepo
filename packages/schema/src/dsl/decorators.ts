@@ -1,9 +1,9 @@
 // Schema-domain DSL decorators, including the field-level @Validate/@Format and the
 // validator/formatter authoring types they consume (see ./types.ts). The remaining
-// domain-neutral decorators (@FormField, @Deprecated, @Service) and the semantic types
-// (`ID`, `DateTime`, …) live in `@keyma/core/dsl`; `@keyma/schema/dsl` (see index.ts)
-// re-exports those alongside these so a schema author imports the whole surface from
-// one specifier.
+// domain-neutral decorators (@FormField, @Deprecated, @Service, and the binary-wire-tag
+// field decorators @Tag/@RenamedFrom) and the semantic types (`ID`, `DateTime`, …) live
+// in `@keyma/core/dsl`; `@keyma/schema/dsl` (see index.ts) re-exports those alongside
+// these so a schema author imports the whole surface from one specifier.
 //
 // No-op at runtime — every decorator implementation does nothing. Decorators are
 // compile-time annotations only; the Keyma compiler reads them via the TS API and
@@ -168,31 +168,5 @@ export function From(): PropertyDecorator {
  * No-op at runtime — the decorator implementation does nothing.
  */
 export function To(): PropertyDecorator {
-    return () => undefined;
-}
-
-/**
- * Pins a field's **stable binary wire tag** explicitly, overriding the
- * compiler-auto-assigned tag from the committed manifest (`keyma.tags.json`). The
- * escape hatch for full manual control: `@Tag(7) name: string`. `n` must be a
- * positive integer literal in range (1 .. 2^31-1). The tag allocator routes around
- * pinned tags. Used only when binary serialization is enabled.
- *
- * No-op at runtime — the decorator implementation does nothing.
- */
-export function Tag(_n: number): PropertyDecorator {
-    return () => undefined;
-}
-
-/**
- * Carries a field's **stable binary wire tag across a rename**: `@RenamedFrom("oldName")
- * newName: string` moves the tag committed to `oldName` in the manifest onto `newName`
- * (no tombstone, no drift error). The primary, reviewable mechanism for evolving a
- * schema whose records are stored durably in binary. `oldName` must exist in the
- * committed manifest for this schema. Used only when binary serialization is enabled.
- *
- * No-op at runtime — the decorator implementation does nothing.
- */
-export function RenamedFrom(_oldName: string): PropertyDecorator {
     return () => undefined;
 }

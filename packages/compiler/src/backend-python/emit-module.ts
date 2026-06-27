@@ -1,15 +1,15 @@
-import type { IRClassDeclaration, IRField, IRMethod, IRFunctionDeclaration } from "@keyma/core/ir";
+import type { IRClassDeclaration, IRMember, IRMethod, IRFunctionDeclaration } from "@keyma/core/ir";
 import { collectRefTargets, collectFunctionRefs, collectStatementIdentifiers, filterVisibleFields, filterVisibleMethods } from "@keyma/core/util";
 import { renderStatements, factoryIdent } from "./emit-validators.js";
 import { intrinsicImports } from "./emit-expression.js";
 import { irTypeToPython } from "./ir-type-to-python.js";
-import type { BuildSchemaData } from "./emitter-registry.js";
+import type { BuildClassData } from "./emitter-registry.js";
 import { buildApplyDefaults } from "./emit-defaults.js";
 import { emitLiteral } from "./emit-literal.js";
 import { pythonRelImport } from "./module-path.js";
 
-/** The declarations a single source module owns: the schema classes authored in the file plus
- *  the (reachable) functions homed in it — plain utility helpers and claimed validator/formatter
+/** The declarations a single source module owns: the classes authored in the file plus
+ *  the (reachable) functions homed in it — plain utility helpers and claimed domain
  *  factories alike. Either list may be empty (a function-only file still produces a module). */
 export type ModuleContent = {
     classes: readonly IRClassDeclaration[];
@@ -18,44 +18,47 @@ export type ModuleContent = {
 
 export type ModuleEmitDeps = {
     includePrivate: boolean;
-    includeIndexes: boolean;
-    formPhasesOnly: boolean;
+    /** Which bundle is being emitted; passed through to the domain's hooks for per-bundle gating. */
+    bundle: "client" | "server" | "library";
     includeDefaults: boolean;
     /** sourceName → bundle-relative module ref (e.g. "src/user/user"). */
-    schemaModule: ReadonlyMap<string, string>;
+    classModule: ReadonlyMap<string, string>;
     /** Function name → bundle-relative module ref (e.g. "src/user", "vendor"). Covers every
      *  function the bundle keeps; cross-module function refs resolve through here. */
     functionModule: ReadonlyMap<string, string>;
-    /** Reference/embedded/edge target `name` → emitted Python class (`sourceName`). */
+    /** Reference/embedded target `name` → emitted Python class (`sourceName`). */
     classNameByName: ReadonlyMap<string, string>;
     /** Every project-local function declaration keyed by name (a domain pack reads a
-     *  validator/formatter factory's params for factory-call arg ordering). */
+     *  helper factory's params for factory-call arg ordering). */
     functionDecls: ReadonlyMap<string, IRFunctionDeclaration>;
-    /** Names of the functions rendered with the domain wrapper (validators/formatters) rather
-     *  than as plain functions. The matching renderings come from `renderClaimedFunctions`. */
+    /** Names of the functions rendered with the domain wrapper rather than as plain
+     *  functions. The matching renderings come from `renderClaimedFunctions`. */
     claimedFunctionNames: ReadonlySet<string>;
-    /** Domain-supplied builder of the per-schema `.schema` metadata dict (from the
-     *  emitter registry's schema pack). Keeps the generic module emitter domain-agnostic. */
-    buildSchemaData: BuildSchemaData;
-    /** Render the claimed (validator/formatter) functions a module owns, with the domain
-     *  wrapper, one rendered `def` block per declaration. Present when `claimedFunctionNames`
-     *  is non-empty. */
+    /** Domain-supplied builder of the per-class `.metadata` dict (from the emitter
+     *  registry's primary pack). Keeps the generic module emitter domain-agnostic. */
+    buildClassData: BuildClassData;
+    /** The union of function names a class's members reference (domain-supplied), used to wire
+     *  the module's cross-module imports. Absent when the domain references none. */
+    referencedFunctionNames?: (
+        members: readonly IRMember[],
+        ctx: { bundle: "client" | "server" | "library" },
+    ) => ReadonlySet<string>;
+    /** Render the claimed functions a module owns, with the domain wrapper, one rendered `def`
+     *  block per declaration. Present when `claimedFunctionNames` is non-empty. */
     renderClaimedFunctions?: (decls: readonly IRFunctionDeclaration[]) => readonly string[];
 };
 
-const CLIENT_PHASES = new Set(["change", "blur", "submit"]);
-
-/** Emit one source module `.py` with every declaration authored in a source file — schema
- *  classes plus the functions homed there (plain utilities and wrapped validator/formatter
- *  factories alike). A function-only file still produces a module. */
+/** Emit one source module `.py` with every declaration authored in a source file — classes
+ *  plus the functions homed there (plain utilities and wrapped domain factories alike).
+ *  A function-only file still produces a module. */
 export function emitModulePython(moduleRef: string, content: ModuleContent, deps: ModuleEmitDeps): string {
     const claimedByName = renderClaimed(content, deps);
 
     // Emit the class + function bodies first so the header can pull in only the math/coercion-
     // intrinsic imports they actually reference (getter/method/default/factory bodies may use them).
     const body: string[] = [];
-    for (const schema of orderClassesByInheritance(content.classes)) {
-        body.push(...emitSchemaClass(schema, deps));
+    for (const cls of orderClassesByInheritance(content.classes)) {
+        body.push(...emitClass(cls, deps));
         body.push("");
     }
     for (const fn of content.functions) {
@@ -79,9 +82,9 @@ export function emitModulePython(moduleRef: string, content: ModuleContent, deps
 }
 
 /** Order a module's classes so a base class precedes any same-module subclass — Python executes
- *  top-to-bottom, so `Parent.schema` (and the `class Parent`) must be defined before a child's
- *  `class Child(Parent)` / `Child.schema = { base: Parent.schema }`. Cross-module parents come in
- *  via imports. */
+ *  top-to-bottom, so `Parent.metadata` (and the `class Parent`) must be defined before a child's
+ *  `class Child(Parent)` / `Child.metadata = { base: Parent.metadata }`. Cross-module parents come
+ *  in via imports. */
 function orderClassesByInheritance(classes: readonly IRClassDeclaration[]): IRClassDeclaration[] {
     const bySource = new Map(classes.map((c) => [c.sourceName, c]));
     const out: IRClassDeclaration[] = [];
@@ -120,13 +123,13 @@ function renderClaimed(content: ModuleContent, deps: ModuleEmitDeps): Map<string
     return new Map(claimed.map((fn, i) => [fn.name, renderings[i]!]));
 }
 
-function emitSchemaClass(schema: IRClassDeclaration, deps: ModuleEmitDeps): string[] {
-    const fields = filterVisibleFields(schema, deps.includePrivate);
+function emitClass(cls: IRClassDeclaration, deps: ModuleEmitDeps): string[] {
+    const fields = filterVisibleFields(cls, deps.includePrivate);
     const lines: string[] = [];
 
     // Inheritance is real: `class Child(Parent)`. `extends` is the parent sourceName (emit symbol).
-    const extendsClause = schema.extends !== undefined ? `(${schema.extends})` : "";
-    lines.push(`class ${schema.sourceName}${extendsClause}:`);
+    const extendsClause = cls.extends !== undefined ? `(${cls.extends})` : "";
+    lines.push(`class ${cls.sourceName}${extendsClause}:`);
 
     // Hydration is a STATIC factory (008), freeing `__init__` for a user-authored constructor:
     //   • `from_value` allocates via `__new__` (bypassing any user `__init__`) and delegates to
@@ -140,13 +143,13 @@ function emitSchemaClass(schema: IRClassDeclaration, deps: ModuleEmitDeps): stri
     lines.push(`        return obj`);
     lines.push("");
     lines.push(`    def _hydrate(self, value: Dict[str, Any] = None):`);
-    if (schema.extends !== undefined) lines.push(`        super()._hydrate(value)`);
+    if (cls.extends !== undefined) lines.push(`        super()._hydrate(value)`);
     if (fields.length > 0) {
         lines.push(`        if value:`);
         for (const field of fields) {
             lines.push(`            self.${field.name}: ${fieldAnnotation(field, deps.classNameByName)} = value.get("${field.name}")`);
         }
-    } else if (schema.extends === undefined) {
+    } else if (cls.extends === undefined) {
         // Fieldless base class: a valid no-op body.
         lines.push(`        pass`);
     }
@@ -154,7 +157,7 @@ function emitSchemaClass(schema: IRClassDeclaration, deps: ModuleEmitDeps): stri
 
     // Getters, setters, and methods are all behaviors re-emitted as class members.
     // Emit getters first so a paired `@name.setter` follows its `@property`.
-    const behaviors = filterVisibleMethods(schema, deps.includePrivate);
+    const behaviors = filterVisibleMethods(cls, deps.includePrivate);
     const getterNames = new Set(behaviors.filter((m) => m.kind === "getter").map((m) => m.name));
     const ordered = [
         ...behaviors.filter((m) => m.kind === "getter"),
@@ -169,22 +172,21 @@ function emitSchemaClass(schema: IRClassDeclaration, deps: ModuleEmitDeps): stri
     // Module-level applyDefaults function (referenced from the metadata) — server bundles.
     let applyDefaultsRef: string | undefined;
     if (deps.includeDefaults) {
-        const ad = buildApplyDefaults(schema, deps.includePrivate);
+        const ad = buildApplyDefaults(cls, deps.includePrivate);
         if (ad !== null) {
             lines.push(ad.def, "");
             applyDefaultsRef = ad.name;
         }
     }
 
-    const schemaData = deps.buildSchemaData(schema, {
+    const classData = deps.buildClassData(cls, {
         includePrivate: deps.includePrivate,
-        includeIndexes: deps.includeIndexes,
-        formPhasesOnly: deps.formPhasesOnly,
+        bundle: deps.bundle,
         functionDecls: deps.functionDecls,
-        refs: schemaRefs(fields, deps.classNameByName),
+        refs: classRefs(fields, deps.classNameByName),
         ...(applyDefaultsRef !== undefined ? { applyDefaultsRef } : {}),
     });
-    lines.push(`${schema.sourceName}.schema = ${emitLiteral(schemaData)}`);
+    lines.push(`${cls.sourceName}.metadata = ${emitLiteral(classData)}`);
 
     return lines;
 }
@@ -201,31 +203,32 @@ function buildImports(moduleRef: string, content: ModuleContent, deps: ModuleEmi
         bySpec.get(spec)!.add(binding);
     };
 
-    const schemas = content.classes;
-    const allFields: IRField[] = schemas.flatMap((s) => filterVisibleFields(s, deps.includePrivate));
+    const classes = content.classes;
+    const allFields: IRMember[] = classes.flatMap((c) => filterVisibleFields(c, deps.includePrivate));
 
-    // Cross-module schema base classes + embedded/reference class targets.
-    for (const s of schemas) {
-        if (s.extends !== undefined) {
-            const ref = deps.schemaModule.get(s.extends);
-            if (ref !== undefined) add(ref, s.extends);
+    // Cross-module base classes + embedded/reference class targets.
+    for (const c of classes) {
+        if (c.extends !== undefined) {
+            const ref = deps.classModule.get(c.extends);
+            if (ref !== undefined) add(ref, c.extends);
         }
     }
     for (const target of collectRefTargets(allFields)) {
         // Targets are identities (`name`); resolve to the emitted class + its module.
         const className = deps.classNameByName.get(target);
         if (className === undefined) continue;
-        const ref = deps.schemaModule.get(className);
+        const ref = deps.classModule.get(className);
         if (ref !== undefined) add(ref, className);
     }
 
-    // Functions referenced from this module — by field validator/formatter metadata, by class
+    // Functions referenced from this module — by a domain's per-member metadata, by class
     // behaviors/defaults, and by the bodies of the functions homed here — resolved to their
     // source module through `functionModule`. Same-module refs are skipped by `add`.
     const fnRefs = new Set<string>();
-    for (const n of collectFactoryNames(allFields, "validators", deps.formPhasesOnly)) fnRefs.add(n);
-    for (const n of collectFactoryNames(allFields, "formatters", deps.formPhasesOnly)) fnRefs.add(n);
-    for (const n of collectFunctionRefs(schemas, {
+    if (deps.referencedFunctionNames !== undefined) {
+        for (const n of deps.referencedFunctionNames(allFields, { bundle: deps.bundle })) fnRefs.add(n);
+    }
+    for (const n of collectFunctionRefs(classes, {
         includePrivate: deps.includePrivate,
         includeDefaults: deps.includeDefaults,
         functionNames: new Set(deps.functionModule.keys()),
@@ -245,43 +248,15 @@ function buildImports(moduleRef: string, content: ModuleContent, deps: ModuleEmi
         .map(([spec, bindings]) => `${spec} ${[...bindings].sort().join(", ")}`);
 }
 
-/** Embedded/reference targets of a field list as `{ name, className }` pairs for
+/** Embedded/reference targets of a member list as `{ name, className }` pairs for
  *  the live `refs` dict — keyed by the target's `name`, valued by its Python class. */
-function schemaRefs(
-    fields: IRField[],
+function classRefs(
+    fields: IRMember[],
     classNameByName: ReadonlyMap<string, string>,
 ): { name: string; className: string }[] {
     return [...collectRefTargets(fields)]
         .filter((t) => classNameByName.has(t))
         .map((name) => ({ name, className: classNameByName.get(name)! }));
-}
-
-// Validator/formatter attachments now ride in the field's `extensions['schema']` slice
-// (a schema-domain concern). The generic module emitter still needs the referenced factory
-// names to wire the model file's imports from validators.py/formatters.py — a transitional
-// read of the well-known slice keeps that import wiring here without depending on `@keyma/schema`.
-type SchemaFieldSlice = {
-    validators?: { name: string }[];
-    formatters?: { phase: string; spec: { name: string } }[];
-};
-function schemaSlice(field: IRField): SchemaFieldSlice | undefined {
-    return field.extensions?.["schema"] as SchemaFieldSlice | undefined;
-}
-
-export function collectFactoryNames(fields: readonly IRField[], which: "validators" | "formatters", formPhasesOnly: boolean): Set<string> {
-    const out = new Set<string>();
-    for (const f of fields) {
-        const slice = schemaSlice(f);
-        if (which === "validators") {
-            for (const v of slice?.validators ?? []) out.add(v.name);
-        } else {
-            for (const fmt of slice?.formatters ?? []) {
-                if (formPhasesOnly && !CLIENT_PHASES.has(fmt.phase)) continue;
-                out.add(fmt.spec.name);
-            }
-        }
-    }
-    return out;
 }
 
 function emitMethodPython(
@@ -326,7 +301,7 @@ function emitMethodPython(
     return lines;
 }
 
-function fieldAnnotation(field: IRField, classNameByName: ReadonlyMap<string, string>): string {
+function fieldAnnotation(field: IRMember, classNameByName: ReadonlyMap<string, string>): string {
     const core = irTypeToPython(field.type, classNameByName);
     if (field.nullable || !field.required) return core.startsWith("Optional[") ? core : `Optional[${core}]`;
     return core;

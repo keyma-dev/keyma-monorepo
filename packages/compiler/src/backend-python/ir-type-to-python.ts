@@ -6,7 +6,7 @@ import type { IRType } from "@keyma/core/ir";
 export function irTypeToPython(
     type: IRType,
     /** Map of target `name` → emitted Python class, for resolving reference/embedded
-     *  schema types to their generated class. */
+     *  member types to their generated class. */
     embeddedNames?: ReadonlyMap<string, string>
 ): string {
     switch (type.kind) {
@@ -34,10 +34,10 @@ export function irTypeToPython(
         }
 
         case "reference":
-            return embeddedNames?.get(type.schema) ?? type.schema;
+            return embeddedNames?.get(type.target) ?? type.target;
 
         case "embedded": {
-            return embeddedNames?.get(type.schema) ?? type.schema;
+            return embeddedNames?.get(type.target) ?? type.target;
         }
 
         // A live value of a class T (param/return position) — reference the class.
@@ -52,8 +52,8 @@ export function irTypeToPython(
 
 /**
  * Build a Python boolean expression that checks whether `value` matches `type`, for
- * runtime input guards on validators/formatters. Returns null when no meaningful
- * structural check applies (e.g. `json`, schema references).
+ * runtime input guards on a domain's per-member helpers. Returns null when no meaningful
+ * structural check applies (e.g. `json`, class references).
  */
 export function irTypeGuard(type: IRType, value: string): string | null {
     switch (type.kind) {
@@ -95,7 +95,7 @@ export function irTypeLabel(type: IRType): string {
         case "array":    return `list of ${irTypeLabel(type.of)}`;
         case "enum":     return `one of ${type.values.map((v) => JSON.stringify(v)).join(", ")}`;
         case "reference":
-        case "embedded": return type.schema;
+        case "embedded": return type.target;
         case "instance":  return type.name;
         default:         return type.kind;
     }

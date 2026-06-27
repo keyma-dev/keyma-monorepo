@@ -1,6 +1,6 @@
 import { describe, it } from "node:test";
 import assert from "node:assert/strict";
-import { assignTags, stripTagHints, type RawTaggedField } from "../../src/frontend-ts/assign-tags.js";
+import { assignTags, stripTagHints, type RawTaggedField } from "@keyma/compiler/frontend-ts";
 import type { IRClassDeclaration } from "@keyma/core/ir";
 
 const loc = { file: "t.ts", line: 1, column: 1 };

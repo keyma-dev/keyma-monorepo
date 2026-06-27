@@ -6,24 +6,24 @@ type IndexEmitOptions = {
 
 /**
  * Emit the `index.js` / `index.d.ts` barrel: one re-export per model module, with
- * every schema class authored in that source file. Modules are referenced by their
- * bundle-relative path. No registry or defaults re-exports — validators/formatters/
- * defaults ride directly in the schema metadata now.
+ * every class authored in that source file. Modules are referenced by their
+ * bundle-relative path. No registry or defaults re-exports — per-member functions and
+ * defaults ride directly in the class metadata now.
  */
 export function emitIndexJs(
-    schemas: readonly IRClassDeclaration[],
-    schemaModule: ReadonlyMap<string, string>,
+    classes: readonly IRClassDeclaration[],
+    classModule: ReadonlyMap<string, string>,
     opts: IndexEmitOptions,
     serviceNames: readonly string[] = [],
 ): string {
-    const visible = opts.includePrivate ? schemas : schemas.filter((s) => s.visibility === "public");
+    const visible = opts.includePrivate ? classes : classes.filter((s) => s.visibility === "public");
 
     const byModule = new Map<string, string[]>();
-    for (const schema of visible) {
-        const ref = schemaModule.get(schema.sourceName);
+    for (const cls of visible) {
+        const ref = classModule.get(cls.sourceName);
         if (ref === undefined) continue;
         const exports = byModule.get(ref) ?? [];
-        exports.push(schema.sourceName);
+        exports.push(cls.sourceName);
         byModule.set(ref, exports);
     }
 
@@ -40,10 +40,10 @@ export function emitIndexJs(
 /** The `index.d.ts` content is identical to `index.js` — the same re-exports carry
  *  both the class values and their types. */
 export function emitIndexDts(
-    schemas: readonly IRClassDeclaration[],
-    schemaModule: ReadonlyMap<string, string>,
+    classes: readonly IRClassDeclaration[],
+    classModule: ReadonlyMap<string, string>,
     opts: IndexEmitOptions,
     serviceNames: readonly string[] = [],
 ): string {
-    return emitIndexJs(schemas, schemaModule, opts, serviceNames);
+    return emitIndexJs(classes, classModule, opts, serviceNames);
 }

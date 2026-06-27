@@ -1,7 +1,13 @@
 import { minLength, required, trim } from "./schema.js";
 
 export class User {
-    constructor(value) {
+    static fromValue(value) {
+        const instance = Object.create(this.prototype);
+        instance._hydrate(value);
+        return instance;
+    }
+
+    _hydrate(value) {
         if (value) {
             this.id = value.id;
             this.firstName = value.firstName;
@@ -14,7 +20,7 @@ export class User {
     }
 }
 
-User.schema = Object.freeze({
+User.metadata = Object.freeze({
     "name": "user",
     "sourceName": "User",
     "fields": [

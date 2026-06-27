@@ -37,7 +37,7 @@ const BASIC_IR: KeymaIR = {
 };
 
 const RESOLVED_CONFIG = {
-    source: [], outDir: "dist", schemaPrefix: "", targets: [],
+    source: [], outDir: "dist", namePrefix: "", targets: [],
 };
 
 function fileContent(files: { path: string; content: string | Uint8Array }[], filePath: string): string {
@@ -229,11 +229,11 @@ describe("irTypeToPython", () => {
     });
 
     it("maps reference to the schema name", () => {
-        assert.equal(irTypeToPython({ kind: "reference", schema: "User" }), "User");
+        assert.equal(irTypeToPython({ kind: "reference", target: "User" }), "User");
     });
 
     it("maps embedded to the schema name", () => {
-        assert.equal(irTypeToPython({ kind: "embedded", schema: "Address" }), "Address");
+        assert.equal(irTypeToPython({ kind: "embedded", target: "Address" }), "Address");
     });
 
     it("maps array to List", () => {
@@ -255,12 +255,13 @@ describe("emitPython", () => {
         const content = fileContent(result.files, "dist/python/src/user.py");
 
         assert.ok(content.includes("class User:"), "Missing class declaration");
-        assert.ok(content.includes("def __init__(self, value: Dict[str, Any] = None):"), "Missing constructor");
+        assert.ok(content.includes("def from_value(cls, value: Dict[str, Any] = None):"), "Missing from_value constructor");
+        assert.ok(content.includes("def _hydrate(self, value: Dict[str, Any] = None):"), "Missing _hydrate");
         assert.ok(content.includes("self.firstName: str = value.get(\"firstName\")"), "Missing field assignment");
         assert.ok(content.includes("@property"), "Missing property decorator");
         assert.ok(content.includes("def fullName(self) -> str:"), "Missing property getter");
         assert.ok(content.includes("return (str(self.firstName) + \" \" + str(self.lastName))"), "Wrong property expression");
-        assert.ok(content.includes("User.schema = {"), "Missing schema metadata");
+        assert.ok(content.includes("User.metadata = {"), "Missing schema metadata");
         assert.ok(content.includes("from datetime import datetime, timezone"), "Missing timezone import (needed by toISOString)");
     });
 
@@ -300,7 +301,7 @@ describe("emitPython", () => {
                 { name: "u", sourceName: "U", visibility: "public", fields: [], source: { file: "u.ts", line: 1, column: 1 } },
                 {
                     name: "p", sourceName: "P", visibility: "public",
-                    fields: [{ name: "a", type: { kind: "reference", schema: "u" }, visibility: "public", readonly: false, required: true, source: SRC }],
+                    fields: [{ name: "a", type: { kind: "reference", target: "u" }, visibility: "public", readonly: false, required: true, source: SRC }],
                     source: { file: "p.ts", line: 1, column: 1 }
                 }
             ],

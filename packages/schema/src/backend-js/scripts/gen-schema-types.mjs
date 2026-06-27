@@ -1,11 +1,10 @@
-// Bakes the COMPILER-OWNED runtime type declarations (the service/request surface) into a
-// string constant the JS backend inlines as part of every generated bundle's `types.d.ts`.
-// The data-model metadata surface is sliced separately by the domain package's own generator
-// and appended at emit time, so this file carries no domain vocabulary.
+// Bakes the data-model metadata type declarations (the `ClassMetadata` surface) into a string
+// constant the schema JS emitter pack returns from `runtimeTypeDecls()`. The generic backend
+// appends it to every generated bundle's `types.d.ts`, alongside the compiler-owned
+// service/request blob. Mirrors the compiler's `gen-emitted-types.mjs` pattern.
 //
-// Runs as `prebuild`/`pretest` so the copy never drifts; the committed output also lets the
-// published package work without re-running it. `runtime/src/types.ts` is the SOURCE and is
-// never modified.
+// Runs as `prebuild`/`pretest` so the copy never drifts. `runtime/src/types.ts` is the SOURCE
+// and is never modified (deferred to the runtime rewrite); this slices + renames it.
 
 import { readFileSync, writeFileSync } from "node:fs";
 import { fileURLToPath } from "node:url";
@@ -15,20 +14,26 @@ const here = path.dirname(fileURLToPath(import.meta.url));
 const SOURCE = path.resolve(here, "../../../../runtime/src/types.ts");
 const OUT = path.resolve(here, "../emitted-runtime-types.ts");
 
-// Forbidden-token fragments, assembled at runtime so this generator stays free of the domain
-// vocabulary the compiler backend is gated against (the `*Class` join also rebuilds the brand).
-const LC = "sch" + "ema";
-const UC = "Sch" + "ema";
-
-// The compiler-owned top-level declarations to keep (everything else is the data-model surface).
+// The data-model metadata declarations to keep (the service/request surface is sliced by the
+// compiler's own generator instead).
 const KEEP = new Set([
-    "ServiceParamMetadata",
-    "ServiceMethodMetadata",
-    "ServiceMetadata",
-    "ServiceClass",
-    "ServiceInstance",
-    "ServiceProvider",
-    "RequestContext",
+    "FieldType",
+    "ValidatorContext",
+    "FormatterContext",
+    "ValidatorFn",
+    "FormatterFn",
+    "FormatterEntry",
+    "SchemaDefaultsFn",
+    "FieldIndex",
+    "SchemaIndex",
+    "FieldDefault",
+    "FormFieldMeta",
+    "FieldMetadata",
+    "EdgeMetadata",
+    "SchemaMetadata",
+    "ValidationError",
+    "SchemaClass",
+    "RecordOf",
 ]);
 
 const src = readFileSync(SOURCE, "utf8");
@@ -65,13 +70,11 @@ function blank(text) {
 
 const view = blank(src);
 
-// Locate each top-level `export type|interface Name` and compute its end offset on the view.
 const declRe = /export\s+(type|interface)\s+([A-Za-z0-9_]+)/g;
 const decls = [];
 let m;
 while ((m = declRe.exec(view)) !== null) {
     const kind = m[1];
-    const name = m[2];
     let depth = 0;
     let j = m.index;
     let end = view.length;
@@ -90,13 +93,13 @@ while ((m = declRe.exec(view)) !== null) {
             else if (ch === ";" && depth === 0) { end = j + 1; break; }
         }
     }
-    decls.push({ name, start: m.index, end });
+    decls.push({ name: m[2], start: m.index, end });
 }
 
 /** The contiguous comment block immediately above a decl (no blank line in between). */
 function leadingComment(startOffset) {
     const lines = src.slice(0, startOffset).split("\n");
-    lines.pop(); // drop the decl's own partial line
+    lines.pop();
     const grabbed = [];
     for (let k = lines.length - 1; k >= 0; k--) {
         const t = lines[k].trim();
@@ -113,20 +116,26 @@ for (const d of decls) {
     body += leadingComment(d.start) + src.slice(d.start, d.end) + "\n\n";
 }
 
-// Apply the renamed-contract identifiers, then neutralize residual comment vocabulary.
-body = body.split("return" + UC).join("returnRef");      // returnRef contract rename
-body = body.split(UC + "Class").join("ClassBrand");        // ClassBrand contract rename
-body = body.split(LC + "?: string;").join("ref?: string;"); // param field key -> ref
-body = body.replace(new RegExp("\\b" + LC + "\\b", "g"), "class");
-body = body.replace(new RegExp("\\b" + UC + "\\b", "g"), "Class");
+// Apply the renamed cross-language contract (decision #2 / CONTRACT §2 + §5). The Field*/Edge*/
+// Validator*/Formatter*/ValidationError/RecordOf type names are kept; only the Schema* names and
+// the emitted member keys change.
+body = body.split("SchemaMetadata").join("ClassMetadata");
+body = body.split("SchemaDefaultsFn").join("ClassDefaultsFn");
+body = body.split("SchemaIndex").join("ClassIndex");
+body = body.split("SchemaClass").join("ClassBrand");
+// The ClassBrand brand carries its metadata under `.metadata` (was `.schema`).
+body = body.split("readonly schema:").join("readonly metadata:");
+// FieldType reference/embedded carry the target class identity under `target` (core IRType rename).
+body = body.split('"reference"; schema:').join('"reference"; target:');
+body = body.split('"embedded"; schema:').join('"embedded"; target:');
 
 const header =
-    "// Inlined compiler-owned runtime types so generated bundles carry their own type\n" +
-    "// surface and depend on no Keyma package at the type level.\n\n";
+    "// Data-model metadata types — the `ClassMetadata` surface a generated bundle carries.\n" +
+    "// Concatenated after the compiler-owned service/request blob in each bundle's types.d.ts.\n\n";
 
 const file =
-    "// AUTO-GENERATED by scripts/gen-emitted-types.mjs from runtime/src/types.ts.\n" +
-    "// Do not edit by hand — run `npm run -w @keyma/compiler build` to regenerate.\n" +
-    `export const EMITTED_RUNTIME_TYPES_DTS = ${JSON.stringify(header + body.trimEnd() + "\n")};\n`;
+    "// AUTO-GENERATED by scripts/gen-schema-types.mjs from runtime/src/types.ts.\n" +
+    "// Do not edit by hand — run `npm run -w @keyma/schema build` to regenerate.\n" +
+    `export const EMITTED_SCHEMA_TYPES_DTS = ${JSON.stringify(header + body.trimEnd() + "\n")};\n`;
 
 writeFileSync(OUT, file);

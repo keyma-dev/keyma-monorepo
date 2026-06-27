@@ -197,8 +197,8 @@ export function checkType(type: unknown, path: string): IRValidationError[] {
             return errors;
         }
         case "reference": {
-            if (!isStr(type["schema"]) || type["schema"] === "") {
-                return [e(`${path}.schema`, "must be a non-empty string")];
+            if (!isStr(type["target"]) || type["target"] === "") {
+                return [e(`${path}.target`, "must be a non-empty string")];
             }
             if ("idType" in type && type["idType"] !== undefined) {
                 return checkType(type["idType"], `${path}.idType`);
@@ -206,8 +206,8 @@ export function checkType(type: unknown, path: string): IRValidationError[] {
             return [];
         }
         case "embedded":
-            if (!isStr(type["schema"]) || type["schema"] === "") {
-                return [e(`${path}.schema`, "must be a non-empty string")];
+            if (!isStr(type["target"]) || type["target"] === "") {
+                return [e(`${path}.target`, "must be a non-empty string")];
             }
             return [];
         case "instance":

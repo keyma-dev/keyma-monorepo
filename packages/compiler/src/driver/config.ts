@@ -56,7 +56,7 @@ export function resolveConfig(user: KeymaUserConfig): ResolvedConfig {
         ...(user.baseDir !== undefined ? { baseDir: resolve(user.baseDir) } : {}),
         outDir: user.outDir ?? "dist",
         ...(user.irOutFile !== undefined ? { irOutFile: user.irOutFile } : {}),
-        schemaPrefix: user.schemaPrefix ?? "",
+        namePrefix: user.namePrefix ?? "",
         targets: user.targets ?? [],
         binary,
         // Manifest location stays relative (like outDir/irOutFile) — the CLI absolutizes it

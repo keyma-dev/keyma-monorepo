@@ -1,6 +1,6 @@
-import type { IRClassDeclaration, IRField } from "@keyma/core/ir";
+import type { IRClassDeclaration, IRMember } from "@keyma/core/ir";
 import { filterVisibleFields } from "@keyma/core/util";
-import { mkRaw, buildApplyDefaults, type SchemaDataOptions } from "@keyma/compiler/backend-js";
+import { mkRaw, buildApplyDefaults, type ClassDataOptions } from "@keyma/compiler/backend-js";
 import { buildFactoryCall } from "./emit-validators.js";
 import {
     schemaIndexes, schemaEdge, schemaEphemeral, fieldIndexes, fieldEphemeral, fieldForm,
@@ -8,40 +8,44 @@ import {
     type IRFieldIndex, type IRIndex,
 } from "../ir/extensions.js";
 
-export type { SchemaDataOptions };
+export type { ClassDataOptions };
 
 const CLIENT_PHASES = new Set(["change", "blur", "submit"]);
 
 /**
- * Build the metadata object for a schema, ready to be emitted with `emitLiteral`.
+ * Build the metadata object for a class, ready to be emitted with `emitLiteral`.
  * Validators/formatters are spliced as live factory calls (`minLength(2)`), `refs`
  * and `applyDefaults` as live code — the object is no longer pure JSON (functions
  * and a Map ride along), so the caller emits it via `emitLiteral`, not JSON.
+ *
+ * The bundle gate maps to this domain's index/phase rules: a `client` bundle drops
+ * indexes and keeps only form-phase formatters; `server`/`library` keep everything.
  */
-export function buildSchemaData(schema: IRClassDeclaration, opts: SchemaDataOptions): Record<string, unknown> {
-    const fields = filterVisibleFields(schema, opts.includePrivate).map((f) => buildFieldData(f, opts));
-    const indexes = opts.includeIndexes ? schemaIndexes(schema).map(buildIndexData) : [];
+export function buildClassData(cls: IRClassDeclaration, opts: ClassDataOptions): Record<string, unknown> {
+    const includeIndexes = opts.bundle !== "client";
+    const fields = filterVisibleFields(cls, opts.includePrivate).map((f) => buildFieldData(f, opts));
+    const indexes = includeIndexes ? schemaIndexes(cls).map(buildIndexData) : [];
 
     const out: Record<string, unknown> = {
-        name: schema.name,
-        sourceName: schema.sourceName,
+        name: cls.name,
+        sourceName: cls.sourceName,
         fields,
     };
     // Inheritance is real and metadata carries OWN fields only — a live reference to the parent's
-    // `.schema` lets the runtime walk the chain to assemble the full field set. `extends` is the
-    // parent's sourceName (the emitted class symbol), so `<Parent>.schema` resolves it.
-    if (schema.extends !== undefined) out["base"] = mkRaw(`${schema.extends}.schema`);
+    // `.metadata` lets the runtime walk the chain to assemble the full field set. `extends` is the
+    // parent's sourceName (the emitted class symbol), so `<Parent>.metadata` resolves it.
+    if (cls.extends !== undefined) out["base"] = mkRaw(`${cls.extends}.metadata`);
     if (indexes.length > 0) out["indexes"] = indexes;
-    const edge = schemaEdge(schema);
+    const edge = schemaEdge(cls);
     if (edge !== undefined) out["edge"] = edge;
-    if (schema.visibility === "private") out["visibility"] = "private";
-    if (schemaEphemeral(schema)) out["ephemeral"] = true;
+    if (cls.visibility === "private") out["visibility"] = "private";
+    if (schemaEphemeral(cls)) out["ephemeral"] = true;
     if (opts.refs.length > 0) {
         const entries = opts.refs.map((r) => `[${JSON.stringify(r.name)}, ${r.symbol}]`).join(", ");
         out["refs"] = mkRaw(`new Map([${entries}])`);
     }
     if (opts.includeDefaults) {
-        const applyDefaults = buildApplyDefaults(schema, opts.includePrivate);
+        const applyDefaults = buildApplyDefaults(cls, opts.includePrivate);
         if (applyDefaults !== null) out["applyDefaults"] = mkRaw(applyDefaults);
     }
     return out;
@@ -49,14 +53,17 @@ export function buildSchemaData(schema: IRClassDeclaration, opts: SchemaDataOpti
 
 // ─── Internal helpers ────────────────────────────────────────────────────────
 
-function buildFieldData(field: IRField, opts: SchemaDataOptions): object {
+function buildFieldData(field: IRMember, opts: ClassDataOptions): object {
+    const formPhasesOnly = opts.bundle === "client";
+    const includeIndexes = opts.bundle !== "client";
+
     const validators = fieldValidators(field);
     const allFormatters = fieldFormatters(field);
-    const formatters = opts.formPhasesOnly
+    const formatters = formPhasesOnly
         ? allFormatters.filter((fmt) => CLIENT_PHASES.has(fmt.phase))
         : allFormatters;
 
-    const indexes: IRFieldIndex[] = opts.includeIndexes ? fieldIndexes(field) : [];
+    const indexes: IRFieldIndex[] = includeIndexes ? fieldIndexes(field) : [];
 
     const base: Record<string, unknown> = {
         name: field.name,

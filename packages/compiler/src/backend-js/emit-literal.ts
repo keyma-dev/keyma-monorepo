@@ -1,6 +1,6 @@
 import { isRaw, mkRaw, type Raw } from "@keyma/core/util";
 
-// Re-export the raw-fragment marker; schema-data.ts / emit-module.ts import `raw`/`Raw`
+// Re-export the raw-fragment marker; the module emitters and domain packs import `raw`/`Raw`
 // from this module as the backend's literal-emission surface.
 export { mkRaw, type Raw };
 

@@ -85,7 +85,7 @@
         "description": { "type": "string" },
         "fields": {
           "type": "array",
-          "items": { "$ref": "#/$defs/IRField" }
+          "items": { "$ref": "#/$defs/IRMember" }
         },
         "methods": {
           "type": "array",
@@ -118,7 +118,7 @@
         "source": { "$ref": "#/$defs/IRSourceLocation" }
       }
     },
-    "IRField": {
+    "IRMember": {
       "type": "object",
       "required": ["name", "type", "visibility", "readonly", "required", "source"],
       "additionalProperties": false,
@@ -174,15 +174,15 @@
         },
         {
           "type": "object",
-          "required": ["kind", "schema"],
+          "required": ["kind", "target"],
           "additionalProperties": false,
-          "properties": { "kind": { "const": "reference" }, "schema": { "type": "string", "minLength": 1 }, "idType": { "$ref": "#/$defs/IRType" } }
+          "properties": { "kind": { "const": "reference" }, "target": { "type": "string", "minLength": 1 }, "idType": { "$ref": "#/$defs/IRType" } }
         },
         {
           "type": "object",
-          "required": ["kind", "schema"],
+          "required": ["kind", "target"],
           "additionalProperties": false,
-          "properties": { "kind": { "const": "embedded" }, "schema": { "type": "string", "minLength": 1 } }
+          "properties": { "kind": { "const": "embedded" }, "target": { "type": "string", "minLength": 1 } }
         },
         {
           "type": "object",

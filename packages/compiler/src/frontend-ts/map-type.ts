@@ -7,12 +7,12 @@ import type { EnumInfo } from "./discover-enums.js";
 /**
  * The canonical module that declares the core DSL semantic types (`ID`, `Json`,
  * `Reference`, `Embedded`, `Integer`, …). They are core-owned and re-exported by a
- * domain's DSL surface (e.g. `@keyma/schema/dsl`), so a symbol may carry either
- * specifier: user schemas (and the built-in validator/formatter libs) import from the
- * domain re-export, but a symbol imported directly via the canonical `@keyma/core/dsl`
- * specifier is accepted too (see `fromDsl` below). Naming the core module here is correct layering —
- * the compiler already owns the scalar type *names* in `DSL_SCALAR_TYPES` and depends
- * on `@keyma/core`; this is not a `@keyma/schema` symbol.
+ * domain's DSL surface, so a symbol may carry either specifier: user sources (and the
+ * built-in function libraries) import from the domain re-export, but a symbol imported
+ * directly via the canonical `@keyma/core/dsl` specifier is accepted too (see `fromDsl`
+ * below). Naming the core module here is correct layering — the compiler already owns the
+ * scalar type *names* in `DSL_SCALAR_TYPES` and depends on `@keyma/core`; this is a
+ * core-owned symbol, not a domain one.
  */
 const CORE_DSL_MODULE = "@keyma/core/dsl";
 
@@ -39,14 +39,14 @@ const GLOBAL_SCALAR_TYPES: ReadonlyMap<string, IRType> = new Map([
 type TypeMapContext = {
     checker: ts.TypeChecker;
     dslModuleName: string;
-    /** Class names of all discovered @Schema classes. */
-    schemaClassNames: ReadonlySet<string>;
+    /** Class names of all discovered classes. */
+    classNames: ReadonlySet<string>;
     /** Named TS enum declarations, keyed by name (optional — field paths supply it). */
     enums?: ReadonlyMap<string, EnumInfo>;
     /**
-     * When true, a bare `@Schema` class is a value-of-class-T position
-     * (function/method/validator param or return) and lowers to an `instance` —
-     * "a live value of class T," distinct from the ownership types. Schema FIELD
+     * When true, a bare class is a value-of-class-T position
+     * (function/method param or return) and lowers to an `instance` —
+     * "a live value of class T," distinct from the ownership types. Field
      * paths leave this false so bare classes are rejected (KEYMA071) in favour of
      * explicit `Reference<T>` (foreign key) / `Embedded<T>` (inline copy).
      */
@@ -221,8 +221,8 @@ function mapTypeReference(node: ts.TypeReferenceNode, ctx: TypeMapContext): MapT
     const symbol = ctx.checker.getSymbolAtLocation(node.typeName);
     if (!symbol) return fail(node, ctx, `cannot resolve type "${name}"`);
 
-    // Accept core DSL types via the configured domain re-export (e.g. `@keyma/schema/dsl`),
-    // directly via the canonical `@keyma/core/dsl` specifier, OR by resolving the alias chain
+    // Accept core DSL types via the configured domain re-export, directly via the
+    // canonical `@keyma/core/dsl` specifier, OR by resolving the alias chain
     // to a `@keyma/core/dsl` declaration. The last form makes recognition independent of which
     // umbrella the author imported the (core-owned, re-exported) marker through — so a
     // domain-agnostic pass (the base `@Service` pass) resolves the same markers a domain does.
@@ -252,13 +252,13 @@ function mapTypeReference(node: ts.TypeReferenceNode, ctx: TypeMapContext): MapT
         if (name === "Reference") {
             const arg = typeArgs?.[0];
             if (!arg) return fail(node, ctx, "Reference<T> requires a type argument");
-            return mapSchemaReference(arg, "reference", ctx);
+            return mapOwnershipType(arg, "reference", ctx);
         }
 
         if (name === "Embedded") {
             const arg = typeArgs?.[0];
             if (!arg) return fail(node, ctx, "Embedded<T> requires a type argument");
-            return mapSchemaReference(arg, "embedded", ctx);
+            return mapOwnershipType(arg, "embedded", ctx);
         }
 
         // Width-templated numerics: Integer<Bits>/Unsigned<Bits> → integer,
@@ -300,16 +300,16 @@ function mapTypeReference(node: ts.TypeReferenceNode, ctx: TypeMapContext): MapT
         return { type: { kind: "enum", name, values: enumInfo.members.map((m) => m.value) } };
     }
 
-    // A bare @Schema class in a FIELD is no longer an implicit reference —
+    // A bare class in a FIELD is no longer an implicit reference —
     // relationship intent must be explicit. In value positions (param/return,
     // `bareClassInstance`) it lowers to a live `instance` of the class.
-    if (ctx.schemaClassNames.has(name)) {
+    if (ctx.classNames.has(name)) {
         if (ctx.bareClassInstance === true) {
             return { type: { kind: "instance", name } };
         }
         const diag = mkError(
             KEYMA071,
-            `Field of @Schema type "${name}" must state its relationship explicitly — use Reference<${name}> (foreign key) or Embedded<${name}> (inline copy)`,
+            `Field of class type "${name}" must state its relationship explicitly — use Reference<${name}> (foreign key) or Embedded<${name}> (inline copy)`,
             getLocation(node, ctx.sourceFile),
         );
         return { diag };
@@ -318,23 +318,23 @@ function mapTypeReference(node: ts.TypeReferenceNode, ctx: TypeMapContext): MapT
     return fail(node, ctx, `unknown type "${name}" — use a primitive, DSL type, Reference<T>, or Embedded<T>`);
 }
 
-function mapSchemaReference(
+function mapOwnershipType(
     typeArg: ts.TypeNode,
     kind: "reference" | "embedded",
     ctx: TypeMapContext
 ): MapTypeResult {
     if (!ts.isTypeReferenceNode(typeArg)) {
-        return fail(typeArg, ctx, `${kind === "reference" ? "Reference" : "Embedded"}<T> requires a schema class type argument`);
+        return fail(typeArg, ctx, `${kind === "reference" ? "Reference" : "Embedded"}<T> requires a class type argument`);
     }
-    const schemaName = entityNameText(typeArg.typeName);
-    if (!ctx.schemaClassNames.has(schemaName)) {
+    const targetName = entityNameText(typeArg.typeName);
+    if (!ctx.classNames.has(targetName)) {
         return fail(
             typeArg,
             ctx,
-            `"${schemaName}" is not a known @Schema class`
+            `"${targetName}" is not a known class`
         );
     }
-    return { type: { kind, schema: schemaName } };
+    return { type: { kind, target: targetName } };
 }
 
 /**

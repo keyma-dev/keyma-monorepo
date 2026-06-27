@@ -153,10 +153,10 @@ describe("compile all-types schema", () => {
         assert.equal(byName("nullableStr").required, true); // present, but may be null
 
         // references carry the resolved id type of their target
-        assert.deepEqual(byName("addr").type, { kind: "reference", schema: "address", idType: { kind: "id" } });
-        assert.deepEqual(byName("embedded").type, { kind: "embedded", schema: "address" });
+        assert.deepEqual(byName("addr").type, { kind: "reference", target: "address", idType: { kind: "id" } });
+        assert.deepEqual(byName("embedded").type, { kind: "embedded", target: "address" });
 
-        assert.deepEqual(byName("nullableRef").type, { kind: "reference", schema: "address", idType: { kind: "id" } });
+        assert.deepEqual(byName("nullableRef").type, { kind: "reference", target: "address", idType: { kind: "id" } });
         assert.equal(byName("nullableRef").nullable, true);
     });
 });
@@ -654,18 +654,35 @@ describe("KEYMA032 — public extends private parent", () => {
     });
 });
 
-describe("KEYMA033 — extends non-@Schema class", () => {
-    it("emits KEYMA033 when a schema extends a plain class", () => {
+describe("KEYMA033 — extends a non-lowered (vendor / ambient) class", () => {
+    it("emits KEYMA033 when a schema extends a class from a declaration file", () => {
+        // The compiler lowers EVERY in-project class, so extending a plain in-project class is
+        // legal (the parent is lowered too). KEYMA033 fires only when the parent is genuinely
+        // never lowered — e.g. it lives in a `.d.ts` (vendor/ambient), which discovery skips.
         const result = cv({
+            "vendor.d.ts": `export declare class VendorBase { name: string; }`,
             "schema.ts": `
                 import { Schema } from "@keyma/schema/dsl";
-                class PlainBase { name: string = ""; }
-                @Schema({ name: "child" }) class Child extends PlainBase {
+                import { VendorBase } from "./vendor.js";
+                @Schema({ name: "child" }) class Child extends VendorBase {
                     declare extra: string;
                 }
             `,
         });
         assert.ok(hasError(result, CODES.KEYMA033), `Expected KEYMA033. Got: ${JSON.stringify(result.diagnostics)}`);
+    });
+
+    it("does NOT emit KEYMA033 when a schema extends a plain in-project class (it is lowered too)", () => {
+        const result = cv({
+            "schema.ts": `
+                import { Schema } from "@keyma/schema/dsl";
+                class PlainBase { declare name: string; }
+                @Schema({ name: "child" }) class Child extends PlainBase {
+                    declare extra: string;
+                }
+            `,
+        });
+        assert.ok(!hasError(result, CODES.KEYMA033), `Unexpected KEYMA033. Got: ${JSON.stringify(result.diagnostics)}`);
     });
 });
 

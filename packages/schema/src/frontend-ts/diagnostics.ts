@@ -15,10 +15,16 @@ export { mkError, mkWarning } from "@keyma/core/util";
 // schema frontend reuses; re-exported here so a single `import * as CODES from
 // "./diagnostics.js"` covers every code a schema-domain diagnostic might carry.
 export {
+    KEYMA001,
     KEYMA010,
     KEYMA014,
     KEYMA024,
     KEYMA025,
+    KEYMA031,
+    KEYMA032,
+    KEYMA033,
+    KEYMA034,
+    KEYMA037,
     KEYMA050,
     KEYMA071,
     KEYMA080,
@@ -31,10 +37,14 @@ export {
     KEYMA087,
     KEYMA092,
     KEYMA099,
+    KEYMA100,
+    KEYMA101,
+    KEYMA102,
+    KEYMA103,
 } from "@keyma/compiler/frontend-ts";
 
-// Schema-level structural errors
-export const KEYMA001 = "KEYMA001"; // Duplicate schema name
+// Schema-level structural errors. KEYMA001 (duplicate name) is a base-language check owned by
+// `@keyma/compiler/frontend-ts` and re-exported above.
 export const KEYMA002 = "KEYMA002"; // Schema missing name
 
 // Field-level errors
@@ -51,14 +61,11 @@ export const KEYMA021 = "KEYMA021"; // Unknown formatter
 export const KEYMA022 = "KEYMA022"; // Unknown custom validator (not registered)
 export const KEYMA023 = "KEYMA023"; // Unknown custom formatter (not registered)
 
-// Visibility and inheritance errors
-export const KEYMA031 = "KEYMA031"; // Public schema leaks private schema
-export const KEYMA032 = "KEYMA032"; // Public schema extends private parent
-export const KEYMA033 = "KEYMA033"; // Child extends a non-@Schema-decorated class
-export const KEYMA034 = "KEYMA034"; // Child field overrides parent with incompatible type
+// Visibility and inheritance errors. KEYMA031 (visibility leak), KEYMA032-034 (inheritance),
+// and KEYMA037 (public surface) are base-language checks owned by `@keyma/compiler/frontend-ts`
+// and re-exported above. KEYMA035/036 (ephemeral usage) stay schema-domain concerns.
 export const KEYMA035 = "KEYMA035"; // Persisted schema references an ephemeral schema via Reference<T>
 export const KEYMA036 = "KEYMA036"; // Indexes declared on an ephemeral schema have no effect
-export const KEYMA037 = "KEYMA037"; // Public schema has only private fields (no public surface)
 
 // Index errors
 export const KEYMA016 = "KEYMA016"; // Invalid @Indexed direction value (must be 1, -1, or "text")
@@ -91,8 +98,5 @@ export const KEYMA091 = "KEYMA091"; // OBSOLETE — defaults are now property in
 // Deferred-feature warnings
 export const KEYMA098 = "KEYMA098"; // @Computed/@Indexed (etc.) on a getter is ignored — computed-field support is deferred; the getter is emitted as a plain accessor
 
-// Binary tag manifest errors (assignTags pass — see binary serialization)
-export const KEYMA100 = "KEYMA100"; // Field tag drift (suspected un-hinted rename) — re-run with --accept-tags, or add @RenamedFrom/@Tag
-export const KEYMA101 = "KEYMA101"; // @RenamedFrom("old") names a field absent from the committed manifest
-export const KEYMA102 = "KEYMA102"; // @Tag(n) invalid (must be a positive integer literal in range 1..2147483647)
-export const KEYMA103 = "KEYMA103"; // Duplicate/reused tag within a schema (incl. reusing a tombstoned tag)
+// Binary tag manifest errors (the `assignTags` pass) are owned by `@keyma/compiler/frontend-ts`
+// (binary tag assignment is a base-language concern) and re-exported above.

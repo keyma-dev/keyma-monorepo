@@ -7,7 +7,7 @@ import { fieldValidators, fieldFormatters } from "../ir/extensions.js";
 // validator/formatter factory is an ordinary `IRFunctionDeclaration` (its body returns a
 // typed inner arrow); `validatorShape` recovers the factory params, the inner positional
 // params (value/field/context) and the input type so this re-emits the same factory the
-// `<Class>.schema` metadata calls. The factory is spliced into its SOURCE module by the
+// `<Class>.metadata` calls. The factory is spliced into its SOURCE module by the
 // generic module emitter, which resolves any utility-function imports its body needs.
 
 // ─── Direct-ref factory call (spliced into schema metadata) ────────────────────

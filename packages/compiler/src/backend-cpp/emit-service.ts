@@ -56,7 +56,7 @@ function passByRef(type: IRType): boolean {
 
 // ─── includes ─────────────────────────────────────────────────────────────────
 
-/** Model/enum headers for every schema/enum referenced by a service's params/returns. */
+/** Model/enum headers for every class/enum referenced by a service's params/returns. */
 function buildIncludes(services: readonly IRService[], deps: ServiceEmitDeps): string[] {
     const incs = new Set<string>();
     for (const svc of services) {
@@ -71,9 +71,9 @@ function buildIncludes(services: readonly IRService[], deps: ServiceEmitDeps): s
 function addTypeIncludes(type: IRType, deps: ServiceEmitDeps, out: Set<string>): void {
     const t = type.kind === "array" ? type.of : type;
     if (t.kind === "embedded" || t.kind === "reference" || t.kind === "instance") {
-        const targetName = t.kind === "instance" ? t.name : t.schema;
+        const targetName = t.kind === "instance" ? t.name : t.target;
         const cls = deps.classNameByName.get(targetName);
-        const ref = cls !== undefined ? deps.schemaModule.get(cls) : undefined;
+        const ref = cls !== undefined ? deps.classModule.get(cls) : undefined;
         if (ref !== undefined) out.add(includePath(ref));
     } else if (t.kind === "enum" && t.name !== undefined) {
         const ref = deps.enumModuleByName.get(t.name);

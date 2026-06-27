@@ -29,7 +29,7 @@ export function portableCtx(b: Built, diagnostics: IRDiagnostic[], opts?: Partia
         sourceFile: b.sf,
         checker: b.checker,
         dslModuleName: "@keyma/schema/dsl",
-        schemaClassNames: new Set<string>(),
+        classNames: new Set<string>(),
         allowAssign: true,
         ...opts,
     };
@@ -39,7 +39,7 @@ export function methodCtx(b: Built, diagnostics: IRDiagnostic[]): MethodLowerCtx
     return {
         checker: b.checker,
         dslModuleName: "@keyma/schema/dsl",
-        schemaClassNames: new Set<string>(),
+        classNames: new Set<string>(),
         diagnostics,
         sourceFile: b.sf,
     };

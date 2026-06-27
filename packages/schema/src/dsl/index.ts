@@ -1,8 +1,9 @@
 // The schema-domain authoring surface. Re-exports the domain-neutral `@keyma/core/dsl`
-// (semantic types and the neutral decorators @FormField/@Deprecated/@Service) and adds
-// the schema-specific decorators (@Schema/@Edge/@Validate/@Format/…) plus the
-// validator/formatter contract types, so a schema author imports everything from
-// `@keyma/schema/dsl` with a single specifier.
+// (semantic types and the neutral decorators @FormField/@Deprecated/@Service plus the
+// binary-wire-tag field decorators @Tag/@RenamedFrom) and adds the schema-specific
+// decorators (@Schema/@Edge/@Validate/@Format/…) plus the validator/formatter contract
+// types, so a schema author imports everything from `@keyma/schema/dsl` with a single
+// specifier.
 export * from "@keyma/core/dsl";
 
 // Validator/formatter authoring and contract types (schema-domain owned).
@@ -20,8 +21,6 @@ export {
     Indexed,
     Ephemeral,
     Computed,
-    Tag,
-    RenamedFrom,
     Edge,
     From,
     To,

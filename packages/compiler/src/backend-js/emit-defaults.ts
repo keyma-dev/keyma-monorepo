@@ -3,15 +3,15 @@ import { collectIdentifiers, filterVisibleFields } from "@keyma/core/util";
 import { exprToJs } from "./emit-expression.js";
 
 /**
- * Build the `applyDefaults` arrow for a schema's expression-kind field defaults
- * (`= (() => new Date())()`, `= myFn()`), attached directly to the frozen schema
- * metadata. Each line fills one absent field by evaluating the re-emitted expression
- * per record at create time. Returns null when the schema has no expression defaults.
- * Literal defaults are not handled here — they ride in the field metadata and are
+ * Build the `applyDefaults` arrow for a class's expression-kind member defaults
+ * (`= (() => new Date())()`, `= myFn()`), attached directly to the frozen class
+ * metadata. Each line fills one absent member by evaluating the re-emitted expression
+ * per record at create time. Returns null when the class has no expression defaults.
+ * Literal defaults are not handled here — they ride in the member metadata and are
  * applied generically by the runtime.
  */
-export function buildApplyDefaults(schema: IRClassDeclaration, includePrivate: boolean): string | null {
-    const fields = filterVisibleFields(schema, includePrivate).filter(
+export function buildApplyDefaults(cls: IRClassDeclaration, includePrivate: boolean): string | null {
+    const fields = filterVisibleFields(cls, includePrivate).filter(
         (f) => f.default !== undefined && f.default.kind === "expression",
     );
     if (fields.length === 0) return null;
@@ -24,17 +24,17 @@ export function buildApplyDefaults(schema: IRClassDeclaration, includePrivate: b
     return `(value) => {\n${lines.join("\n")}\n    }`;
 }
 
-/** Whether a schema has at least one visible expression-kind default. */
-export function schemaHasExpressionDefault(schema: IRClassDeclaration, includePrivate: boolean): boolean {
-    return filterVisibleFields(schema, includePrivate).some(
+/** Whether a class has at least one visible expression-kind default. */
+export function classHasExpressionDefault(cls: IRClassDeclaration, includePrivate: boolean): boolean {
+    return filterVisibleFields(cls, includePrivate).some(
         (f) => f.default !== undefined && f.default.kind === "expression",
     );
 }
 
-/** Names of utility functions referenced by a schema's expression defaults. */
-export function defaultsReferencedFunctions(schema: IRClassDeclaration, includePrivate: boolean): Set<string> {
+/** Names of utility functions referenced by a class's expression defaults. */
+export function defaultsReferencedFunctions(cls: IRClassDeclaration, includePrivate: boolean): Set<string> {
     const names = new Set<string>();
-    for (const f of filterVisibleFields(schema, includePrivate)) {
+    for (const f of filterVisibleFields(cls, includePrivate)) {
         if (f.default !== undefined && f.default.kind === "expression") {
             collectIdentifiers(f.default.expression, names);
         }

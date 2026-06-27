@@ -76,12 +76,12 @@ export type Nullable<T> = T | null;
 /**
  * Explicit foreign reference
  * Identical to using a bare class type; prefer this when the intent should be obvious.
- * Maps to IR type `{ kind: "reference", schema }`.
+ * Maps to IR type `{ kind: "reference", target }`.
  */
 export type Reference<T> = T;
 
 /**
  * Inline sub-document — stored embedded in the parent document.
- * Maps to IR type `{ kind: "embedded", schema }`.
+ * Maps to IR type `{ kind: "embedded", target }`.
  */
 export type Embedded<T> = T;

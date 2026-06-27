@@ -1,10 +1,10 @@
-import type { SchemaMetadata } from "../types.js";
+import type { ClassMetadata } from "../types.js";
 
 export declare class User {
-    static readonly schema: SchemaMetadata;
+    static readonly metadata: ClassMetadata;
     readonly id: string;
     firstName: string;
     lastName: string;
     get fullName(): string;
-    constructor(value?: { id?: string; firstName?: string; lastName?: string });
+    static fromValue(value?: { id?: string; firstName?: string; lastName?: string }): User;
 }

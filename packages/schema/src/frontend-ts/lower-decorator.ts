@@ -1,12 +1,12 @@
 import ts from "typescript";
-import type { IRDiagnostic, IRDefault, IRType } from "@keyma/core/ir";
+import type { IRDiagnostic } from "@keyma/core/ir";
 import type { IRValidator, IRFormatterSpec, IRFieldIndex, IRFormField } from "../ir/extensions.js";
 import {
     mkError,
-    KEYMA011, KEYMA013, KEYMA016, KEYMA020, KEYMA021, KEYMA090,
+    KEYMA011, KEYMA013, KEYMA016, KEYMA020, KEYMA021,
 } from "./diagnostics.js";
 import { getLocation, numericLiteralValue, stringLiteralValue, booleanLiteralValue } from "@keyma/compiler/frontend-ts";
-import { lowerExpr, type FnRefVerdict } from "@keyma/compiler/frontend-ts";
+import type { FnRefVerdict } from "@keyma/compiler/frontend-ts";
 import type { ResolvedFactory } from "./discover-validators.js";
 
 type LowerContext = {
@@ -131,110 +131,6 @@ function getCalleeIdentifier(expr: ts.Expression): ts.Identifier | undefined {
         return ts.isIdentifier(expr.expression) ? expr.expression : undefined;
     }
     return ts.isIdentifier(expr) ? expr : undefined;
-}
-
-// ─── Field default (property initializer) ────────────────────────────────────
-
-/**
- * Lower a field's TypeScript property initializer (`= <expr>`) to an IRDefault.
- * A literal (`"active"`, `0`, `Role.Member`, `[...]`) lowers to `{kind:"literal"}`
- * with a light value-vs-type compatibility check (KEYMA090). Anything else
- * (`(() => new Date())()`, `myFn()`, …) lowers through the shared portable
- * expression engine to `{kind:"expression"}`, to be re-emitted and evaluated per
- * record at create time. Returns null on error (diagnostic already pushed).
- */
-export function lowerInitializerDefault(
-    init: ts.Expression,
-    fieldType: IRType,
-    ctx: LowerContext,
-): IRDefault | null {
-    // Enum-member / const access (e.g. `Role.Member`) that resolves to a literal.
-    if (ts.isPropertyAccessExpression(init)) {
-        const t = ctx.checker.getTypeAtLocation(init);
-        const v = t.isStringLiteral() ? t.value : t.isNumberLiteral() ? t.value : undefined;
-        if (v !== undefined) return literalDefault(v, fieldType, init, ctx);
-        // A non-literal member access falls through to portable expression lowering.
-    }
-
-    // Plain literal initializers (string/number/boolean/null/array, negative numbers).
-    if (isLiteralInitializer(init)) {
-        const r = evalLiteralValue(init, ctx);
-        if (!r.ok) return null;
-        return literalDefault(r.value as string | number | boolean | null | unknown[], fieldType, init, ctx);
-    }
-
-    // Otherwise: a portable expression default, re-emitted and evaluated per record.
-    const expr = lowerExpr(init, {
-        diagnostics: ctx.diagnostics,
-        sourceFile: ctx.sourceFile,
-        checker: ctx.checker,
-        dslModuleName: ctx.dslModuleName,
-        schemaClassNames: ctx.schemaClassNames ?? new Set<string>(),
-        ...(ctx.classifyFunction !== undefined ? { classifyFunction: ctx.classifyFunction } : {}),
-    });
-    if (expr === null) return null;
-    return { kind: "expression", expression: expr };
-}
-
-/** Build a literal IRDefault, checking value-vs-type compatibility (KEYMA090). */
-function literalDefault(
-    value: string | number | boolean | null | unknown[],
-    fieldType: IRType,
-    node: ts.Node,
-    ctx: LowerContext,
-): IRDefault | null {
-    if (!literalMatchesType(value, fieldType)) {
-        ctx.diagnostics.push(mkError(
-            KEYMA090,
-            `Default value ${JSON.stringify(value)} is not compatible with field type "${fieldType.kind}"`,
-            getLocation(node, ctx.sourceFile),
-        ));
-        return null;
-    }
-    return { kind: "literal", value };
-}
-
-/** Whether an initializer is a plain literal handled by `evalLiteralValue`. */
-function isLiteralInitializer(node: ts.Expression): boolean {
-    switch (node.kind) {
-        case ts.SyntaxKind.StringLiteral:
-        case ts.SyntaxKind.NumericLiteral:
-        case ts.SyntaxKind.TrueKeyword:
-        case ts.SyntaxKind.FalseKeyword:
-        case ts.SyntaxKind.NullKeyword:
-            return true;
-    }
-    if (ts.isArrayLiteralExpression(node)) return true;
-    if (
-        ts.isPrefixUnaryExpression(node) &&
-        node.operator === ts.SyntaxKind.MinusToken &&
-        ts.isNumericLiteral(node.operand)
-    ) return true;
-    return false;
-}
-
-/** A light compatibility check between a literal default and the field's type. */
-function literalMatchesType(value: unknown, type: IRType): boolean {
-    switch (type.kind) {
-        case "json":
-            return true; // any JSON value
-        case "string": case "id": case "decimal": case "date": case "dateTime": case "time":
-            return typeof value === "string";
-        case "number": case "integer":
-            return typeof value === "number";
-        case "bigint":
-            return typeof value === "number" || typeof value === "bigint";
-        case "boolean":
-            return typeof value === "boolean";
-        case "enum":
-            return typeof value === "string" && type.values.includes(value);
-        case "array":
-            return Array.isArray(value);
-        case "bytes": case "reference": case "embedded":
-            return value === null; // only null is a sensible literal default here
-        case "instance": case "function":
-            return false; // never a stored field type — no literal default applies
-    }
 }
 
 // ─── @FormField ────────────────────────────────────────────────────────────────

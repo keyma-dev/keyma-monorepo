@@ -30,15 +30,15 @@ export type IRType =
      *  declaration; absent for an inline string-literal union. */
     | { kind: "enum"; values: string[]; name?: string }
     | { kind: "array"; of: IRType; elementNullable?: boolean }
-    /** Foreign key — stores only the referenced document's id. `schema` is the
+    /** Foreign key — stores only the referenced document's id. `target` is the
      *  target schema's `name` (the canonical identity used everywhere downstream
      *  — registries, RPC, serialization, DB naming), never its `sourceName`.
      *  `idType` is the resolved type of the target's `id` field, filled in by the
      *  frontend. */
-    | { kind: "reference"; schema: string; idType?: IRType }
-    /** Inline nested document. `schema` is the target schema's `name` (see
+    | { kind: "reference"; target: string; idType?: IRType }
+    /** Inline nested document. `target` is the target schema's `name` (see
      *  `reference` above), never its `sourceName`. */
-    | { kind: "embedded"; schema: string }
+    | { kind: "embedded"; target: string }
     /** A live value of a class `T` — an *instance*, distinct from the ownership
      *  types `reference` (non-owning id handle) and `embedded` (owning inline
      *  value). `name` is the target class's canonical `name`. Appears only in
@@ -206,7 +206,7 @@ export type IRMethod = {
     source: IRSourceLocation;
 };
 
-export type IRField = {
+export type IRMember = {
     name: string;
     type: IRType;
     visibility: "public" | "private";
@@ -249,7 +249,7 @@ export type IRField = {
 export type IRClassDeclaration = {
     /** Canonical identity. Used everywhere downstream — reference/embedded/edge
      *  targets, runtime registries, RPC, serialization, DB naming. Unique across
-     *  the project (KEYMA001) and carries the optional `schemaPrefix`. */
+     *  the project (KEYMA001) and carries the optional `namePrefix`. */
     name: string;
     /** The authored TS class name. EMIT-SYMBOL ONLY: backends use it as the
      *  generated class/module identifier. Never a lookup key and never sent over
@@ -257,7 +257,7 @@ export type IRClassDeclaration = {
     sourceName: string;
     visibility: "public" | "private";
     description?: string;
-    fields: IRField[];
+    fields: IRMember[];
     /**
      * Portable behaviors (instance methods, setters) emitted onto the generated
      * model class. Not part of the stored record — pure re-emitted code. Holds only

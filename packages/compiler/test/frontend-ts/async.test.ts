@@ -21,7 +21,7 @@ describe("010 — async utility functions", () => {
         const collector = createFunctionCollector({
             checker: b.checker,
             dslModuleName: "@keyma/schema/dsl",
-            schemaClassNames: new Set<string>(),
+            classNames: new Set<string>(),
             diagnostics: diags,
         });
         collector.enqueueLocalSurface(b.program, () => false);

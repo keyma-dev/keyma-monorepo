@@ -1,7 +1,7 @@
 import { isRaw, mkRaw, type Raw } from "@keyma/core/util";
 
-// Re-export the raw-fragment marker; schema-data.ts imports `raw` from this module as the
-// backend's literal-emission surface.
+// Re-export the raw-fragment marker; a domain's class-data builder imports `raw` from this
+// module as the backend's literal-emission surface.
 export { mkRaw, type Raw };
 
 /**

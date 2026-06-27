@@ -25,7 +25,7 @@ type QueuedFunction = {
 export type FunctionCollectorDeps = {
     checker: ts.TypeChecker;
     dslModuleName: string;
-    schemaClassNames: ReadonlySet<string>;
+    classNames: ReadonlySet<string>;
     diagnostics: IRDiagnostic[];
 };
 
@@ -41,8 +41,8 @@ export type FunctionCollector = {
      * Enqueue the complete project-local top-level function surface (every `function` decl and
      * `const f = (…) => …` / function-expression in a non-declaration, non-`node_modules` source
      * file), so the IR carries all local functions — referenced or not — as a complete import
-     * surface. `isExcluded(returnType)` skips declarations a domain lowers separately (the schema
-     * domain excludes validator/formatter factories, which lower only where referenced). Shares
+     * surface. `isExcluded(returnType)` skips declarations a domain lowers separately (a domain
+     * may exclude its factory functions, which lower only where referenced). Shares
      * `classify`'s dedup, so a function already reached by reference is not enqueued twice.
      */
     enqueueLocalSurface: (program: ts.Program, isExcluded: (returnType: ts.TypeNode | undefined) => boolean) => void;
@@ -174,13 +174,13 @@ export function createFunctionCollector(deps: FunctionCollectorDeps): FunctionCo
             sourceFile: fn.sourceFile,
             checker,
             dslModuleName: deps.dslModuleName,
-            schemaClassNames: deps.schemaClassNames,
+            classNames: deps.classNames,
             classifyFunction: classify,
         };
         const typeMapCtx: TypeMapContext = {
             checker,
             dslModuleName: deps.dslModuleName,
-            schemaClassNames: deps.schemaClassNames,
+            classNames: deps.classNames,
             bareClassInstance: true,
             diagnostics,
             sourceFile: fn.sourceFile,

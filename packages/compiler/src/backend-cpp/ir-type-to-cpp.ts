@@ -1,4 +1,4 @@
-import type { IRType, IRField } from "@keyma/core/ir";
+import type { IRType, IRMember } from "@keyma/core/ir";
 
 /**
  * Map an IRType to its C++ type (std::pmr throughout). `cppTypeByName` resolves an
@@ -49,9 +49,9 @@ export function irTypeToCpp(
         case "reference":
             // A reference is a shared, allocator-aware handle to the target model
             // (id-stub at minimum). The null pointer models absence/null.
-            return `std::shared_ptr<${cppTypeByName?.get(type.schema) ?? type.schema}>`;
+            return `std::shared_ptr<${cppTypeByName?.get(type.target) ?? type.target}>`;
         case "embedded":
-            return cppTypeByName?.get(type.schema) ?? type.schema;
+            return cppTypeByName?.get(type.target) ?? type.target;
         case "instance":
             // A live value of a class T (param/return position) — a shared,
             // allocator-aware handle to the object, like the runtime's model objects.
@@ -71,7 +71,7 @@ export function irTypeToCpp(
  * so it is never wrapped.
  */
 export function memberType(
-    field: IRField,
+    field: IRMember,
     cppTypeByName?: ReadonlyMap<string, string>,
     enumTypeByName?: ReadonlyMap<string, string>,
 ): string {
@@ -94,7 +94,7 @@ export function memberType(
  * `from_value_field` supplies the `Field<E>` wrapper); otherwise it is the full member type.
  */
 export function traitsArg(
-    field: IRField,
+    field: IRMember,
     cppTypeByName?: ReadonlyMap<string, string>,
     enumTypeByName?: ReadonlyMap<string, string>,
 ): { tmpl: string; field: boolean } {
@@ -114,7 +114,7 @@ export function traitsArg(
  * presence/nullability wrappers are intentionally dropped — a filter compares the value.
  */
 export function whereValueType(
-    field: IRField,
+    field: IRMember,
     cppTypeByName?: ReadonlyMap<string, string>,
     enumTypeByName?: ReadonlyMap<string, string>,
 ): string {
@@ -133,7 +133,7 @@ export function whereValueType(
 }
 
 /** The keyma::FieldKind enumerator for a field's descriptor (an array → its element's kind). */
-export function fieldKind(field: IRField): string {
+export function fieldKind(field: IRMember): string {
     const core = field.type.kind === "array" ? field.type.of : field.type;
     let k: string;
     switch (core.kind) {
@@ -156,9 +156,9 @@ export function fieldKind(field: IRField): string {
 }
 
 /** The descriptor's RefTarget type (the target struct for a reference field, else void). */
-export function refTargetType(field: IRField, cppTypeByName?: ReadonlyMap<string, string>): string {
+export function refTargetType(field: IRMember, cppTypeByName?: ReadonlyMap<string, string>): string {
     const core = field.type.kind === "array" ? field.type.of : field.type;
-    if (core.kind === "reference") return cppTypeByName?.get(core.schema) ?? core.schema;
+    if (core.kind === "reference") return cppTypeByName?.get(core.target) ?? core.target;
     return "void";
 }
 
@@ -198,7 +198,7 @@ export type BinaryFieldPlan = {
  * (visible) fields, used for the 1-based tag fallback when `field.tag` is unset.
  */
 export function binaryFieldPlan(
-    field: IRField,
+    field: IRMember,
     index: number,
     cppTypeByName?: ReadonlyMap<string, string>,
     enumTypeByName?: ReadonlyMap<string, string>,
@@ -213,7 +213,7 @@ export function binaryFieldPlan(
     if (field.type.kind === "reference") {
         return {
             name, tag, kind: "reference", core: "",
-            target: cppTypeByName?.get(field.type.schema) ?? field.type.schema,
+            target: cppTypeByName?.get(field.type.target) ?? field.type.target,
             framing: nullable ? "null" : "omit",
         };
     }
@@ -232,7 +232,7 @@ export function binaryFieldPlan(
     };
 }
 
-/** The keyma::TypeTag enumerator for a type, for schema metadata. */
+/** The keyma::TypeTag enumerator for a type, for class metadata. */
 export function typeTag(type: IRType): string {
     const map: Partial<Record<IRType["kind"], string>> = {
         string: "String", number: "Number", integer: "Integer", bigint: "BigInt",
@@ -288,7 +288,7 @@ export function valueBinding(type: IRType, rawVar: string): { cppType: string; i
 /**
  * A C++ boolean expression checking whether a `keyma::Value` named `value` structurally
  * matches `type`, for a validator/formatter runtime input guard. Returns null when no
- * meaningful check applies (json, dateTime, schema references).
+ * meaningful check applies (json, dateTime, class references).
  */
 export function irTypeGuard(type: IRType, value: string): string | null {
     switch (type.kind) {
@@ -328,7 +328,7 @@ export function irTypeLabel(type: IRType): string {
         case "array": return `list of ${irTypeLabel(type.of)}`;
         case "enum": return `one of ${type.values.map((v) => JSON.stringify(v)).join(", ")}`;
         case "reference":
-        case "embedded": return type.schema;
+        case "embedded": return type.target;
         case "instance": return type.name;
         default: return type.kind;
     }

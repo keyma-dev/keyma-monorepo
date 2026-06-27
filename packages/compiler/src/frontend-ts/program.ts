@@ -15,7 +15,7 @@ export type CreateProgramOptions = {
     system?: ts.System;
 };
 
-/** Default compiler options for compiling user schema files. */
+/** Default compiler options for compiling user source files. */
 export const DEFAULT_COMPILER_OPTIONS: ts.CompilerOptions = {
     target: ts.ScriptTarget.ES2022,
     module: ts.ModuleKind.NodeNext,

@@ -23,17 +23,17 @@ export type FnRefVerdict =
 /**
  * Shared context for lowering the portable expression/statement subset. The same
  * core lowers two surfaces:
- * - validator/formatter/utility-function bodies (`refMode: "params"` — the default):
+ * - portable function/utility-function bodies (`refMode: "params"` — the default):
  *   bare identifiers resolve to the inner function's params/locals.
  * - computed getter bodies (`refMode: "fields"`): bare identifiers and `this.x`
- *   resolve to schema fields, and non-intrinsic calls are rejected.
+ *   resolve to class fields, and non-intrinsic calls are rejected.
  */
 export type PortableExprCtx = {
     diagnostics: IRDiagnostic[];
     sourceFile: ts.SourceFile;
     checker: ts.TypeChecker;
     dslModuleName: string;
-    schemaClassNames: ReadonlySet<string>;
+    classNames: ReadonlySet<string>;
     /**
      * Classify (and enqueue, if compilable) a call target identifier. When absent,
      * identifier calls are emitted verbatim (params mode) or rejected (fields mode).
@@ -45,7 +45,7 @@ export type PortableExprCtx = {
     /**
      * Lexically-visible local bindings (getter `const`s, arrow params). Consulted
      * only in **field mode**: a bare identifier in this set lowers to a local
-     * `{kind:"identifier"}` rather than a schema `{kind:"field"}`. A no-op in params
+     * `{kind:"identifier"}` rather than a class `{kind:"field"}`. A no-op in params
      * mode, where every bare identifier is already an `identifier`.
      */
     locals?: ReadonlySet<string>;
@@ -67,7 +67,7 @@ function unsupp(ctx: PortableExprCtx): string {
     return ctx.unsupportedCode ?? KEYMA082;
 }
 
-/** Whether bare/`this` references resolve to schema fields (getter mode). */
+/** Whether bare/`this` references resolve to class fields (getter mode). */
 function isFieldMode(ctx: PortableExprCtx): boolean {
     return ctx.refMode === "fields";
 }
@@ -149,7 +149,7 @@ export function lowerStatement(stmt: ts.Statement, ctx: PortableExprCtx): IRStat
         }
         const iterable = lowerExpr(stmt.expression, ctx);
         if (iterable === null) return null;
-        // In field mode the loop variable shadows any same-named schema field inside the body.
+        // In field mode the loop variable shadows any same-named class field inside the body.
         const bodyCtx: PortableExprCtx = isFieldMode(ctx)
             ? { ...ctx, locals: new Set([...(ctx.locals ?? []), decl.name.text]) }
             : ctx;
@@ -383,7 +383,7 @@ function statementContainsContinue(node: ts.Node): boolean {
 /**
  * Lower a statement list, threading lexical scope: each `const` binding becomes
  * visible to the statements that follow it (so in field mode a later bare reference
- * resolves to that local, not a schema field). A statement that fails to lower is
+ * resolves to that local, not a class field). A statement that fails to lower is
  * dropped (its diagnostic was already pushed); callers that must reject a partial
  * result (e.g. getters) check for new diagnostics.
  */
@@ -425,9 +425,9 @@ export function lowerExpr(node: ts.Expression, ctx: PortableExprCtx): IRExpressi
     if (node.kind === ts.SyntaxKind.NullKeyword) return { kind: "literal", value: null };
     if (node.kind === ts.SyntaxKind.UndefinedKeyword) return { kind: "identifier", name: "undefined" };
 
-    // Bare identifier: a schema field (getter mode) or a param/local (body mode).
+    // Bare identifier: a class field (getter mode) or a param/local (body mode).
     // In field mode, a name shadowed by a local binding (getter `const`, arrow param)
-    // resolves to that local, not a schema field.
+    // resolves to that local, not a class field.
     if (ts.isIdentifier(node)) {
         if (isFieldMode(ctx) && ctx.locals?.has(node.text) !== true) {
             return { kind: "field", name: node.text };
@@ -510,7 +510,7 @@ export function lowerExpr(node: ts.Expression, ctx: PortableExprCtx): IRExpressi
 
 /**
  * Lower an arrow function. Params shadow outer scope inside the body (field mode: they are
- * locals, not schema fields). A concise expression body lowers to `body`; a block body lowers
+ * locals, not class fields). A concise expression body lowers to `body`; a block body lowers
  * to `statements`, except a block whose single statement is `return e` normalizes down to
  * `body: e` (preserving the inline fast path — e.g. a `filter` predicate stays a comprehension
  * in Python, not a hoisted def). The return type is inferred best-effort.

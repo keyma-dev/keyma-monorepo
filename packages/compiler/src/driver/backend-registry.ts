@@ -4,7 +4,7 @@ import type { KeymaBackend } from "./types.js";
  * A registry of language backends, keyed by their `target` language id.
  *
  * The driver itself stays a pure function over a `KeymaBackend[]` (it never imports a
- * backend package — backends import the driver, so the reverse edge would be a cycle).
+ * backend package — backends import the driver, so the reverse dependency would be a cycle).
  * This registry is the seam where a host (the CLI) assembles that array: it pre-registers
  * the built-in js/python/cpp backends and, in a later reorg phase, any domain-contributed
  * backends, then hands `list()` to `drive()`. Registering more backends never requires

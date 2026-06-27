@@ -4,7 +4,7 @@ import type {
     IRFunctionDeclaration, IRDiagnostic,
 } from "@keyma/core/ir";
 import type { KeymaBackend, KeymaTargetConfig, ResolvedConfig, EmitFile, EmitResult } from "../driver/index.js";
-import { emitModuleCpp, collectFactoryNames, type ModuleEmitDeps } from "./emit-module.js";
+import { emitModuleCpp, type ModuleEmitDeps } from "./emit-module.js";
 import { emitIndexCpp } from "./emit-index.js";
 import { emitSupportHpp } from "./emit-support.js";
 import { moduleRefOf, namespaceOf, cppSanitizer } from "./module-path.js";
@@ -15,8 +15,8 @@ import { emitServiceClientCpp } from "./emit-service-client.js";
 
 /**
  * Build a C++ backend from the given domain emitter packs. The generic bundle shell here is
- * domain-neutral; the schema metadata + enums + services come from the registered pack (the
- * schema pack lives in `@keyma/schema/backend-cpp`, registered by the CLI).
+ * domain-neutral; the class metadata + enums + services come from the registered pack (the
+ * primary domain pack is registered by the CLI).
  */
 export function createCppBackend(packs: Iterable<CppEmitterPack>): KeymaBackend {
     const registry = new EmitterRegistry();
@@ -30,7 +30,7 @@ export function createCppBackend(packs: Iterable<CppEmitterPack>): KeymaBackend 
 
 type SharedDeps = Pick<
     ModuleEmitDeps,
-    "nsRoot" | "schemaBySourceName" | "schemaModule" | "classNameByName" | "cppTypeByName" | "enumTypeByName" | "enumModuleByName"
+    "nsRoot" | "classBySourceName" | "classModule" | "classNameByName" | "cppTypeByName" | "enumTypeByName" | "enumModuleByName"
     | "idFieldByName" | "functionDecls" | "functionNames" | "functionModule" | "claimedFunctionNames"
     | "runtimeInclude" | "referenceTargetNames" | "binary"
 >;
@@ -51,7 +51,7 @@ export async function emitCpp(
     const nsRoot = cppTarget.namespaceRoot;
     const files: EmitFile[] = [];
 
-    // The registered domain emit packs. The first (primary) supplies the per-schema metadata,
+    // The registered domain emit packs. The first (primary) supplies the per-class metadata,
     // enum, and service emitters; the bundle shell stays domain-agnostic. Empty for a core build.
     const packs = registry.list();
 
@@ -63,7 +63,7 @@ export async function emitCpp(
 
     // Every declaration emits into the module derived from its SOURCE file: project-local
     // declarations under `src/`, out-of-project (library) declarations into the shared `vendor`.
-    const schemaModule = new Map<string, string>(
+    const classModule = new Map<string, string>(
         ir.classes.map((s) => [s.sourceName, moduleRefOf(s.source.file, ir.sourceRoot)]),
     );
     const enumModuleByName = new Map<string, string>(
@@ -72,10 +72,10 @@ export async function emitCpp(
     const functionModule = new Map<string, string>(
         decls.functions.map((d) => [d.name, moduleRefOf(d.source.file, ir.sourceRoot)]),
     );
-    // Reference/embedded/edge target `name` → fully-qualified emitted C++ struct type.
+    // Reference/embedded target `name` → fully-qualified emitted C++ struct type.
     const cppTypeByName = new Map<string, string>(
         ir.classes.map((s) => {
-            const ref = schemaModule.get(s.sourceName)!;
+            const ref = classModule.get(s.sourceName)!;
             return [s.name, `${namespaceOf(ref, nsRoot)}::${s.sourceName}`];
         }),
     );
@@ -84,17 +84,17 @@ export async function emitCpp(
         decls.enums.map((e) => [e.name, `${namespaceOf(enumModuleByName.get(e.name)!, nsRoot)}::${cppSanitizer(e.name)}`]),
     );
     // Resolve `extends` parents (keyed by sourceName) so trait emitters can walk the chain.
-    const schemaBySourceName = new Map<string, IRClassDeclaration>(ir.classes.map((s) => [s.sourceName, s]));
-    // Schema `name` → its id field's name (for reference id-stubs). The id may be INHERITED, so
+    const classBySourceName = new Map<string, IRClassDeclaration>(ir.classes.map((s) => [s.sourceName, s]));
+    // Class `name` → its id field's name (for reference id-stubs). The id may be INHERITED, so
     // search the full chain. Defaults to "id".
     const idFieldByName = new Map<string, string>(
-        ir.classes.map((s) => [s.name, inheritedFields(s, schemaBySourceName).find((f) => f.type.kind === "id")?.name ?? "id"]),
+        ir.classes.map((s) => [s.name, inheritedFields(s, classBySourceName).find((f) => f.type.kind === "id")?.name ?? "id"]),
     );
-    // Schema `name`s that are the target of some reference field (recursing arrays). The
-    // value_traits of these schemas carry id-stub helpers (set_id / id_value).
+    // Class `name`s that are the target of some reference field (recursing arrays). The
+    // value_traits of these classes carry id-stub helpers (set_id / id_value).
     const referenceTargetNames = new Set<string>();
     const collectRefTargets = (t: IRType): void => {
-        if (t.kind === "reference") referenceTargetNames.add(t.schema);
+        if (t.kind === "reference") referenceTargetNames.add(t.target);
         else if (t.kind === "array") collectRefTargets(t.of);
     };
     for (const s of ir.classes) for (const f of s.fields) collectRefTargets(f.type);
@@ -107,8 +107,8 @@ export async function emitCpp(
 
     const shared: SharedDeps = {
         nsRoot,
-        schemaBySourceName,
-        schemaModule,
+        classBySourceName,
+        classModule,
         classNameByName: new Map(ir.classes.map((s) => [s.name, s.sourceName])),
         cppTypeByName,
         enumTypeByName,
@@ -131,18 +131,18 @@ export async function emitCpp(
 
     if (cppTarget.emitClient) {
         files.push(...emitBundle(ir, path.posix.join(cppTarget.outDir, "client"), shared, decls, {
-            includePrivate: false, includeIndexes: false, formPhasesOnly: true, includeDefaults: false,
-        }, cppTarget.vendorRuntime, packs, "client", diagnostics));
+            includePrivate: false, includeDefaults: false, bundle: "client",
+        }, cppTarget.vendorRuntime, packs, diagnostics));
     }
     if (cppTarget.emitServer) {
         files.push(...emitBundle(ir, path.posix.join(cppTarget.outDir, "server"), shared, decls, {
-            includePrivate: true, includeIndexes: true, formPhasesOnly: false, includeDefaults: true,
-        }, cppTarget.vendorRuntime, packs, "server", diagnostics));
+            includePrivate: true, includeDefaults: true, bundle: "server",
+        }, cppTarget.vendorRuntime, packs, diagnostics));
     }
     if (cppTarget.emitLibrary) {
         files.push(...emitBundle(ir, cppTarget.outDir, shared, decls, {
-            includePrivate: true, includeIndexes: true, formPhasesOnly: false, includeDefaults: true,
-        }, cppTarget.vendorRuntime, packs, "library", diagnostics));
+            includePrivate: true, includeDefaults: true, bundle: "library",
+        }, cppTarget.vendorRuntime, packs, diagnostics));
     }
 
     return { files, diagnostics: dedupeDiagnostics(diagnostics) };
@@ -161,7 +161,7 @@ function dedupeDiagnostics(diagnostics: readonly IRDiagnostic[]): IRDiagnostic[]
 
 type BundleOptions = Pick<
     ModuleEmitDeps,
-    "includePrivate" | "includeIndexes" | "formPhasesOnly" | "includeDefaults"
+    "includePrivate" | "includeDefaults" | "bundle"
 >;
 
 function emitBundle(
@@ -172,14 +172,13 @@ function emitBundle(
     opts: BundleOptions,
     vendorRuntime: boolean,
     packs: readonly CppEmitterPack[],
-    bundle: "client" | "server" | "library",
     diagnostics: IRDiagnostic[],
 ): EmitFile[] {
     const files: EmitFile[] = [];
 
-    // Primary pack — the per-schema metadata provider (the schema domain) — selected by
-    // CAPABILITY, not registration order. Undefined only in a core-only build (no schemas).
-    const pack = packs.find((p) => p.buildSchemaData !== undefined);
+    // Primary pack — the per-class metadata provider (the primary domain) — selected by
+    // CAPABILITY, not registration order. Undefined only in a core-only build (no classes).
+    const pack = packs.find((p) => p.buildClassData !== undefined);
 
     // Vendor the runtime header into the bundle only when opted in; by default generated
     // headers depend on @keyma/runtime-cpp via `#include <keyma/runtime.hpp>`.
@@ -187,7 +186,7 @@ function emitBundle(
         files.push({ path: path.posix.join(bundleDir, VENDOR_RUNTIME_HEADER), content: emitSupportHpp() });
     }
 
-    const visibleSchemas: IRClassDeclaration[] = opts.includePrivate
+    const visibleClasses: IRClassDeclaration[] = opts.includePrivate
         ? ir.classes
         : ir.classes.filter((s) => s.visibility === "public");
 
@@ -195,22 +194,25 @@ function emitBundle(
     // roots (class behaviors + defaults + the validator/formatter factories on visible fields,
     // formatters gated to form phases for the client). Reachability is the client/server gate.
     const functionsByName = new Map(decls.functions.map((d) => [d.name, d]));
-    const allVisibleFields = visibleSchemas.flatMap((s) => filterVisibleFields(s, opts.includePrivate));
-    const seeds = collectFunctionRefs(visibleSchemas, {
+    const allVisibleFields = visibleClasses.flatMap((s) => filterVisibleFields(s, opts.includePrivate));
+    const seeds = collectFunctionRefs(visibleClasses, {
         includePrivate: opts.includePrivate,
         includeDefaults: opts.includeDefaults,
         functionNames: new Set(functionsByName.keys()),
     });
-    for (const n of collectFactoryNames(allVisibleFields, "validators", opts.formPhasesOnly)) seeds.add(n);
-    for (const n of collectFactoryNames(allVisibleFields, "formatters", opts.formPhasesOnly)) seeds.add(n);
+    // The names a class's members reference (validators + formatters in the data-model domain),
+    // supplied by the primary domain pack — the compiler reads no domain slice itself.
+    if (pack?.referencedFunctionNames !== undefined) {
+        for (const n of pack.referencedFunctionNames(allVisibleFields, { bundle: opts.bundle })) seeds.add(n);
+    }
     const reachable = reachableFunctions(seeds, functionsByName);
     const reachableFns = decls.functions.filter((d) => reachable.has(d.name));
 
-    // Group schemas, enums, AND functions by module (a file may declare any combination).
-    const schemaGroups = new Map<string, IRClassDeclaration[]>();
-    for (const s of visibleSchemas) {
-        const ref = shared.schemaModule.get(s.sourceName)!;
-        (schemaGroups.get(ref) ?? schemaGroups.set(ref, []).get(ref)!).push(s);
+    // Group classes, enums, AND functions by module (a file may declare any combination).
+    const classGroups = new Map<string, IRClassDeclaration[]>();
+    for (const s of visibleClasses) {
+        const ref = shared.classModule.get(s.sourceName)!;
+        (classGroups.get(ref) ?? classGroups.set(ref, []).get(ref)!).push(s);
     }
     const enumGroups = new Map<string, IREnumDeclaration[]>();
     for (const e of decls.enums) {
@@ -222,11 +224,11 @@ function emitBundle(
         const ref = shared.functionModule.get(d.name)!;
         (fnGroups.get(ref) ?? fnGroups.set(ref, []).get(ref)!).push(d);
     }
-    const moduleRefs = new Set([...schemaGroups.keys(), ...enumGroups.keys(), ...fnGroups.keys()]);
-    if (schemaGroups.size > 0 && pack?.buildSchemaData === undefined) {
-        // Schemas need a domain's metadata builder (the schema domain). It is absent only in a
-        // core-only build, which produces no schemas — so reaching here is a real error.
-        throw new Error("no C++ emitter pack with a schema metadata builder registered, but the IR has schemas to emit");
+    const moduleRefs = new Set([...classGroups.keys(), ...enumGroups.keys(), ...fnGroups.keys()]);
+    if (classGroups.size > 0 && pack?.buildClassData === undefined) {
+        // Classes need a domain's metadata builder (the primary domain). It is absent only in a
+        // core-only build, which produces no classes — so reaching here is a real error.
+        throw new Error("no C++ emitter pack with a class metadata builder registered, but the IR has classes to emit");
     }
     if (moduleRefs.size > 0) {
         const renderClaimedFunctions = pack?.renderClaimedFunctions !== undefined
@@ -234,17 +236,18 @@ function emitBundle(
             : undefined;
         const deps: ModuleEmitDeps = {
             ...opts, ...shared,
-            // Only invoked when schemaGroups is non-empty, which the guard above proves has a pack.
-            buildSchemaData: pack?.buildSchemaData ?? (() => { throw new Error("buildSchemaData missing"); }),
+            // Only invoked when classGroups is non-empty, which the guard above proves has a pack.
+            buildClassData: pack?.buildClassData ?? (() => { throw new Error("buildClassData missing"); }),
+            ...(pack?.referencedFunctionNames !== undefined ? { referencedFunctionNames: pack.referencedFunctionNames } : {}),
             ...(renderClaimedFunctions !== undefined ? { renderClaimedFunctions } : {}),
         };
         for (const ref of moduleRefs) {
-            const content = emitModuleCpp(ref, schemaGroups.get(ref) ?? [], enumGroups.get(ref) ?? [], fnGroups.get(ref) ?? [], deps, diagnostics);
+            const content = emitModuleCpp(ref, classGroups.get(ref) ?? [], enumGroups.get(ref) ?? [], fnGroups.get(ref) ?? [], deps, diagnostics);
             files.push({ path: path.posix.join(bundleDir, `${ref}.hpp`), content });
         }
     }
 
-    // Remotely-callable services (gated by visibility like schemas). `@Service` is a
+    // Remotely-callable services (gated by visibility like classes). `@Service` is a
     // base-language concern the compiler owns end-to-end, so the bundle shell emits the
     // service + service-client headers directly from `ir.services` — no domain pack participates.
     const visibleServices = opts.includePrivate
@@ -257,7 +260,7 @@ function emitBundle(
                 includePrivate: opts.includePrivate,
                 nsRoot: shared.nsRoot,
                 runtimeInclude: shared.runtimeInclude,
-                schemaModule: shared.schemaModule,
+                classModule: shared.classModule,
                 classNameByName: shared.classNameByName,
                 cppTypeByName: shared.cppTypeByName,
                 enumTypeByName: shared.enumTypeByName,
@@ -271,7 +274,7 @@ function emitBundle(
             content: emitServiceClientCpp(decls.services, {
                 includePrivate: opts.includePrivate,
                 nsRoot: shared.nsRoot,
-                schemaModule: shared.schemaModule,
+                classModule: shared.classModule,
                 classNameByName: shared.classNameByName,
                 cppTypeByName: shared.cppTypeByName,
                 enumTypeByName: shared.enumTypeByName,
@@ -282,7 +285,7 @@ function emitBundle(
 
     files.push({
         path: path.posix.join(bundleDir, "index.hpp"),
-        content: emitIndexCpp(visibleSchemas, shared.schemaModule, {
+        content: emitIndexCpp(visibleClasses, shared.classModule, {
             includePrivate: opts.includePrivate,
             nsRoot: shared.nsRoot,
             enums: decls.enums,
@@ -296,7 +299,7 @@ function emitBundle(
     for (const p of packs) {
         if (p.emitBundleFiles !== undefined) {
             files.push(...p.emitBundleFiles(ir, {
-                bundle, bundleDir, includePrivate: opts.includePrivate,
+                bundle: opts.bundle, bundleDir, includePrivate: opts.includePrivate,
                 nsRoot: shared.nsRoot, runtimeInclude: shared.runtimeInclude,
             }));
         }

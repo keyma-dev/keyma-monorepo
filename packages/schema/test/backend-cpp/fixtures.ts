@@ -1,5 +1,5 @@
 import type {
-    KeymaIR, IRClassDeclaration, IRField, IRType, IRExpression,
+    KeymaIR, IRClassDeclaration, IRMember, IRType, IRExpression,
     IRFunctionDeclaration, IREnumDeclaration, IRService,
 } from "@keyma/core/ir";
 import {
@@ -16,12 +16,12 @@ export const intr = (op: string, receiver: IRExpression | null, args: IRExpressi
     ({ kind: "intrinsic", op, receiver, args });
 export const tmpl = (...parts: IRExpression[]): IRExpression => ({ kind: "template", parts });
 
-type FExtra = Partial<IRField> & {
+type FExtra = Partial<IRMember> & {
     indexes?: IRFieldIndex[]; ephemeral?: boolean; validators?: IRValidator[]; formatters?: IRFormatter[];
 };
-function f(name: string, type: IRType, extra: FExtra = {}): IRField {
+function f(name: string, type: IRType, extra: FExtra = {}): IRMember {
     const { indexes, ephemeral, validators, formatters, ...rest } = extra;
-    const field: IRField = { name, type, visibility: "public", readonly: false, required: true, source: src("user.ts"), ...rest };
+    const field: IRMember = { name, type, visibility: "public", readonly: false, required: true, source: src("user.ts"), ...rest };
     const ext: FieldExtData = {};
     if (indexes !== undefined && indexes.length > 0) ext.indexes = indexes;
     if (ephemeral === true) ext.ephemeral = true;
@@ -97,7 +97,7 @@ const Tag: IRClassDeclaration = {
     fields: [
         f("id", { kind: "id" }),
         f("label", { kind: "string" }),
-        f("owner", { kind: "reference", schema: "user", idType: { kind: "id" } }),
+        f("owner", { kind: "reference", target: "user", idType: { kind: "id" } }),
     ],
     extensions: { schema: { indexes: [{ fields: [{ name: "id", direction: 1 }], unique: true }] } }, source: src("tag.ts"),
 };
@@ -114,11 +114,11 @@ export const accountService: IRService = {
     id: "AccountService", name: "AccountService", sourceName: "AccountService", visibility: "public",
     description: "Account lifecycle operations.",
     methods: [
-        { name: "signup", params: [{ name: "user", type: { kind: "embedded", schema: "user" } }],
-            returnType: { kind: "reference", schema: "user", idType: { kind: "id" } }, visibility: "public", source: src("services.ts") },
+        { name: "signup", params: [{ name: "user", type: { kind: "embedded", target: "user" } }],
+            returnType: { kind: "reference", target: "user", idType: { kind: "id" } }, visibility: "public", source: src("services.ts") },
         { name: "resend", params: [{ name: "email", type: { kind: "string" } }],
             returnType: { kind: "boolean" }, visibility: "public", source: src("services.ts") },
-        { name: "listTags", params: [], returnType: { kind: "array", of: { kind: "embedded", schema: "tag" } },
+        { name: "listTags", params: [], returnType: { kind: "array", of: { kind: "embedded", target: "tag" } },
             visibility: "public", source: src("services.ts") },
         { name: "purge", params: [], returnType: { kind: "boolean" }, visibility: "private", source: src("services.ts") },
     ],
@@ -149,8 +149,8 @@ const User: IRClassDeclaration = {
         f("role", { kind: "string" }, { default: { kind: "literal", value: "user" } }),
         f("status", { kind: "enum", name: "Status", values: ["active", "archived"] }, { default: { kind: "literal", value: "active" } }),
         f("created", { kind: "dateTime" }, { default: { kind: "expression", expression: { kind: "new", callee: id("Date"), args: [] } } }),
-        f("address", { kind: "embedded", schema: "address" }),
-        f("primaryTag", { kind: "reference", schema: "tag", idType: { kind: "id" } }),
+        f("address", { kind: "embedded", target: "address" }),
+        f("primaryTag", { kind: "reference", target: "tag", idType: { kind: "id" } }),
         f("tags", { kind: "array", of: { kind: "string" } }),
         f("meta", { kind: "json" }),
     ],

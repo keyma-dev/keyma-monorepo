@@ -24,18 +24,17 @@ const callStmt = (callee: string): IRStatement => ({
 const MODULE_REF = "models/widget";
 
 /** A complete-but-minimal ModuleEmitDeps for exercising the module emitter in isolation. */
-function makeDeps(schemas: readonly IRClassDeclaration[]): ModuleEmitDeps {
+function makeDeps(classes: readonly IRClassDeclaration[]): ModuleEmitDeps {
     return {
         includePrivate: true,
-        includeIndexes: false,
-        formPhasesOnly: false,
+        bundle: "library",
         includeDefaults: false,
         binary: false,
         nsRoot: "app",
-        schemaBySourceName: new Map(schemas.map((s) => [s.sourceName, s])),
-        schemaModule: new Map(schemas.map((s) => [s.sourceName, MODULE_REF])),
-        classNameByName: new Map(schemas.map((s) => [s.name, s.sourceName])),
-        cppTypeByName: new Map(schemas.map((s) => [s.name, s.sourceName])),
+        classBySourceName: new Map(classes.map((s) => [s.sourceName, s])),
+        classModule: new Map(classes.map((s) => [s.sourceName, MODULE_REF])),
+        classNameByName: new Map(classes.map((s) => [s.name, s.sourceName])),
+        cppTypeByName: new Map(classes.map((s) => [s.name, s.sourceName])),
         enumTypeByName: new Map(),
         enumModuleByName: new Map(),
         idFieldByName: new Map(),
@@ -45,9 +44,9 @@ function makeDeps(schemas: readonly IRClassDeclaration[]): ModuleEmitDeps {
         functionModule: new Map(),
         claimedFunctionNames: new Set(),
         runtimeInclude: "<keyma/runtime.hpp>",
-        buildSchemaData: (schema) => ({
-            name: schema.name,
-            sourceName: schema.sourceName,
+        buildClassData: (cls) => ({
+            name: cls.name,
+            sourceName: cls.sourceName,
             refs: [],
             indexes: [],
             fields: [],

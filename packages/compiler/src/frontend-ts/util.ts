@@ -69,9 +69,9 @@ const CORE_DSL_FILE = /(?:@keyma\/core|packages\/core)\/(?:dist\/)?(?:src\/)?dsl
  * Returns true if `symbol` resolves — through any import/re-export alias chain — to a
  * declaration in `@keyma/core/dsl`. Unlike {@link isFromModule}, which matches the *literal*
  * import specifier, this follows the alias to the ORIGINAL declaration and matches by package,
- * so a symbol imported through the `@keyma/schema/dsl` re-export (`export * from
- * "@keyma/core/dsl"`) still matches its core identity. Use it to recognize a core DSL symbol
- * (decorator or semantic type) regardless of which umbrella the author imported it through.
+ * so a symbol imported through a domain's DSL re-export (`export * from "@keyma/core/dsl"`)
+ * still matches its core identity. Use it to recognize a core DSL symbol (decorator or
+ * semantic type) regardless of which umbrella the author imported it through.
  */
 export function isResolvedCoreDsl(symbol: ts.Symbol, checker: ts.TypeChecker): boolean {
     const resolved = resolveAlias(symbol, checker);
@@ -83,7 +83,7 @@ export function isResolvedCoreDsl(symbol: ts.Symbol, checker: ts.TypeChecker): b
  * Returns true if `symbol` resolves (through any alias chain) to the export `name` of
  * `@keyma/core/dsl` — e.g. `Service`. Combines a resolved-name match with
  * {@link isResolvedCoreDsl}, so `@Service` is recognized whether it was imported from
- * `@keyma/core/dsl` directly or via the `@keyma/schema/dsl` re-export.
+ * `@keyma/core/dsl` directly or via a domain's DSL re-export.
  */
 export function isCoreDslSymbol(
     symbol: ts.Symbol,

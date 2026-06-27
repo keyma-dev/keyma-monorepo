@@ -63,7 +63,7 @@ function mkCtx(sourceFile: ts.SourceFile, diagnostics: IRDiagnostic[], deps: Low
         sourceFile,
         checker: deps.checker,
         dslModuleName: deps.dslModuleName,
-        schemaClassNames: deps.schemaClassNames,
+        classNames: deps.schemaClassNames,
         ...(deps.classifyFunction !== undefined ? { classifyFunction: deps.classifyFunction } : {}),
     };
 }
@@ -72,7 +72,7 @@ function typeMapCtxOf(ctx: LowerCtx): TypeMapContext {
     return {
         checker: ctx.checker,
         dslModuleName: ctx.dslModuleName,
-        schemaClassNames: ctx.schemaClassNames,
+        classNames: ctx.classNames,
         bareClassInstance: true,
         diagnostics: ctx.diagnostics,
         sourceFile: ctx.sourceFile,

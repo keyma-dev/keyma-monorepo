@@ -2,14 +2,14 @@ export { createCppBackend, emitCpp } from "./backend.js";
 export type { CppTargetConfig } from "./types.js";
 
 // The emitter-registry seam: the class, the bundle-layout refs, and the pack/contract types.
-// Domain packs (the schema pack lives in `@keyma/schema/backend-cpp`) implement `CppEmitterPack`.
+// Domain packs (a domain pack registered by the CLI) implement `CppEmitterPack`.
 export { EmitterRegistry, SERVICES_REF, SERVICE_CLIENT_REF } from "./emitter-registry.js";
 export type {
     CppEmitterPack,
-    BuildSchemaData,
-    CppSchemaData,
+    BuildClassData,
+    CppClassData,
     CppFieldData,
-    SchemaDataOptions,
+    ClassDataOptions,
     ServiceEmitDeps,
     ServiceClientEmitDeps,
     BundleEmitContext,
@@ -17,7 +17,7 @@ export type {
 
 // ── Generic emission helpers, exported so domain emitter packs build on the same engine ──
 export { typeTag, irTypeToCpp, memberType, valueBinding, irTypeGuard, irTypeLabel } from "./ir-type-to-cpp.js";
-// Statement/return lowering + identifier/context helpers — the schema pack reuses these to emit
+// Statement/return lowering + identifier/context helpers — a domain pack reuses these to emit
 // the validator/formatter `ValidatorFn`/`FormatterFn` wrappers it now owns (validators.hpp/formatters.hpp).
 export { factoryIdent, stmtToCpp, plainReturn, rewriteContextAccess } from "./emit-validators.js";
 export type { ReturnLowerer } from "./emit-validators.js";

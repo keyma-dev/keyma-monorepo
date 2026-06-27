@@ -1,4 +1,4 @@
-import type { IRClassDeclaration, IRField } from "../ir/index.js";
+import type { IRClassDeclaration, IRMember } from "../ir/index.js";
 
 /**
  * The complete field list for a schema — its own fields plus every inherited one —
@@ -16,7 +16,7 @@ import type { IRClassDeclaration, IRField } from "../ir/index.js";
 export function inheritedFields(
     schema: IRClassDeclaration,
     schemaBySourceName: ReadonlyMap<string, IRClassDeclaration>,
-): IRField[] {
+): IRMember[] {
     if (schema.extends === undefined) return schema.fields.slice();
 
     // Walk child → ... → root, guarding against cycles (the frontend rejects them, but a
@@ -31,7 +31,7 @@ export function inheritedFields(
     }
 
     // Insert root-first so a child override keeps the parent field's position.
-    const byName = new Map<string, IRField>();
+    const byName = new Map<string, IRMember>();
     for (let i = chain.length - 1; i >= 0; i--) {
         for (const f of chain[i]!.fields) byName.set(f.name, f);
     }

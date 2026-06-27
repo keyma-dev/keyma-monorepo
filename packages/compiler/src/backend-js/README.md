@@ -67,9 +67,9 @@ With the defaults, output is split into `outDir/client/` and `outDir/server/`. `
 ```
 <outDir>/
   client/
-    models/<path>.js     models/<path>.d.ts     # one module per SOURCE file (every schema
+    models/<path>.js     models/<path>.d.ts     # one module per SOURCE file (every class
                                                  # authored together stays together; filename
-                                                 # is the source stem, not the schema name)
+                                                 # is the source stem, not the class name)
     index.js             index.d.ts             # barrel re-export of model classes
     validators.js                     (+ .d.ts) # direct-ref factory functions (no registry)
     formatters.js                     (+ .d.ts) # direct-ref factory functions (no registry)
@@ -78,24 +78,25 @@ With the defaults, output is split into `outDir/client/` and `outDir/server/`. `
     ... (same files)
 ```
 
-Validators/formatters/expression-defaults are referenced **directly** from each schema's frozen
+Per-member functions and expression-defaults are referenced **directly** from each class's frozen
 metadata (`validators: [minLength(2)]`, `formatters: [{ phase, fn: trim() }]`, an inline
-`applyDefaults`) — there is no name-keyed registry to wire into `KeymaServer`.
+`applyDefaults`) — there is no name-keyed registry to wire into the runtime. These attachments are
+contributed by the registered domain pack, not by the generic backend.
 
 ### Client vs. server bundle
 
 | | client | server |
 |---|---|---|
-| Schemas | public only | all (incl. `@Schema({ private: true })`) |
-| Fields | public only | all (incl. `private`) |
+| Classes | public only | all (incl. private) |
+| Members | public only | all (incl. `private`) |
 | Index metadata | omitted | included |
-| Formatters in metadata | form phases only (`change`/`blur`/`submit`) | all phases (incl. `save`) |
+| Form-phase functions in metadata | form phases only (`change`/`blur`/`submit`) | all phases (incl. `save`) |
 
-The split is the seam that keeps private fields and server-only schemas out of code shipped to the browser.
+The split is the seam that keeps private members and server-only classes out of code shipped to the browser.
 
 ## Generated code
 
-Plain ES classes — **no decorators, no `reflect-metadata`, no `tslib`**. Each model carries a frozen static `schema` (a `SchemaMetadata`); getters, methods, and setters are re-emitted as class members (behaviors, not schema fields); private members appear only in the server bundle. The only external reference is a type-only import of `SchemaMetadata` from `@keyma/runtime-js` (in the `.d.ts`).
+Plain ES classes — **no decorators, no `reflect-metadata`, no `tslib`**. Each model carries a frozen static `metadata` (a `ClassMetadata`); getters, methods, and setters are re-emitted as class members (behaviors, not data members); private members appear only in the server bundle. The only external reference is a type-only import of `ClassMetadata` from the inlined bundle `types` module (in the `.d.ts`).
 
 ```js
 // client/models/user.js
@@ -111,10 +112,10 @@ export class User {
         return `${this.firstName} ${this.lastName}`;
     }
 }
-User.schema = Object.freeze({ name: "user", sourceName: "User", fields: [ /* … */ ] });
+User.metadata = Object.freeze({ name: "user", sourceName: "User", fields: [ /* … */ ] });
 ```
 
-The `fullName` getter is emitted identically in the client and server bundles (gated only by visibility, like a method). It is a behavior, not a schema field — its value is never stored, indexed, or part of `schema.fields`. (Stored/indexed computed fields are deferred to a future release; see the `@Computed` note in `@keyma/dsl`.)
+The `fullName` getter is emitted identically in the client and server bundles (gated only by visibility, like a method). It is a behavior, not a data member — its value is never stored, indexed, or part of `metadata.fields`. (Stored/indexed computed members are deferred to a future release.)
 
 ## Tests
 

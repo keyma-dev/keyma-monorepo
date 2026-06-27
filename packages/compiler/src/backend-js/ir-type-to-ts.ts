@@ -10,7 +10,7 @@ import type { IRType } from "@keyma/core/ir";
 export function irTypeToTs(
     type: IRType,
     /** Map of target `name` → emitted class symbol, for resolving reference/embedded
-     *  schema types to their generated class. */
+     *  target types to their generated class. */
     embeddedNames?: ReadonlyMap<string, string>
 ): string {
     switch (type.kind) {
@@ -36,10 +36,10 @@ export function irTypeToTs(
         }
 
         case "reference":
-            return embeddedNames?.get(type.schema) ?? type.schema;
+            return embeddedNames?.get(type.target) ?? type.target;
 
         case "embedded": {
-            return embeddedNames?.get(type.schema) ?? type.schema;
+            return embeddedNames?.get(type.target) ?? type.target;
         }
 
         // A live value of a class T (param/return position) — reference the class by symbol.
@@ -97,7 +97,7 @@ export function irTypeLabel(type: IRType): string {
         case "array":    return `array of ${irTypeLabel(type.of)}`;
         case "enum":     return `one of ${type.values.map((v) => JSON.stringify(v)).join(", ")}`;
         case "reference":
-        case "embedded": return type.schema;
+        case "embedded": return type.target;
         case "instance": return type.name;
         default:         return type.kind;
     }

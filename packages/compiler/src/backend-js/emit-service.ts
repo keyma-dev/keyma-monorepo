@@ -6,7 +6,7 @@ import { relModuleSpecifier } from "./module-path.js";
 import type { ServiceEmitDeps } from "./emitter-registry.js";
 
 // `@Service`/RPC is a base-language concern the compiler owns end-to-end: the bundle shell
-// calls these emitters directly on `ir.services` (gated by visibility like schemas). No domain
+// calls these emitters directly on `ir.services` (gated by visibility like classes). No domain
 // pack participates — services emit identically for any (or no) registered domain.
 
 /** Bundle-relative module ref of the services file (sits at the bundle root). */
@@ -16,16 +16,16 @@ export type ServiceEmitFiles = { servicesJs: string; servicesDts: string };
 
 // ── shared helpers ───────────────────────────────────────────────────────────
 
-/** Core (array-unwrapped) schema target `name` of a type — the class a
- *  reference/embedded points at, or the class an `instance` is a value of. */
+/** Core (array-unwrapped) target `name` of a type — the class a reference/embedded
+ *  points at, or the class an `instance` is a value of. */
 function refTargetName(t: IRType): string | undefined {
     const inner = t.kind === "array" ? t.of : t;
-    if (inner.kind === "reference" || inner.kind === "embedded") return inner.schema;
+    if (inner.kind === "reference" || inner.kind === "embedded") return inner.target;
     if (inner.kind === "instance") return inner.name;
     return undefined;
 }
 
-/** `name`s of every schema referenced by a method list's params/returns
+/** `name`s of every class referenced by a method list's params/returns
  *  (needed for `.d.ts` type imports). */
 function refTargetNamesOf(methods: readonly IRServiceMethod[]): Set<string> {
     const out = new Set<string>();
@@ -42,7 +42,7 @@ function refTargetNamesOf(methods: readonly IRServiceMethod[]): Set<string> {
     return out;
 }
 
-/** `name`s of schemas referenced by RETURN types only — the client needs these
+/** `name`s of classes referenced by RETURN types only — the client needs these
  *  as live classes (`refs` Map) to hydrate results. Inputs are plain objects. */
 function returnTargetNamesOf(methods: readonly IRServiceMethod[]): Set<string> {
     const out = new Set<string>();
@@ -65,7 +65,7 @@ function buildModelImports(
     for (const name of targetNames) {
         const symbol = deps.embeddedTypeNames.get(name);
         if (symbol === undefined) continue;
-        const moduleRef = deps.schemaModule.get(symbol);
+        const moduleRef = deps.classModule.get(symbol);
         if (moduleRef === undefined) continue;
         const spec = relModuleSpecifier(SERVICES_REF, moduleRef);
         if (!bySpec.has(spec)) bySpec.set(spec, new Set());
@@ -84,21 +84,21 @@ function methodMetadata(m: IRServiceMethod): Record<string, unknown> {
     const out: Record<string, unknown> = { name: m.name };
     if (m.visibility === "private") out["visibility"] = "private";
     out["params"] = m.params.map((p) => {
-        // Only direct (non-array) schema params are validated server-side against a
-        // single record — record the schema's runtime `name`. A bare-class param is
-        // an `instance` of the class (its `name`); reference/embedded carry `schema`.
+        // Only direct (non-array) class params are validated server-side against a
+        // single record — record the target class's runtime `name`. A bare-class param
+        // is an `instance` of the class (its `name`); reference/embedded carry `target`.
         if (p.type.kind === "reference" || p.type.kind === "embedded") {
-            return { name: p.name, schema: p.type.schema };
+            return { name: p.name, ref: p.type.target };
         }
         if (p.type.kind === "instance") {
-            return { name: p.name, schema: p.type.name };
+            return { name: p.name, ref: p.type.name };
         }
         return { name: p.name };
     });
     if (m.returnType !== undefined) {
         const name = refTargetName(m.returnType);
         if (name !== undefined) {
-            out["returnSchema"] = name;
+            out["returnRef"] = name;
             if (m.returnType.kind === "array") out["returnArray"] = true;
         }
     }
@@ -107,11 +107,11 @@ function methodMetadata(m: IRServiceMethod): Record<string, unknown> {
 
 function emitServiceClassJs(svc: IRService, deps: ServiceEmitDeps): string {
     const methods = filterVisible(svc.methods, deps.includePrivate);
-    const meta: Record<string, unknown> = { name: svc.name };
+    const meta: Record<string, unknown> = { name: svc.name, sourceName: svc.sourceName };
     if (svc.visibility === "private") meta["visibility"] = "private";
     meta["methods"] = methods.map((m) => methodMetadata(m));
 
-    // Client bundles carry a live `refs` Map (schema name → model class) for return hydration.
+    // Client bundles carry a live `refs` Map (target `name` → model class) for return hydration.
     if (!deps.includePrivate) {
         const names = returnTargetNamesOf(methods);
         if (names.size > 0) {
@@ -134,7 +134,7 @@ function emitServiceClassJs(svc: IRService, deps: ServiceEmitDeps): string {
 
 export function emitServicesJs(services: readonly IRService[], deps: ServiceEmitDeps): string {
     const shown = filterVisible(services, deps.includePrivate);
-    // Value imports are only needed for the client `refs` Map (return schemas).
+    // Value imports are only needed for the client `refs` Map (return classes).
     const refSources = deps.includePrivate
         ? new Set<string>()
         : new Set(shown.flatMap((s) => [...returnTargetNamesOf(filterVisible(s.methods, deps.includePrivate))]));

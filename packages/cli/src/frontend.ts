@@ -22,7 +22,7 @@ export function createTsFrontend(cwd: string, domains: readonly FrontendDomain[]
                 // The detected domains (e.g. the schema domain; a UI domain would join here).
                 domains: [...domains],
                 ...(config.baseDir !== undefined ? { baseDir: config.baseDir } : {}),
-                schemaPrefix: config.schemaPrefix,
+                namePrefix: config.namePrefix,
                 // Binary tag manifest: forwarded as data (the CLI did the file I/O). The pure
                 // compile() runs the assignTags pass and returns the updated manifest.
                 ...(config.binary === true ? { binaryTags: true } : {}),

@@ -1,56 +1,56 @@
-import type { IRClassDeclaration, IRField, IRType, IRDiagnostic } from "@keyma/core/ir";
+import type { IRClassDeclaration, IRMember, IRType, IRDiagnostic } from "@keyma/core/ir";
 import { inheritedFields } from "@keyma/core/util";
 import { mkError, KEYMA032, KEYMA033, KEYMA034 } from "./diagnostics.js";
 
-type InheritanceContext = {
-    /** Map from sourceName → extracted schema. */
-    schemas: ReadonlyMap<string, IRClassDeclaration>;
+export type InheritanceContext = {
+    /** Map from sourceName → lowered class. */
+    classes: ReadonlyMap<string, IRClassDeclaration>;
     diagnostics: IRDiagnostic[];
 };
 
 /**
- * Validate inheritance for all schemas WITHOUT flattening. Inheritance is REAL in the emitted
- * output, so each schema keeps its OWN fields/methods and its `extends` link; the backends emit
+ * Validate inheritance for all classes WITHOUT flattening. Inheritance is REAL in the emitted
+ * output, so each class keeps its OWN fields/methods and its `extends` link; the backends emit
  * a genuine base class. This pass only checks the relationships:
- *   - the parent is a @Schema class (KEYMA033),
+ *   - the parent is a lowered class (KEYMA033),
  *   - a public child does not extend a private parent (KEYMA032),
  *   - each own field that overrides an inherited one is a subtype (KEYMA034).
  * It mutates nothing and returns the same list — the call-site symmetry the old `flattenAll`
- * had (`const schemas = checkInheritance(rawSchemas, ctx)`), minus the field merge.
+ * had (`const classes = checkInheritance(rawClasses, ctx)`), minus the field merge.
  */
-export function checkInheritance(schemas: IRClassDeclaration[], ctx: InheritanceContext): IRClassDeclaration[] {
-    for (const schema of schemas) checkSchema(schema, ctx);
-    return schemas;
+export function checkInheritance(classes: IRClassDeclaration[], ctx: InheritanceContext): IRClassDeclaration[] {
+    for (const cls of classes) checkClass(cls, ctx);
+    return classes;
 }
 
-function checkSchema(schema: IRClassDeclaration, ctx: InheritanceContext): void {
-    if (schema.extends === undefined) return; // no inheritance, nothing to validate
+function checkClass(cls: IRClassDeclaration, ctx: InheritanceContext): void {
+    if (cls.extends === undefined) return; // no inheritance, nothing to validate
 
-    const parent = ctx.schemas.get(schema.extends);
+    const parent = ctx.classes.get(cls.extends);
     if (parent === undefined) {
         ctx.diagnostics.push(
-            mkError(KEYMA033, `"${schema.sourceName}" extends "${schema.extends}" which is not a @Schema class`, schema.source),
+            mkError(KEYMA033, `"${cls.sourceName}" extends "${cls.extends}" which is not a lowered class`, cls.source),
         );
         return;
     }
 
     // KEYMA032: a public child cannot extend a private parent.
-    if (schema.visibility === "public" && parent.visibility === "private") {
+    if (cls.visibility === "public" && parent.visibility === "private") {
         ctx.diagnostics.push(
-            mkError(KEYMA032, `Public schema "${schema.sourceName}" cannot extend private schema "${schema.extends}"`, schema.source),
+            mkError(KEYMA032, `Public class "${cls.sourceName}" cannot extend private class "${cls.extends}"`, cls.source),
         );
     }
 
     // KEYMA034: each own field that shadows an inherited one must be a subtype, so existing
     // readers of the parent type stay valid. Compare against the nearest ancestor definition.
-    const inherited = new Map(inheritedFields(parent, ctx.schemas).map((f) => [f.name, f]));
-    for (const f of schema.fields) {
+    const inherited = new Map(inheritedFields(parent, ctx.classes).map((f) => [f.name, f]));
+    for (const f of cls.fields) {
         const parentField = inherited.get(f.name);
         if (parentField !== undefined && !fieldOverrideCompatible(parentField, f)) {
             ctx.diagnostics.push(
                 mkError(
                     KEYMA034,
-                    `Field "${f.name}" in "${schema.sourceName}" narrows incompatibly: ` +
+                    `Field "${f.name}" in "${cls.sourceName}" narrows incompatibly: ` +
                     `parent ${fieldLabel(parentField)}, child ${fieldLabel(f)}`,
                     f.source,
                 ),
@@ -60,7 +60,7 @@ function checkSchema(schema: IRClassDeclaration, ctx: InheritanceContext): void 
 }
 
 /** A child field override must be a subtype of the parent field. */
-function fieldOverrideCompatible(parent: IRField, child: IRField): boolean {
+function fieldOverrideCompatible(parent: IRMember, child: IRMember): boolean {
     // A child cannot introduce null a parent reader does not expect (widening).
     if (!(parent.nullable ?? false) && (child.nullable ?? false)) return false;
     return typesCompatible(parent.type, child.type);
@@ -77,7 +77,7 @@ function typesCompatible(parent: IRType, child: IRType): boolean {
     if (parent.kind !== child.kind) return false;
 
     if (parent.kind === "reference" || parent.kind === "embedded") {
-        return parent.schema === (child as typeof parent).schema;
+        return parent.target === (child as typeof parent).target;
     }
     if (parent.kind === "enum" && child.kind === "enum") {
         // Narrowing the allowed set is fine; widening it is not.
@@ -103,7 +103,7 @@ function typesCompatible(parent: IRType, child: IRType): boolean {
 }
 
 /** A short, message-friendly label for a field's type + nullability. */
-function fieldLabel(field: IRField): string {
+function fieldLabel(field: IRMember): string {
     return field.nullable ? `${irTypeLabel(field.type)} | null` : irTypeLabel(field.type);
 }
 
@@ -112,8 +112,8 @@ function irTypeLabel(type: IRType): string {
     switch (type.kind) {
         case "array": return `${irTypeLabel(type.of)}[]`;
         case "enum": return `enum(${type.values.join("|")})`;
-        case "reference": return `Reference<${type.schema}>`;
-        case "embedded": return `Embedded<${type.schema}>`;
+        case "reference": return `Reference<${type.target}>`;
+        case "embedded": return `Embedded<${type.target}>`;
         default: return type.kind;
     }
 }

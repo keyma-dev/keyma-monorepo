@@ -1,10 +1,10 @@
 export { createJsBackend, emitJs } from "./backend.js";
 export type { JsTargetConfig } from "./types.js";
 
-// The emitter-registry seam: the class + the pack/contract types. Domain packs (the schema
-// pack lives in `@keyma/schema/backend-js`) implement `JsEmitterPack`; the CLI registers them.
+// The emitter-registry seam: the class + the pack/contract types. Domain packs (registered by
+// the CLI) implement `JsEmitterPack`; the CLI registers them.
 export { EmitterRegistry } from "./emitter-registry.js";
-export type { JsEmitterPack, BuildSchemaData, SchemaDataOptions, ServiceEmitDeps, BundleEmitContext, SchemaDtsContext, SchemaDtsShape, ClaimedFunctionRendering } from "./emitter-registry.js";
+export type { JsEmitterPack, BuildClassData, ClassDataOptions, ServiceEmitDeps, BundleEmitContext, ClassDtsContext, ClassDtsShape, ClaimedFunctionRendering } from "./emitter-registry.js";
 
 // ── Generic emission helpers, exported so domain emitter packs build on the same engine ──
 export { irTypeToTs, jsTypeGuard, irTypeLabel } from "./ir-type-to-ts.js";

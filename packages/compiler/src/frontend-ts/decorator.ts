@@ -2,10 +2,11 @@ import ts from "typescript";
 import { isFromModule } from "./util.js";
 
 /**
- * Options parsed from a Keyma class-level decorator call (`@Schema`/`@Edge`/`@Service`).
- * The union of keys every class decorator may carry; each caller reads only the keys it
- * cares about (a service ignores `ephemeral`, a schema ignores nothing, etc.). Kept neutral
- * so the same parser serves every domain's class decorators and the base service pass.
+ * Options parsed from a Keyma class-level decorator call (`@Service` or a domain's class
+ * decorator). The union of keys every class decorator may carry; each caller reads only the
+ * keys it cares about (a service ignores `ephemeral`, a data-model class ignores nothing,
+ * etc.). Kept neutral so the same parser serves every domain's class decorators and the base
+ * service pass.
  */
 export type DecoratorOptions = {
     name?: string;
@@ -15,11 +16,11 @@ export type DecoratorOptions = {
 };
 
 /**
- * Find a named class-level decorator (e.g. "Schema", "Edge", "Service") imported from
- * `dslModuleName`. Matches by the literal import specifier (via {@link isFromModule}); a
- * domain passes its own DSL module (the schema domain uses "@keyma/schema/dsl"). To match a
- * decorator by its ORIGINAL `@keyma/core/dsl` identity regardless of the umbrella it was
- * imported through, resolve the symbol with {@link isCoreDslSymbol} instead.
+ * Find a named class-level decorator (e.g. "Service", or a domain's own class decorator)
+ * imported from `dslModuleName`. Matches by the literal import specifier (via {@link
+ * isFromModule}); a domain passes its own DSL module. To match a decorator by its ORIGINAL
+ * `@keyma/core/dsl` identity regardless of the umbrella it was imported through, resolve the
+ * symbol with {@link isCoreDslSymbol} instead.
  */
 export function findKeymaClassDecorator(
     node: ts.ClassDeclaration,
@@ -44,9 +45,9 @@ export function findKeymaClassDecorator(
 }
 
 /**
- * Parse the object-literal options of a Keyma class decorator (`@Schema`/`@Edge`/`@Service`).
- * Reads `name`/`private`/`ephemeral`/`description`; ignores any other property. Returns an
- * empty object when the decorator carries no argument (or a non-object-literal one).
+ * Parse the object-literal options of a Keyma class decorator (`@Service` or a domain's class
+ * decorator). Reads `name`/`private`/`ephemeral`/`description`; ignores any other property.
+ * Returns an empty object when the decorator carries no argument (or a non-object-literal one).
  */
 export function extractDecoratorOptions(decorator: ts.Decorator): DecoratorOptions {
     const expr = decorator.expression;

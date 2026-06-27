@@ -1,4 +1,4 @@
-import type { IRExpression, IRStatement, IRField, IRType, IRClassDeclaration, IRFunctionDeclaration } from "../ir/index.js";
+import type { IRExpression, IRStatement, IRMember, IRType, IRClassDeclaration, IRFunctionDeclaration } from "../ir/index.js";
 import { filterVisibleFields, filterVisibleMethods } from "./visibility.js";
 
 /** Recursively unwrap array layers from an IRType to get the innermost element type. */
@@ -70,10 +70,10 @@ export function collectStatementIdentifiers(stmt: IRStatement, out: Set<string>)
 }
 
 /** The set of embedded/reference schema targets named by these fields (recursing through arrays). */
-export function collectRefTargets(fields: readonly IRField[]): Set<string> {
+export function collectRefTargets(fields: readonly IRMember[]): Set<string> {
     const out = new Set<string>();
     const collect = (type: IRType): void => {
-        if (type.kind === "embedded" || type.kind === "reference") out.add(type.schema);
+        if (type.kind === "embedded" || type.kind === "reference") out.add(type.target);
         else if (type.kind === "array") collect(type.of);
     };
     for (const f of fields) collect(f.type);

@@ -580,7 +580,7 @@ struct FieldMeta {
     bool id_unsigned = false;         // Reference: unsigned integer id
 };
 
-struct SchemaMeta {
+struct ClassMetadata {
     std::string_view name;
     std::string_view source_name;
     Visibility visibility = Visibility::Public;
@@ -588,10 +588,10 @@ struct SchemaMeta {
     std::span<const FieldMeta> fields{};
     std::span<const IndexMeta> indexes{};
     // refs: target schema `name` → accessor for the target's metadata.
-    std::span<const std::pair<std::string_view, const SchemaMeta& (*)()>> refs{};
+    std::span<const std::pair<std::string_view, const ClassMetadata& (*)()>> refs{};
     // Real inheritance: accessor for the `extends` parent's metadata (null if none). `fields`
     // holds OWN fields only — walk `base` for the full set (see `all_fields`).
-    const SchemaMeta& (*base)() = nullptr;
+    const ClassMetadata& (*base)() = nullptr;
     // Set only for schemas that model a graph edge; null otherwise.
     const EdgeMeta* edge = nullptr;
     void (*apply_defaults)(Value&, const Value::allocator_type&) = nullptr;
@@ -604,9 +604,9 @@ struct SchemaMeta {
 // in a range-for unchanged. (Field overrides — a child re-declaring a parent field name — are
 // rare; both entries are kept, child later, so the more-derived wins on assignment.)
 inline std::pmr::vector<std::reference_wrapper<const FieldMeta>> all_fields(
-    const SchemaMeta& schema, const std::pmr::polymorphic_allocator<std::byte>& a) {
-    std::pmr::vector<const SchemaMeta*> chain(a);
-    for (const SchemaMeta* s = &schema; s != nullptr; s = (s->base != nullptr ? &s->base() : nullptr)) chain.push_back(s);
+    const ClassMetadata& schema, const std::pmr::polymorphic_allocator<std::byte>& a) {
+    std::pmr::vector<const ClassMetadata*> chain(a);
+    for (const ClassMetadata* s = &schema; s != nullptr; s = (s->base != nullptr ? &s->base() : nullptr)) chain.push_back(s);
     std::pmr::vector<std::reference_wrapper<const FieldMeta>> out(a);
     for (auto it = chain.rbegin(); it != chain.rend(); ++it)
         for (const FieldMeta& f : (*it)->fields) out.push_back(std::cref(f));

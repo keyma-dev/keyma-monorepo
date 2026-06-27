@@ -12,11 +12,11 @@ export function emitTypesJs(): string {
 }
 
 /**
- * The inlined, dependency-free `types.d.ts` — a verbatim copy of `@keyma/runtime/schema`'s
- * pure type declarations (`SchemaMetadata`, `ValidatorFn`, `ServiceMetadata`,
- * `RequestContext`, …). Generated bundles import their type surface from here
- * instead of `@keyma/runtime/schema`.
+ * The inlined, dependency-free `types.d.ts` — the compiler-owned service/request type
+ * surface (`ServiceMetadata`, `RequestContext`, …) plus any domain-supplied declaration
+ * blocks (`extraDecls`, e.g. a data-model domain's `ClassMetadata`). Generated bundles
+ * import their type surface from here instead of from a runtime package.
  */
-export function emitTypesDts(): string {
-    return EMITTED_RUNTIME_TYPES_DTS;
+export function emitTypesDts(extraDecls: readonly string[]): string {
+    return [EMITTED_RUNTIME_TYPES_DTS, ...extraDecls].join("\n");
 }

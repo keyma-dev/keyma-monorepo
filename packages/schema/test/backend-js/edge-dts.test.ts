@@ -11,7 +11,7 @@ import { emitJs } from "./harness.js";
 
 const S = (file: string) => ({ file, line: 1, column: 1 });
 const refField = (name: string, schema: string) => ({
-    name, type: { kind: "reference" as const, schema },
+    name, type: { kind: "reference" as const, target: schema },
     visibility: "public" as const, readonly: false, required: true,
     validators: [], formatters: [], source: S("knows.ts"),
 });
@@ -35,16 +35,16 @@ const EDGE_IR: KeymaIR = {
 };
 
 const LIBRARY_TARGET = { language: "js", outDir: "dist", library: true } as unknown as KeymaTargetConfig;
-const CONFIG = { source: [], outDir: "dist", schemaPrefix: "", targets: [] } as unknown as ResolvedConfig;
+const CONFIG = { source: [], outDir: "dist", namePrefix: "", targets: [] } as unknown as ResolvedConfig;
 
-const EXPECTED_KNOWS_DTS = `import type { SchemaMetadata } from "../types.js";
+const EXPECTED_KNOWS_DTS = `import type { ClassMetadata } from "../types.js";
 import type { Person } from "./person.js";
 
 declare class _Knows {
-    static readonly schema: SchemaMetadata;
+    static readonly metadata: ClassMetadata;
     a: Person;
     b: Person;
-    constructor(value?: { a?: Person; b?: Person });
+    static fromValue(value?: { a?: Person; b?: Person }): _Knows;
 }
 
 export declare const Knows: typeof _Knows & { readonly __edge?: { from: Person; to: Person } };

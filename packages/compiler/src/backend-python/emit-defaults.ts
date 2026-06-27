@@ -3,17 +3,17 @@ import { filterVisibleFields } from "@keyma/core/util";
 import { exprToPython, withHoist, type Hoist } from "./emit-expression.js";
 
 /**
- * Build a module-level `apply_defaults` function for a schema's expression-kind
- * field defaults, referenced from the schema metadata dict. Returns the function
- * name + its source, or null when the schema has no expression defaults.
+ * Build a module-level `apply_defaults` function for a class's expression-kind
+ * member defaults, referenced from the class metadata dict. Returns the function
+ * name + its source, or null when the class has no expression defaults.
  */
-export function buildApplyDefaults(schema: IRClassDeclaration, includePrivate: boolean): { name: string; def: string } | null {
-    const fields = filterVisibleFields(schema, includePrivate).filter(
+export function buildApplyDefaults(cls: IRClassDeclaration, includePrivate: boolean): { name: string; def: string } | null {
+    const fields = filterVisibleFields(cls, includePrivate).filter(
         (f) => f.default !== undefined && f.default.kind === "expression",
     );
     if (fields.length === 0) return null;
 
-    const name = `_apply_defaults_${schema.sourceName}`;
+    const name = `_apply_defaults_${cls.sourceName}`;
     const lines = [`def ${name}(value):`];
     const rw = (s: string): string => s.replace(/self\.([a-zA-Z0-9_]+)/g, 'value["$1"]');
     for (const f of fields) {
@@ -28,6 +28,6 @@ export function buildApplyDefaults(schema: IRClassDeclaration, includePrivate: b
     return { name, def: lines.join("\n") };
 }
 
-export function schemaHasExpressionDefault(schema: IRClassDeclaration, includePrivate: boolean): boolean {
-    return filterVisibleFields(schema, includePrivate).some((f) => f.default !== undefined && f.default.kind === "expression");
+export function classHasExpressionDefault(cls: IRClassDeclaration, includePrivate: boolean): boolean {
+    return filterVisibleFields(cls, includePrivate).some((f) => f.default !== undefined && f.default.kind === "expression");
 }

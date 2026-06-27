@@ -1,32 +1,33 @@
 import type {
-    IRClassDeclaration, IRField, IRType, IRMethod, IREnumDeclaration,
+    IRClassDeclaration, IRMember, IRType, IRMethod, IREnumDeclaration,
     IRFunctionDeclaration, IRDiagnostic,
 } from "@keyma/core/ir";
 import { collectRefTargets, collectFunctionRefs, collectStatementIdentifiers, unwrapArray, filterVisible, filterVisibleFields, filterVisibleMethods, inheritedFields } from "@keyma/core/util";
 import { exprToCpp, type ExprOpts } from "./emit-expression.js";
 import { stmtToCpp, plainReturn, factoryIdent, type ReturnLowerer } from "./emit-validators.js";
 import { irTypeToCpp, memberType, traitsArg, whereValueType, fieldKind, refTargetType, binaryFieldPlan, type BinaryFieldPlan } from "./ir-type-to-cpp.js";
-import type { BuildSchemaData } from "./emitter-registry.js";
+import type { BuildClassData } from "./emitter-registry.js";
 import { emitEnumClass, emitEnumConversions } from "./emit-enum.js";
-import { emitSchemaMeta } from "./emit-schema-meta.js";
+import { emitClassMeta } from "./emit-class-meta.js";
 import { buildApplyDefaults } from "./emit-defaults.js";
 import { includePath, namespaceOf, cppSanitizer } from "./module-path.js";
 
 export type ModuleEmitDeps = {
     includePrivate: boolean;
-    includeIndexes: boolean;
-    formPhasesOnly: boolean;
     includeDefaults: boolean;
+    /** Which bundle is being emitted; threaded into the domain's `buildClassData` /
+     *  `referencedFunctionNames` so it can derive its own per-bundle gating. */
+    bundle: "client" | "server" | "library";
     /** Emit the typed binary codec (keyma::binary_traits<T>) alongside value_traits. Driven
      *  by the project's `binary` config; off ⇒ JSON-only output is byte-for-byte unchanged. */
     binary: boolean;
     nsRoot: string;
-    /** Every schema keyed by `sourceName` — resolves the `extends` parent so the trait/codec
+    /** Every class keyed by `sourceName` — resolves the `extends` parent so the trait/codec
      *  emitters can walk the inheritance chain for the full field set (struct members stay own). */
-    schemaBySourceName: ReadonlyMap<string, IRClassDeclaration>;
+    classBySourceName: ReadonlyMap<string, IRClassDeclaration>;
     /** sourceName → bundle-relative module ref (e.g. "models/user"). */
-    schemaModule: ReadonlyMap<string, string>;
-    /** Reference/embedded/edge target `name` → emitted C++ class (`sourceName`). */
+    classModule: ReadonlyMap<string, string>;
+    /** Reference/embedded target `name` → emitted C++ class (`sourceName`). */
     classNameByName: ReadonlyMap<string, string>;
     /** Reference/embedded target `name` → fully-qualified C++ struct type. */
     cppTypeByName: ReadonlyMap<string, string>;
@@ -34,9 +35,9 @@ export type ModuleEmitDeps = {
     enumTypeByName: ReadonlyMap<string, string>;
     /** Named enum `name` → bundle-relative module ref of its declaring file. */
     enumModuleByName: ReadonlyMap<string, string>;
-    /** Schema `name` → its id field's name (for reference id-stubs). */
+    /** Class `name` → its id field's name (for reference id-stubs). */
     idFieldByName: ReadonlyMap<string, string>;
-    /** Schema `name`s that are the target of some reference (carry id-stub helpers). */
+    /** Class `name`s that are the target of some reference (carry id-stub helpers). */
     referenceTargetNames: ReadonlySet<string>;
     /** Every project-local function declaration keyed by name (a domain pack reads a
      *  validator/formatter factory's params for factory-call arg ordering). */
@@ -51,15 +52,19 @@ export type ModuleEmitDeps = {
     /** Render the claimed (validator/formatter) functions a module owns, with the domain
      *  wrapper. Present whenever `claimedFunctionNames` is non-empty. */
     renderClaimedFunctions?: (decls: readonly IRFunctionDeclaration[]) => readonly string[];
+    /** The function names a class's members reference (validators + formatters in the data-model
+     *  domain) — supplied by the primary domain pack so the include wiring needs no domain slice. */
+    referencedFunctionNames?: (
+        members: readonly IRMember[],
+        ctx: { bundle: "client" | "server" | "library" },
+    ) => ReadonlySet<string>;
     /** Complete `#include` token (with delimiters) for the runtime header. */
     runtimeInclude: string;
-    /** Domain-supplied builder (from the emitter registry's schema pack) of the per-schema
-     *  `schema()` metadata as neutral data — keeps the generic module emitter domain-agnostic;
-     *  the compiler's `emitSchemaMeta` renders it. (Named-enum emission is fully compiler-owned.) */
-    buildSchemaData: BuildSchemaData;
+    /** Domain-supplied builder (from the registered primary pack) of the per-class
+     *  `metadata()` data as neutral data — keeps the generic module emitter domain-agnostic;
+     *  the compiler's `emitClassMeta` renders it. (Named-enum emission is fully compiler-owned.) */
+    buildClassData: BuildClassData;
 };
-
-const CLIENT_PHASES = new Set(["change", "blur", "submit"]);
 
 /** Diagnostic code for an async function/method the C++ backend cannot yet emit (issue 010). */
 export const CPP_ASYNC_DIAGNOSTIC = "KEYMA-CPP-ASYNC";
@@ -80,21 +85,21 @@ function asyncDiagnostic(what: string, name: string, source: IRDiagnostic["sourc
 
 export function emitModuleCpp(
     moduleRef: string,
-    schemas: readonly IRClassDeclaration[],
+    classes: readonly IRClassDeclaration[],
     enums: readonly IREnumDeclaration[],
     functions: readonly IRFunctionDeclaration[],
     deps: ModuleEmitDeps,
     diagnostics: IRDiagnostic[] = [],
 ): string {
-    const ordered = topoSort(schemas, deps);
+    const ordered = topoSort(classes, deps);
     const ns = namespaceOf(moduleRef, deps.nsRoot);
 
     // Cross-module utility-function home namespaces this module's bodies call by bare name
     // (class behaviors/defaults + the bodies of the functions homed here). They resolve via
     // per-module using-directives — replacing the old shared `using namespace <root>::functions`.
-    // Validator/formatter factory refs in the schema metadata are fully qualified separately
+    // Validator/formatter factory refs in the class metadata are fully qualified separately
     // (like reference targets), so they are not part of this set.
-    const usingDirectives = crossModuleFnUsings(moduleRef, schemas, functions, deps);
+    const usingDirectives = crossModuleFnUsings(moduleRef, classes, functions, deps);
     const useLines = usingDirectives.map((u) => `using namespace ${u};`);
 
     const lines: string[] = ["#pragma once", `#include ${deps.runtimeInclude}`];
@@ -103,14 +108,14 @@ export function emitModuleCpp(
     if (functions.some((d) => deps.claimedFunctionNames.has(d.name))) lines.push(`#include <stdexcept>`);
     // The typed binary codec lives in a separate runtime header (keeps the binary-only
     // primitives out of the baked runtime.hpp); pulled in only when binary is enabled.
-    if (deps.binary && schemas.length > 0) lines.push(`#include <keyma/binary-typed.hpp>`);
-    for (const inc of buildIncludes(moduleRef, schemas, functions, deps)) lines.push(`#include "${inc}"`);
+    if (deps.binary && classes.length > 0) lines.push(`#include <keyma/binary-typed.hpp>`);
+    for (const inc of buildIncludes(moduleRef, classes, functions, deps)) lines.push(`#include "${inc}"`);
 
-    if (schemas.length > 0) {
+    if (classes.length > 0) {
         // Forward declarations for every reference target (same- and cross-module). A
         // std::shared_ptr<T> member needs only a forward declaration, which lets legal
         // reference cycles compile (the complete type is pulled in after the structs).
-        const fwd = referenceForwardDecls(schemas, deps);
+        const fwd = referenceForwardDecls(classes, deps);
         if (fwd.length > 0) { lines.push(""); lines.push(...fwd); }
 
         // value_traits explicit-specialization DECLARATIONS for every same-module struct and
@@ -118,14 +123,14 @@ export function emitModuleCpp(
         // a target's. This guarantees "declared before first use" in every translation unit
         // and both include orders — required for the reference cycle to be well-formed
         // ([temp.expl.spec]); redeclaration across the cycle's headers is legal.
-        const traitDecls = valueTraitsForwardDecls(ns, schemas, deps);
+        const traitDecls = valueTraitsForwardDecls(ns, classes, deps);
         if (traitDecls.length > 0) { lines.push(""); lines.push(...traitDecls); }
 
         // binary_traits explicit-specialization forward declarations (same discipline as
         // value_traits) so a binary_traits body that names a sibling's or a reference target's
         // binary_traits has seen its declaration first. Gated on deps.binary.
         if (deps.binary) {
-            const binDecls = binaryTraitsForwardDecls(schemas, deps);
+            const binDecls = binaryTraitsForwardDecls(classes, deps);
             if (binDecls.length > 0) lines.push(...binDecls);
         }
     }
@@ -158,15 +163,15 @@ export function emitModuleCpp(
         lines.push(`}  // namespace ${ns}`, "");
     }
 
-    if (schemas.length === 0) return lines.join("\n");
+    if (classes.length === 0) return lines.join("\n");
 
     // ── Structs ──
     lines.push(`namespace ${ns} {`);
     if (useLines.length > 0) lines.push(...useLines);
     lines.push("");
-    for (const schema of ordered) {
-        lines.push(...emitStruct(schema, deps, diagnostics));
-        lines.push(`static_assert(std::uses_allocator_v<${schema.sourceName}, ${schema.sourceName}::allocator_type>);`, "");
+    for (const cls of ordered) {
+        lines.push(...emitStruct(cls, deps, diagnostics));
+        lines.push(`static_assert(std::uses_allocator_v<${cls.sourceName}, ${cls.sourceName}::allocator_type>);`, "");
     }
     lines.push(`}  // namespace ${ns}`, "");
 
@@ -174,7 +179,7 @@ export function emitModuleCpp(
     // from_value sees the complete target types. With #pragma once this ordering
     // breaks reference cycles: every struct in a cycle is defined before any
     // from_value body (which allocate_shared's the target) is parsed.
-    const refIncludes = referenceIncludes(moduleRef, schemas, deps);
+    const refIncludes = referenceIncludes(moduleRef, classes, deps);
     if (refIncludes.length > 0) { for (const inc of refIncludes) lines.push(`#include "${inc}"`); lines.push(""); }
 
     // ── Block 2a: value_traits specializations (namespace keyma, file scope). Every
@@ -182,26 +187,26 @@ export function emitModuleCpp(
     // value_traits is at least declared above, so the per-field cross-references resolve.
     // All cross-trait references live in function bodies → instantiated lazily at the
     // consumer's odr-use, where every specialization is fully defined. ──
-    for (const schema of ordered) {
-        lines.push(...emitValueTraits(schema, deps));
-        if (deps.binary) lines.push(...emitBinaryTraits(schema, deps));
+    for (const cls of ordered) {
+        lines.push(...emitValueTraits(cls, deps));
+        if (deps.binary) lines.push(...emitBinaryTraits(cls, deps));
         lines.push("");
     }
 
-    // ── Block 2b: out-of-line apply_defaults / schema() + the thin
+    // ── Block 2b: out-of-line apply_defaults / metadata() + the thin
     // from_value/to_value forwarder definitions (after the value_traits they delegate to). ──
     lines.push(`namespace ${ns} {`);
     if (useLines.length > 0) lines.push(...useLines);
     lines.push("");
 
     if (deps.includeDefaults) {
-        for (const schema of ordered) {
-            const ad = buildApplyDefaults(schema, deps.includePrivate);
+        for (const cls of ordered) {
+            const ad = buildApplyDefaults(cls, deps.includePrivate);
             if (ad !== null) lines.push(ad.def, "");
         }
     }
-    for (const schema of ordered) {
-        lines.push(...emitSchemaAccessor(schema, deps));
+    for (const cls of ordered) {
+        lines.push(...emitClassAccessor(cls, deps));
         lines.push("");
     }
 
@@ -228,11 +233,11 @@ function emitFunctionCpp(decl: IRFunctionDeclaration, diagnostics: IRDiagnostic[
  *  name (from class behaviors/defaults and the bodies of the functions homed here). */
 function crossModuleFnUsings(
     moduleRef: string,
-    schemas: readonly IRClassDeclaration[],
+    classes: readonly IRClassDeclaration[],
     functions: readonly IRFunctionDeclaration[],
     deps: ModuleEmitDeps,
 ): string[] {
-    const names = new Set<string>(collectFunctionRefs(schemas, deps));
+    const names = new Set<string>(collectFunctionRefs(classes, deps));
     for (const fn of functions) {
         const ids = new Set<string>();
         for (const stmt of fn.statements) collectStatementIdentifiers(stmt, ids);
@@ -248,48 +253,48 @@ function crossModuleFnUsings(
 
 // ─── Struct ───────────────────────────────────────────────────────────────────
 
-/** The fully-qualified C++ type of a schema's `extends` parent (`<ns>::<SourceName>`), or undefined. */
-function baseFqnOf(schema: IRClassDeclaration, deps: ModuleEmitDeps): string | undefined {
-    if (schema.extends === undefined) return undefined;
-    const mod = deps.schemaModule.get(schema.extends);
-    return mod !== undefined ? `${namespaceOf(mod, deps.nsRoot)}::${schema.extends}` : undefined;
+/** The fully-qualified C++ type of a class's `extends` parent (`<ns>::<SourceName>`), or undefined. */
+function baseFqnOf(cls: IRClassDeclaration, deps: ModuleEmitDeps): string | undefined {
+    if (cls.extends === undefined) return undefined;
+    const mod = deps.classModule.get(cls.extends);
+    return mod !== undefined ? `${namespaceOf(mod, deps.nsRoot)}::${cls.extends}` : undefined;
 }
 
-/** A schema's full (own + inherited) visible field set — for the self-contained value/binary traits
+/** A class's full (own + inherited) visible field set — for the self-contained value/binary traits
  *  and field descriptors that must enumerate every field (struct MEMBERS stay own-only). */
-function fullFields(schema: IRClassDeclaration, deps: ModuleEmitDeps): IRField[] {
-    return filterVisible(inheritedFields(schema, deps.schemaBySourceName), deps.includePrivate);
+function fullFields(cls: IRClassDeclaration, deps: ModuleEmitDeps): IRMember[] {
+    return filterVisible(inheritedFields(cls, deps.classBySourceName), deps.includePrivate);
 }
 
-/** A schema's full (own + inherited) visible behaviors, child overriding by `kind:name`. */
-function fullMethods(schema: IRClassDeclaration, deps: ModuleEmitDeps): IRMethod[] {
+/** A class's full (own + inherited) visible behaviors, child overriding by `kind:name`. */
+function fullMethods(cls: IRClassDeclaration, deps: ModuleEmitDeps): IRMethod[] {
     const byKey = new Map<string, IRMethod>();
     const chain: IRClassDeclaration[] = [];
     const seen = new Set<string>();
-    let cur: IRClassDeclaration | undefined = schema;
+    let cur: IRClassDeclaration | undefined = cls;
     while (cur !== undefined && !seen.has(cur.sourceName)) {
         seen.add(cur.sourceName);
         chain.push(cur);
-        cur = cur.extends !== undefined ? deps.schemaBySourceName.get(cur.extends) : undefined;
+        cur = cur.extends !== undefined ? deps.classBySourceName.get(cur.extends) : undefined;
     }
     for (let i = chain.length - 1; i >= 0; i--) for (const m of chain[i]!.methods ?? []) byKey.set(`${m.kind}:${m.name}`, m);
     return filterVisible([...byKey.values()], deps.includePrivate);
 }
 
-function emitStruct(schema: IRClassDeclaration, deps: ModuleEmitDeps, diagnostics: IRDiagnostic[]): string[] {
+function emitStruct(cls: IRClassDeclaration, deps: ModuleEmitDeps, diagnostics: IRDiagnostic[]): string[] {
     // Real inheritance: the struct holds OWN members and derives from the base. The traits/codecs
     // and field descriptors below use the FULL (own + inherited) set — base members are accessible.
-    const stored = filterVisibleFields(schema, deps.includePrivate);
-    const baseFqn = baseFqnOf(schema, deps);
+    const stored = filterVisibleFields(cls, deps.includePrivate);
+    const baseFqn = baseFqnOf(cls, deps);
     // Getter behaviors are member functions, so a reference to one is a call `this->n()`. Own
     // method bodies may reference inherited getters/ref-fields, so resolve over the full chain.
-    const getterNames = new Set(fullMethods(schema, deps).filter((m) => m.kind === "getter").map((m) => m.name));
-    const refFieldNames = new Set(fullFields(schema, deps).filter((f) => f.type.kind === "reference").map((f) => f.name));
+    const getterNames = new Set(fullMethods(cls, deps).filter((m) => m.kind === "getter").map((m) => m.name));
+    const refFieldNames = new Set(fullFields(cls, deps).filter((f) => f.type.kind === "reference").map((f) => f.name));
     const opts: ExprOpts = {
         fieldExpr: (n) => (getterNames.has(n) ? `this->${n}()` : `this->${n}`),
         isRefField: (n) => refFieldNames.has(n),
     };
-    const C = schema.sourceName;
+    const C = cls.sourceName;
     const lines: string[] = [`struct ${C}${baseFqn !== undefined ? ` : ${baseFqn}` : ""} {`];
     lines.push(`    using allocator_type = std::pmr::polymorphic_allocator<std::byte>;`, "");
 
@@ -332,13 +337,13 @@ function emitStruct(schema: IRClassDeclaration, deps: ModuleEmitDeps, diagnostic
 
     // Getters, setters, methods, plus the user-authored constructor/destructor — own behaviors
     // re-emitted as member functions (inherited ones come through C++ inheritance).
-    for (const m of filterVisibleMethods(schema, deps.includePrivate)) lines.push(...emitMethod(m, C, opts, deps, diagnostics));
+    for (const m of filterVisibleMethods(cls, deps.includePrivate)) lines.push(...emitMethod(m, C, opts, deps, diagnostics));
 
     // Typed field descriptors (consumed by keyma/query.hpp). The full set — a child's `f` would
     // otherwise HIDE the base's, so `Child::f::baseField` must resolve here.
-    lines.push(...emitFieldDescriptors(C, fullFields(schema, deps), deps));
+    lines.push(...emitFieldDescriptors(C, fullFields(cls, deps), deps));
 
-    lines.push(`    static const keyma::SchemaMeta& schema();`);
+    lines.push(`    static const keyma::ClassMetadata& metadata();`);
     lines.push(`};`);
     return lines;
 }
@@ -348,9 +353,9 @@ function emitStruct(schema: IRClassDeclaration, deps: ModuleEmitDeps, diagnostic
 // A nested tag per stored field, carrying its JSON key, logical value type, reference
 // target, and FieldKind, so keyma::query.hpp can build COMPILE-TIME-checked typed
 // where-clauses / projections (User::f::age) that lower to the same keyma::Value the raw
-// API produces. Additive and compile-time only — the runtime metadata (schema()) is
+// API produces. Additive and compile-time only — the runtime metadata (metadata()) is
 // unaffected.
-function emitFieldDescriptors(C: string, stored: readonly IRField[], deps: ModuleEmitDeps): string[] {
+function emitFieldDescriptors(C: string, stored: readonly IRMember[], deps: ModuleEmitDeps): string[] {
     if (stored.length === 0) return [];
     const lines: string[] = [`    struct f {`];
     for (const fld of stored) {
@@ -399,11 +404,11 @@ function emitMethod(method: IRMethod, C: string, opts: ExprOpts, deps: ModuleEmi
     return [`    ${retType} ${method.name}(${params}) {`, ...body, `    }`];
 }
 
-// ─── from_value / schema() out-of-line definitions ────────────────────────────
+// ─── from_value / metadata() out-of-line definitions ────────────────────────────
 
-function emitSchemaAccessor(schema: IRClassDeclaration, deps: ModuleEmitDeps): string[] {
-    const C = schema.sourceName;
-    const stored = filterVisibleFields(schema, deps.includePrivate);
+function emitClassAccessor(cls: IRClassDeclaration, deps: ModuleEmitDeps): string[] {
+    const C = cls.sourceName;
+    const stored = filterVisibleFields(cls, deps.includePrivate);
 
     // Thin forwarders to the value_traits<C> specialization (defined just above, in
     // namespace keyma). Keeping the members means consumer code keeps
@@ -414,23 +419,22 @@ function emitSchemaAccessor(schema: IRClassDeclaration, deps: ModuleEmitDeps): s
     ];
 
     // apply_defaults reference (server only).
-    const ad = deps.includeDefaults ? buildApplyDefaults(schema, deps.includePrivate) : null;
+    const ad = deps.includeDefaults ? buildApplyDefaults(cls, deps.includePrivate) : null;
 
     const accessor: string[] = [
-        `inline const keyma::SchemaMeta& ${C}::schema() {`,
-        emitSchemaMeta(deps.buildSchemaData(schema, {
+        `inline const keyma::ClassMetadata& ${C}::metadata() {`,
+        emitClassMeta(deps.buildClassData(cls, {
             includePrivate: deps.includePrivate,
-            includeIndexes: deps.includeIndexes,
-            formPhasesOnly: deps.formPhasesOnly,
+            bundle: deps.bundle,
             functionDecls: deps.functionDecls,
             nsRoot: deps.nsRoot,
             functionNamespace: (name) => {
                 const home = deps.functionModule.get(name);
                 return home !== undefined ? namespaceOf(home, deps.nsRoot) : deps.nsRoot;
             },
-            refs: schemaRefs(stored, deps),
+            refs: classRefs(stored, deps),
             ...(ad !== null ? { applyDefaultsName: ad.name } : {}),
-            ...(baseFqnOf(schema, deps) !== undefined ? { baseClass: baseFqnOf(schema, deps)! } : {}),
+            ...(baseFqnOf(cls, deps) !== undefined ? { baseClass: baseFqnOf(cls, deps)! } : {}),
         })),
         `}`,
     ];
@@ -443,21 +447,21 @@ function emitSchemaAccessor(schema: IRClassDeclaration, deps: ModuleEmitDeps): s
  * instantiates a target's value_traits has seen its declaration first (in every TU and
  * include order). Redeclaration across the reference cycle's headers is legal.
  */
-function valueTraitsForwardDecls(ns: string, schemas: readonly IRClassDeclaration[], deps: ModuleEmitDeps): string[] {
+function valueTraitsForwardDecls(ns: string, classes: readonly IRClassDeclaration[], deps: ModuleEmitDeps): string[] {
     const out: string[] = [];
     // Forward-declare the same-module structs (defined later in this header) so their own
     // value_traits declaration below — and any sibling's value_traits body — names a
     // declared type. Reference targets are already forward-declared by referenceForwardDecls.
-    const sameModule = schemas.map((s) => s.sourceName);
+    const sameModule = classes.map((s) => s.sourceName);
     if (sameModule.length > 0) {
         out.push(`namespace ${ns} { ${sameModule.map((c) => `struct ${c};`).join(" ")} }`);
     }
     const fqns = new Set<string>();
-    for (const s of schemas) {
+    for (const s of classes) {
         const fqn = deps.cppTypeByName.get(s.name);
         if (fqn !== undefined) fqns.add(fqn);
     }
-    const fields = schemas.flatMap((s) => fullFields(s, deps));
+    const fields = classes.flatMap((s) => fullFields(s, deps));
     for (const target of collectTargetsByKind(fields, "reference")) {
         const fqn = deps.cppTypeByName.get(target);
         if (fqn !== undefined) fqns.add(fqn);
@@ -467,7 +471,7 @@ function valueTraitsForwardDecls(ns: string, schemas: readonly IRClassDeclaratio
 }
 
 /**
- * Block 2a: the `keyma::value_traits<T>` specialization for one schema — the only
+ * Block 2a: the `keyma::value_traits<T>` specialization for one class — the only
  * per-struct serialization code emitted. `from_value` delegates each field to the
  * runtime's generic `keyma::from_value<MemberType>` (or `from_value_field` for a two-axis
  * `Field`); `to_value` rebuilds the record via deduced `keyma::to_value(member, a)` (a
@@ -475,11 +479,11 @@ function valueTraitsForwardDecls(ns: string, schemas: readonly IRClassDeclaratio
  * target also gets `set_id`/`id_value` so the generic `shared_ptr<T>` traits can build /
  * serialize an id-stub.
  */
-function emitValueTraits(schema: IRClassDeclaration, deps: ModuleEmitDeps): string[] {
-    const C = deps.cppTypeByName.get(schema.name) ?? schema.sourceName;
+function emitValueTraits(cls: IRClassDeclaration, deps: ModuleEmitDeps): string[] {
+    const C = deps.cppTypeByName.get(cls.name) ?? cls.sourceName;
     // The traits are self-contained: enumerate the FULL (own + inherited) field set and assign on
     // the derived object — base members are accessible through inheritance. Keeps wire bytes intact.
-    const stored = fullFields(schema, deps);
+    const stored = fullFields(cls, deps);
 
     const fromBody: string[] = [];
     for (const f of stored) {
@@ -510,10 +514,10 @@ function emitValueTraits(schema: IRClassDeclaration, deps: ModuleEmitDeps): stri
         `    }`,
     ];
 
-    if (deps.referenceTargetNames.has(schema.name)) {
-        const idName = deps.idFieldByName.get(schema.name) ?? "id";
+    if (deps.referenceTargetNames.has(cls.name)) {
+        const idName = deps.idFieldByName.get(cls.name) ?? "id";
         // The id field may be inherited — search the full chain to type the id stub correctly.
-        const idField = inheritedFields(schema, deps.schemaBySourceName).find((f) => f.name === idName);
+        const idField = inheritedFields(cls, deps.classBySourceName).find((f) => f.name === idName);
         const idTmpl = idField !== undefined ? memberType(idField, deps.cppTypeByName, deps.enumTypeByName) : "std::pmr::string";
         lines.push(
             `    static void set_id(T& t, const keyma::Value& idv, keyma::alloc_t a) { t.${idName} = keyma::from_value<${idTmpl}>(idv, a); }`,
@@ -535,13 +539,13 @@ function emitValueTraits(schema: IRClassDeclaration, deps: ModuleEmitDeps): stri
 // targets additionally get id helpers (the binary analogues of value_traits' set_id/id_value).
 
 /** `keyma::binary_traits<T>` forward declarations for same-module structs + reference targets. */
-function binaryTraitsForwardDecls(schemas: readonly IRClassDeclaration[], deps: ModuleEmitDeps): string[] {
+function binaryTraitsForwardDecls(classes: readonly IRClassDeclaration[], deps: ModuleEmitDeps): string[] {
     const fqns = new Set<string>();
-    for (const s of schemas) {
+    for (const s of classes) {
         const fqn = deps.cppTypeByName.get(s.name);
         if (fqn !== undefined) fqns.add(fqn);
     }
-    const fields = schemas.flatMap((s) => fullFields(s, deps));
+    const fields = classes.flatMap((s) => fullFields(s, deps));
     for (const target of collectTargetsByKind(fields, "reference")) {
         const fqn = deps.cppTypeByName.get(target);
         if (fqn !== undefined) fqns.add(fqn);
@@ -549,11 +553,11 @@ function binaryTraitsForwardDecls(schemas: readonly IRClassDeclaration[], deps: 
     return [...fqns].sort().map((fqn) => `namespace keyma { template <> struct binary_traits<${fqn}>; }`);
 }
 
-/** Block 2a: the `keyma::binary_traits<T>` specialization for one schema. */
-function emitBinaryTraits(schema: IRClassDeclaration, deps: ModuleEmitDeps): string[] {
-    const C = deps.cppTypeByName.get(schema.name) ?? schema.sourceName;
+/** Block 2a: the `keyma::binary_traits<T>` specialization for one class. */
+function emitBinaryTraits(cls: IRClassDeclaration, deps: ModuleEmitDeps): string[] {
+    const C = deps.cppTypeByName.get(cls.name) ?? cls.sourceName;
     // Full (own + inherited) set, like value_traits — chain-unique tags keep the flat record valid.
-    const stored = fullFields(schema, deps);
+    const stored = fullFields(cls, deps);
     const plans = stored.map((f, i) => binaryFieldPlan(f, i, deps.cppTypeByName, deps.enumTypeByName));
 
     const encodeLines = plans.flatMap((p) => binaryEncodeField(p));
@@ -596,10 +600,10 @@ function emitBinaryTraits(schema: IRClassDeclaration, deps: ModuleEmitDeps): str
 
     // Reference-target id helpers (route through binary_traits<IdType> so signed-int ids
     // zigzag, unsigned plain, string/Id length — matching the dynamic reference branch).
-    if (deps.referenceTargetNames.has(schema.name)) {
-        const idName = deps.idFieldByName.get(schema.name) ?? "id";
+    if (deps.referenceTargetNames.has(cls.name)) {
+        const idName = deps.idFieldByName.get(cls.name) ?? "id";
         // The id field may be inherited — search the full chain.
-        const idField = inheritedFields(schema, deps.schemaBySourceName).find((f) => f.name === idName);
+        const idField = inheritedFields(cls, deps.classBySourceName).find((f) => f.name === idName);
         const idTmpl = idField !== undefined ? memberType(idField, deps.cppTypeByName, deps.enumTypeByName) : "std::pmr::string";
         lines.push(
             `    static constexpr std::uint8_t id_wiretype = keyma::binary_traits<${idTmpl}>::wiretype;`,
@@ -685,7 +689,7 @@ function binaryDecodeCase(p: BinaryFieldPlan): string {
 
 type Cat = "pmr" | "optPmr" | "optPlain" | "field" | "shared" | "plain";
 
-function memberCat(field: IRField): Cat {
+function memberCat(field: IRMember): Cat {
     // A scalar reference is a shared_ptr: copy/move share ownership (no allocator
     // re-threading); a bare allocate-only ctor leaves it null.
     if (field.type.kind === "reference") return "shared";
@@ -697,7 +701,7 @@ function memberCat(field: IRField): Cat {
     return aware ? "pmr" : "plain";
 }
 
-function fieldAllocAware(field: IRField): boolean {
+function fieldAllocAware(field: IRMember): boolean {
     return scalarAllocAware(field.type);
 }
 
@@ -714,21 +718,21 @@ function scalarAllocAware(t: IRType): boolean {
     }
 }
 
-function initAllocOnly(f: IRField): string {
+function initAllocOnly(f: IRMember): string {
     switch (memberCat(f)) {
         case "pmr": return `${f.name}(a)`;
         case "plain": return `${f.name}{}`;
         default: return `${f.name}()`;
     }
 }
-function initCopy(f: IRField): string {
+function initCopy(f: IRMember): string {
     switch (memberCat(f)) {
         case "pmr": return `${f.name}(o.${f.name}, a)`;
         case "optPmr": return `${f.name}(keyma::alloc_opt(o.${f.name}, a))`;
         default: return `${f.name}(o.${f.name})`;
     }
 }
-function initMove(f: IRField): string {
+function initMove(f: IRMember): string {
     switch (memberCat(f)) {
         case "pmr": return `${f.name}(std::move(o.${f.name}), a)`;
         case "optPmr": return `${f.name}(keyma::alloc_opt(std::move(o.${f.name}), a))`;
@@ -738,63 +742,35 @@ function initMove(f: IRField): string {
 
 // ─── refs / includes / collectors ─────────────────────────────────────────────
 
-function schemaRefs(fields: IRField[], deps: ModuleEmitDeps): { name: string; cppClass: string }[] {
+function classRefs(fields: IRMember[], deps: ModuleEmitDeps): { name: string; cppClass: string }[] {
     return [...collectRefTargets(fields)]
         .filter((t) => deps.cppTypeByName.has(t))
         .map((name) => ({ name, cppClass: deps.cppTypeByName.get(name)! }));
 }
 
-// Validator/formatter attachments now ride in the field's `extensions['schema']` slice
-// (a schema-domain concern). The generic module emitter still needs the referenced factory
-// names to wire each model header's `#include` of the factory's SOURCE module — a transitional
-// read of the well-known slice keeps that include wiring here without depending on `@keyma/schema`.
-type SchemaFieldSlice = {
-    validators?: { name: string }[];
-    formatters?: { phase: string; spec: { name: string } }[];
-};
-function schemaSlice(field: IRField): SchemaFieldSlice | undefined {
-    return field.extensions?.["schema"] as SchemaFieldSlice | undefined;
-}
-
-export function collectFactoryNames(fields: readonly IRField[], which: "validators" | "formatters", formPhasesOnly: boolean): Set<string> {
-    const out = new Set<string>();
-    for (const f of fields) {
-        const slice = schemaSlice(f);
-        if (which === "validators") {
-            for (const v of slice?.validators ?? []) out.add(v.name);
-        } else {
-            for (const fmt of slice?.formatters ?? []) {
-                if (formPhasesOnly && !CLIENT_PHASES.has(fmt.phase)) continue;
-                out.add(fmt.spec.name);
-            }
-        }
-    }
-    return out;
-}
-
 /** Top-of-file includes: embedded targets (by-value, complete type needed), named enums used
  *  by value, and the SOURCE modules of every referenced function — validator/formatter
- *  factories (called by the schema metadata) and utility helpers (called by bodies). Reference
+ *  factories (called by the class metadata) and utility helpers (called by bodies). Reference
  *  targets are deliberately excluded here — see referenceIncludes. */
-function buildIncludes(moduleRef: string, schemas: readonly IRClassDeclaration[], functions: readonly IRFunctionDeclaration[], deps: ModuleEmitDeps): string[] {
+function buildIncludes(moduleRef: string, classes: readonly IRClassDeclaration[], functions: readonly IRFunctionDeclaration[], deps: ModuleEmitDeps): string[] {
     const refs = new Set<string>();
-    const ownFields = schemas.flatMap((s) => filterVisibleFields(s, deps.includePrivate));
+    const ownFields = classes.flatMap((s) => filterVisibleFields(s, deps.includePrivate));
     // The value/binary traits enumerate the full set, so embedded/enum target headers are needed
     // for inherited fields too (a base member's complete type).
-    const allFields = schemas.flatMap((s) => fullFields(s, deps));
+    const allFields = classes.flatMap((s) => fullFields(s, deps));
 
     // Base class headers: real inheritance needs the complete base type (and transitively brings
     // in the base's own embedded/reference/enum field headers).
-    for (const s of schemas) {
+    for (const s of classes) {
         if (s.extends === undefined) continue;
-        const ref = deps.schemaModule.get(s.extends);
+        const ref = deps.classModule.get(s.extends);
         if (ref !== undefined && ref !== moduleRef) refs.add(includePath(ref));
     }
 
     for (const target of collectTargetsByKind(allFields, "embedded")) {
         const className = deps.classNameByName.get(target);
         if (className === undefined) continue;
-        const ref = deps.schemaModule.get(className);
+        const ref = deps.classModule.get(className);
         if (ref !== undefined && ref !== moduleRef) refs.add(includePath(ref));
     }
     for (const enumName of collectEnumTargets(allFields)) {
@@ -803,12 +779,12 @@ function buildIncludes(moduleRef: string, schemas: readonly IRClassDeclaration[]
     }
 
     // Every referenced function's source module: factory refs from field metadata (OWN fields —
-    // the `schema()` metadata is own-only), utility refs from class behaviors/defaults, and the
-    // helpers the functions homed here call in turn.
+    // the `metadata()` data is own-only), utility refs from class behaviors/defaults, and the
+    // helpers the functions homed here call in turn. The domain supplies the member→function
+    // references (validators/formatters) through `referencedFunctionNames`.
     const fnRefs = new Set<string>([
-        ...collectFactoryNames(ownFields, "validators", deps.formPhasesOnly),
-        ...collectFactoryNames(ownFields, "formatters", deps.formPhasesOnly),
-        ...collectFunctionRefs(schemas, deps),
+        ...(deps.referencedFunctionNames?.(ownFields, { bundle: deps.bundle }) ?? []),
+        ...collectFunctionRefs(classes, deps),
     ]);
     for (const fn of functions) {
         const ids = new Set<string>();
@@ -825,13 +801,13 @@ function buildIncludes(moduleRef: string, schemas: readonly IRClassDeclaration[]
 
 /** Forward declarations (grouped by namespace) for every reference target — full field set, since
  *  the value/binary traits reference inherited fields' targets too. */
-function referenceForwardDecls(schemas: readonly IRClassDeclaration[], deps: ModuleEmitDeps): string[] {
-    const fields = schemas.flatMap((s) => fullFields(s, deps));
+function referenceForwardDecls(classes: readonly IRClassDeclaration[], deps: ModuleEmitDeps): string[] {
+    const fields = classes.flatMap((s) => fullFields(s, deps));
     const byNs = new Map<string, Set<string>>();
     for (const name of collectTargetsByKind(fields, "reference")) {
         const cls = deps.classNameByName.get(name);
         if (cls === undefined) continue;
-        const ref = deps.schemaModule.get(cls);
+        const ref = deps.classModule.get(cls);
         if (ref === undefined) continue;
         const ns = namespaceOf(ref, deps.nsRoot);
         (byNs.get(ns) ?? byNs.set(ns, new Set()).get(ns)!).add(cls);
@@ -843,13 +819,13 @@ function referenceForwardDecls(schemas: readonly IRClassDeclaration[], deps: Mod
 }
 
 /** Cross-module reference-target headers, included after the struct definitions — full field set. */
-function referenceIncludes(moduleRef: string, schemas: readonly IRClassDeclaration[], deps: ModuleEmitDeps): string[] {
-    const fields = schemas.flatMap((s) => fullFields(s, deps));
+function referenceIncludes(moduleRef: string, classes: readonly IRClassDeclaration[], deps: ModuleEmitDeps): string[] {
+    const fields = classes.flatMap((s) => fullFields(s, deps));
     const incs = new Set<string>();
     for (const name of collectTargetsByKind(fields, "reference")) {
         const cls = deps.classNameByName.get(name);
         if (cls === undefined) continue;
-        const ref = deps.schemaModule.get(cls);
+        const ref = deps.classModule.get(cls);
         if (ref !== undefined && ref !== moduleRef) incs.add(includePath(ref));
     }
     return [...incs].sort();
@@ -857,10 +833,10 @@ function referenceIncludes(moduleRef: string, schemas: readonly IRClassDeclarati
 
 /** Embedded + reference targets (for the refs metadata map). */
 /** Targets of one relation kind (recursing through arrays). */
-function collectTargetsByKind(fields: IRField[], kind: "embedded" | "reference"): Set<string> {
+function collectTargetsByKind(fields: IRMember[], kind: "embedded" | "reference"): Set<string> {
     const out = new Set<string>();
     const collect = (type: IRType): void => {
-        if (type.kind === kind) out.add(type.schema);
+        if (type.kind === kind) out.add(type.target);
         else if (type.kind === "array") collect(type.of);
     };
     for (const f of fields) collect(f.type);
@@ -868,7 +844,7 @@ function collectTargetsByKind(fields: IRField[], kind: "embedded" | "reference")
 }
 
 /** Names of named enums used by these fields (recursing through arrays). */
-function collectEnumTargets(fields: IRField[]): Set<string> {
+function collectEnumTargets(fields: IRMember[]): Set<string> {
     const out = new Set<string>();
     const collect = (type: IRType): void => {
         if (type.kind === "enum" && type.name !== undefined) out.add(type.name);
@@ -878,10 +854,10 @@ function collectEnumTargets(fields: IRField[]): Set<string> {
     return out;
 }
 
-/** Order schemas so a same-module base class or embedded target is defined before its user
+/** Order classes so a same-module base class or embedded target is defined before its user
  *  (real inheritance and by-value embeds both need the complete dependency type first). */
-function topoSort(schemas: readonly IRClassDeclaration[], deps: ModuleEmitDeps): IRClassDeclaration[] {
-    const inModule = new Map(schemas.map((s) => [s.sourceName, s]));
+function topoSort(classes: readonly IRClassDeclaration[], deps: ModuleEmitDeps): IRClassDeclaration[] {
+    const inModule = new Map(classes.map((s) => [s.sourceName, s]));
     const result: IRClassDeclaration[] = [];
     const seen = new Set<string>();
     const visit = (s: IRClassDeclaration): void => {
@@ -893,14 +869,14 @@ function topoSort(schemas: readonly IRClassDeclaration[], deps: ModuleEmitDeps):
         for (const f of filterVisibleFields(s, deps.includePrivate)) {
             const inner = unwrapArray(f.type);
             if (inner.kind === "embedded") {
-                const targetClass = deps.classNameByName.get(inner.schema);
+                const targetClass = deps.classNameByName.get(inner.target);
                 const dep = targetClass !== undefined ? inModule.get(targetClass) : undefined;
                 if (dep !== undefined && dep !== s) visit(dep);
             }
         }
         result.push(s);
     };
-    for (const s of schemas) visit(s);
+    for (const s of classes) visit(s);
     return result;
 }
 

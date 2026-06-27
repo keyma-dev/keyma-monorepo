@@ -7,22 +7,22 @@ type IndexEmitOptions = {
 
 /**
  * Emit `index.py` / `__init__.py`: one relative import per model module re-exporting
- * every schema class authored in that source file. No registry imports —
- * validators/formatters/defaults ride directly in the schema metadata.
+ * every class authored in that source file. No registry imports — a domain's per-member
+ * helpers and defaults ride directly in the class metadata.
  */
 export function emitIndexPython(
-    schemas: readonly IRClassDeclaration[],
-    schemaModule: ReadonlyMap<string, string>,
+    classes: readonly IRClassDeclaration[],
+    classModule: ReadonlyMap<string, string>,
     opts: IndexEmitOptions,
 ): string {
-    const visible = opts.includePrivate ? schemas : schemas.filter((s) => s.visibility === "public");
+    const visible = opts.includePrivate ? classes : classes.filter((s) => s.visibility === "public");
 
     const byModule = new Map<string, string[]>();
-    for (const schema of visible) {
-        const ref = schemaModule.get(schema.sourceName);
+    for (const cls of visible) {
+        const ref = classModule.get(cls.sourceName);
         if (ref === undefined) continue;
         const exports = byModule.get(ref) ?? [];
-        exports.push(schema.sourceName);
+        exports.push(cls.sourceName);
         byModule.set(ref, exports);
     }
 

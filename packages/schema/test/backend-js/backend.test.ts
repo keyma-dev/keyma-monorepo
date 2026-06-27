@@ -164,7 +164,7 @@ const REFS_IR: KeymaIR = {
             visibility: "public",
             fields: [
                 { name: "id", type: { kind: "id" }, visibility: "public", readonly: true, required: true, source: SRC },
-                { name: "home", type: { kind: "embedded", schema: "address" }, visibility: "public", readonly: false, required: false, source: SRC },
+                { name: "home", type: { kind: "embedded", target: "address" }, visibility: "public", readonly: false, required: false, source: SRC },
             ],
             source: { file: "customer.ts", line: 1, column: 1 },
         },
@@ -251,7 +251,7 @@ function libraryTarget(outDir = "dist/js"): JsTargetConfig {
 }
 
 const RESOLVED_CONFIG = {
-    source: [], outDir: "dist", schemaPrefix: "", targets: [],
+    source: [], outDir: "dist", namePrefix: "", targets: [],
 };
 
 function fileContent(files: { path: string; content: string | Uint8Array }[], filePath: string): string {
@@ -396,7 +396,7 @@ describe("irTypeToTs", () => {
         [{ kind: "time" }, "string"],
         [{ kind: "id" }, "string"],
         [{ kind: "json" }, "unknown"],
-        [{ kind: "reference", schema: "user" }, "user"],
+        [{ kind: "reference", target: "user" }, "user"],
     ];
 
     for (const [type, expected] of cases) {
@@ -415,7 +415,7 @@ describe("irTypeToTs", () => {
 
     it("maps embedded using the class name", () => {
         const names = new Map([["address", "Address"]]);
-        assert.equal(irTypeToTs({ kind: "embedded", schema: "address" }, names), "Address");
+        assert.equal(irTypeToTs({ kind: "embedded", target: "address" }, names), "Address");
     });
 });
 
@@ -464,7 +464,7 @@ describe("emitJs — client model", () => {
 
     it("client model attaches schema as a frozen static", () => {
         const content = fileContent(files, "dist/js/client/src/user.js");
-        assert.ok(content.includes("User.schema = Object.freeze({"), "missing inline schema literal");
+        assert.ok(content.includes("User.metadata = Object.freeze({"), "missing inline schema literal");
     });
 
     it("client schema literal excludes private fields", () => {
@@ -542,7 +542,7 @@ describe("emitJs — server model", () => {
 
     it("server schema metadata does not include the getter as a field", () => {
         const content = fileContent(files, "dist/js/server/src/user.js");
-        const literal = content.slice(content.indexOf("User.schema = Object.freeze("));
+        const literal = content.slice(content.indexOf("User.metadata = Object.freeze("));
         assert.ok(!literal.includes(`"name": "fullName"`), "getter must not appear as a schema field");
         assert.ok(!literal.includes('"computed"'), "no computed flag in schema metadata");
     });
@@ -567,7 +567,7 @@ describe("emitJs — inheritance", () => {
     it("Employee model is a real subclass (extends Person, chains super)", () => {
         const content = fileContent(files, "dist/js/client/src/employee.js");
         assert.ok(content.includes("export class Employee extends Person {"), "expected a real subclass declaration");
-        assert.ok(content.includes("super(value);"), "must chain to super so inherited fields are populated");
+        assert.ok(content.includes("super._hydrate(value);"), "must chain to super so inherited fields are populated");
     });
 
     it("Employee assigns only its OWN fields; inherited fields come from super", () => {
@@ -580,7 +580,7 @@ describe("emitJs — inheritance", () => {
 
     it("Employee .schema points its `base` at Person.schema", () => {
         const content = fileContent(files, "dist/js/client/src/employee.js");
-        assert.ok(content.includes('"base": Person.schema'), "`.schema.base` wires the parent metadata for runtime chain-walking");
+        assert.ok(content.includes('"base": Person.metadata'), "`.schema.base` wires the parent metadata for runtime chain-walking");
     });
 
     it("Employee .d.ts is a real subclass", () => {
@@ -616,7 +616,7 @@ describe("emitJs — private schema visibility", () => {
 
     it("private schema metadata appears in server model file", () => {
         const content = fileContent(files, "dist/js/server/src/credentials.js");
-        assert.ok(content.includes("Credentials.schema = Object.freeze("), "private schema metadata missing from server");
+        assert.ok(content.includes("Credentials.metadata = Object.freeze("), "private schema metadata missing from server");
     });
 
     it("private schema metadata carries visibility flag in server model file", () => {
@@ -634,7 +634,7 @@ describe("emitJs — private schema visibility", () => {
             const content = fileContent(r.files, "dist/js/server/src/user.js");
             // The field-level visibility for `secretNote` is allowed; the schema literal itself
             // must not declare visibility for a public schema.
-            const schemaBlock = content.slice(content.indexOf("User.schema = Object.freeze("));
+            const schemaBlock = content.slice(content.indexOf("User.metadata = Object.freeze("));
             const topLevel = schemaBlock.slice(0, schemaBlock.indexOf('"fields"'));
             assert.ok(
                 !/"visibility"/.test(topLevel),
@@ -1046,7 +1046,7 @@ const SELF_REF_IR: KeymaIR = {
             name: "node", sourceName: "Node", visibility: "public",
             fields: [
                 { name: "id", type: { kind: "id" }, visibility: "public", readonly: true, required: true, extensions: { schema: { indexes: [{ unique: true }] } }, source: SRC },
-                { name: "parent", type: { kind: "reference", schema: "node", idType: { kind: "id" } }, visibility: "public", readonly: false, required: false, source: SRC },
+                { name: "parent", type: { kind: "reference", target: "node", idType: { kind: "id" } }, visibility: "public", readonly: false, required: false, source: SRC },
             ],
             source: { file: "node.ts", line: 1, column: 1 },
         },

@@ -1,48 +1,56 @@
-import type { IRClassDeclaration, IRField } from "@keyma/core/ir";
+import type { IRClassDeclaration, IRMember } from "@keyma/core/ir";
 import { filterVisibleFields } from "@keyma/core/util";
-import type { CppSchemaData, CppFieldData, SchemaDataOptions } from "@keyma/compiler/backend-cpp";
+import type { CppClassData, CppFieldData, ClassDataOptions } from "@keyma/compiler/backend-cpp";
 import { buildFactoryCall } from "./emit-validators.js";
 import { schemaIndexes, schemaEphemeral, fieldIndexes, fieldValidators, fieldFormatters } from "../ir/extensions.js";
 
-export type { SchemaDataOptions };
+export type { ClassDataOptions };
 
 const CLIENT_PHASES = new Set(["change", "blur", "submit"]);
 
+/** Client bundles omit indexes and keep only form-phase formatters; server/library carry the full set. */
+function includeIndexes(bundle: ClassDataOptions["bundle"]): boolean {
+    return bundle !== "client";
+}
+function formPhasesOnly(bundle: ClassDataOptions["bundle"]): boolean {
+    return bundle === "client";
+}
+
 /**
- * Build the neutral metadata for a schema's `schema()` accessor: which fields ride, their
- * validator/formatter factory calls, the schema indexes and refs, visibility / ephemeral, and
- * the apply_defaults reference. The compiler's `emitSchemaMeta` renders the span-backed C++
- * `keyma::SchemaMeta` aggregate from this data — so the only C++ this domain still emits is the
+ * Build the neutral metadata for a class's `metadata()` accessor: which fields ride, their
+ * validator/formatter factory calls, the indexes and refs, visibility / ephemeral, and the
+ * apply_defaults reference. The compiler's `emitClassMeta` renders the span-backed C++
+ * `keyma::ClassMetadata` aggregate from this data — so the only C++ this domain still emits is the
  * validator/formatter factory-call fragments (the analogue of the JS model's `mkRaw` calls).
  */
-export function buildSchemaData(schema: IRClassDeclaration, opts: SchemaDataOptions): CppSchemaData {
-    const fields = filterVisibleFields(schema, opts.includePrivate).map((f) => buildFieldData(f, opts));
-    const indexes = (opts.includeIndexes ? schemaIndexes(schema) : []).map((idx) => ({
+export function buildClassData(cls: IRClassDeclaration, opts: ClassDataOptions): CppClassData {
+    const fields = filterVisibleFields(cls, opts.includePrivate).map((f) => buildFieldData(f, opts));
+    const indexes = (includeIndexes(opts.bundle) ? schemaIndexes(cls) : []).map((idx) => ({
         fields: idx.fields.map((fld) => fld.name),
         unique: idx.unique === true,
     }));
 
-    const out: CppSchemaData = {
-        name: schema.name,
-        sourceName: schema.sourceName,
+    const out: CppClassData = {
+        name: cls.name,
+        sourceName: cls.sourceName,
         refs: opts.refs.map((r) => ({ name: r.name, cppClass: r.cppClass })),
         indexes,
         fields,
     };
-    if (schema.visibility === "private") out.visibility = "private";
-    if (schemaEphemeral(schema)) out.ephemeral = true;
+    if (cls.visibility === "private") out.visibility = "private";
+    if (schemaEphemeral(cls)) out.ephemeral = true;
     // Metadata carries OWN fields only — the `.base` accessor lets the runtime walk the chain.
     if (opts.baseClass !== undefined) out.base = opts.baseClass;
     if (opts.applyDefaultsName !== undefined) out.applyDefaults = opts.applyDefaultsName;
     return out;
 }
 
-function buildFieldData(field: IRField, opts: SchemaDataOptions): CppFieldData {
+function buildFieldData(field: IRMember, opts: ClassDataOptions): CppFieldData {
     const out: CppFieldData = { name: field.name, type: field.type, required: field.required };
     if (field.nullable === true) out.nullable = true;
     if (field.readonly) out.readonly = true;
     if (field.visibility === "private") out.visibility = "private";
-    if (opts.includeIndexes && fieldIndexes(field).length > 0) out.indexed = true;
+    if (includeIndexes(opts.bundle) && fieldIndexes(field).length > 0) out.indexed = true;
 
     const validators = fieldValidators(field);
     if (validators.length > 0) {
@@ -51,7 +59,7 @@ function buildFieldData(field: IRField, opts: SchemaDataOptions): CppFieldData {
         );
     }
     const allFormatters = fieldFormatters(field);
-    const formatters = opts.formPhasesOnly ? allFormatters.filter((fm) => CLIENT_PHASES.has(fm.phase)) : allFormatters;
+    const formatters = formPhasesOnly(opts.bundle) ? allFormatters.filter((fm) => CLIENT_PHASES.has(fm.phase)) : allFormatters;
     if (formatters.length > 0) {
         out.formatters = formatters.map((fm) => ({
             phase: fm.phase,

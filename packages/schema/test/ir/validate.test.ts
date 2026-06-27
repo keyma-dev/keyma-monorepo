@@ -205,7 +205,7 @@ describe("validateIR", () => {
                 ...goldenIR,
                 classes: [{
                     ...minimalSchema,
-                    fields: [{ ...minimalField, type: { kind, schema: "Address" } }],
+                    fields: [{ ...minimalField, type: { kind, target: "Address" } }],
                 }],
             };
             assert.equal(validateIR(doc).valid, true);
@@ -608,8 +608,8 @@ describe("validateIR — intrinsics & declarations", () => {
                 methods: [
                     {
                         name: "greet",
-                        params: [{ name: "input", type: { kind: "reference", schema: "In" } }],
-                        returnType: { kind: "reference", schema: "Out" },
+                        params: [{ name: "input", type: { kind: "reference", target: "In" } }],
+                        returnType: { kind: "reference", target: "Out" },
                         visibility: "public",
                         source: minimalSource,
                     },

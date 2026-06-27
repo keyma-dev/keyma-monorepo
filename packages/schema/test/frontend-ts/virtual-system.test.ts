@@ -34,8 +34,9 @@ function errorDiags(result: CompileResult) {
 describe("fully-virtual compile via @typescript/vfs", () => {
     it("compiles entirely in memory, resolving @keyma/schema/dsl + validators + formatters through the vfs, with no ts.sys fallback", () => {
         // Disk reads (lib files + @keyma sources) happen here, while building the system —
-        // before the tripwire is armed.
-        const system = createKeymaNodeSystem();
+        // before the tripwire is armed. The schema domain vendors its own authoring package
+        // (`@keyma/schema/dsl` + validators/formatters) on top of the always-present core.
+        const system = createKeymaNodeSystem({ packages: ["@keyma/schema"] });
 
         const originalReadFile = ts.sys.readFile;
         const originalFileExists = ts.sys.fileExists;

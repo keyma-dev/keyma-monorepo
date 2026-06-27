@@ -14,22 +14,22 @@ type IndexEmitOptions = {
 
 /**
  * Emit `index.hpp`: include every model header (and `services.hpp` when present) and
- * hoist each visible schema, named enum, and service from its nested namespace into
+ * hoist each visible class, named enum, and service from its nested namespace into
  * the bundle's root namespace via `using` aliases. No registry —
- * validators/formatters/defaults ride directly in the schema metadata.
+ * validators/formatters/defaults ride directly in the class metadata.
  */
 export function emitIndexCpp(
-    schemas: readonly IRClassDeclaration[],
-    schemaModule: ReadonlyMap<string, string>,
+    classes: readonly IRClassDeclaration[],
+    classModule: ReadonlyMap<string, string>,
     opts: IndexEmitOptions,
 ): string {
-    const visible = opts.includePrivate ? schemas : schemas.filter((s) => s.visibility === "public");
+    const visible = opts.includePrivate ? classes : classes.filter((s) => s.visibility === "public");
 
-    const schemasByModule = new Map<string, IRClassDeclaration[]>();
-    for (const schema of visible) {
-        const ref = schemaModule.get(schema.sourceName);
+    const classesByModule = new Map<string, IRClassDeclaration[]>();
+    for (const cls of visible) {
+        const ref = classModule.get(cls.sourceName);
         if (ref === undefined) continue;
-        (schemasByModule.get(ref) ?? schemasByModule.set(ref, []).get(ref)!).push(schema);
+        (classesByModule.get(ref) ?? classesByModule.set(ref, []).get(ref)!).push(cls);
     }
     const enumsByModule = new Map<string, IREnumDeclaration[]>();
     for (const e of opts.enums) {
@@ -38,7 +38,7 @@ export function emitIndexCpp(
         (enumsByModule.get(ref) ?? enumsByModule.set(ref, []).get(ref)!).push(e);
     }
 
-    const refs = [...new Set([...schemasByModule.keys(), ...enumsByModule.keys()])].sort();
+    const refs = [...new Set([...classesByModule.keys(), ...enumsByModule.keys()])].sort();
     const lines = ["#pragma once"];
     for (const ref of refs) lines.push(`#include "${includePath(ref)}"`);
     if (opts.services.length > 0) lines.push(`#include "${includePath(SERVICES_REF)}"`);
@@ -48,8 +48,8 @@ export function emitIndexCpp(
         const ns = namespaceOf(ref, opts.nsRoot);
         const rel = ns.slice(opts.nsRoot.length + 2); // drop "<root>::" → "models::user"
         for (const e of enumsByModule.get(ref) ?? []) lines.push(`using ${rel}::${cppSanitizer(e.name)};`);
-        for (const schema of schemasByModule.get(ref) ?? []) {
-            lines.push(`using ${rel}::${schema.sourceName};`);
+        for (const cls of classesByModule.get(ref) ?? []) {
+            lines.push(`using ${rel}::${cls.sourceName};`);
         }
     }
     for (const svc of opts.services) lines.push(`using services::${svc.sourceName};`);

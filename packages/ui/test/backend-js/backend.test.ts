@@ -6,7 +6,7 @@ import type { JsTargetConfig } from "@keyma/compiler/backend-js";
 import { uiJsEmitterPack } from "../../src/backend-js/index.js";
 
 const target: JsTargetConfig = { language: "js", outDir: "dist", library: true };
-const config = { source: [], outDir: "dist", schemaPrefix: "", targets: [target] };
+const config = { source: [], outDir: "dist", namePrefix: "", targets: [target] };
 
 const IR_WITH_UI: KeymaIR = {
     irVersion: "1.0.0",

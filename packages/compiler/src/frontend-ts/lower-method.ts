@@ -14,7 +14,7 @@ import type { EnumInfo } from "./discover-enums.js";
 export type MethodLowerCtx = {
     checker: ts.TypeChecker;
     dslModuleName: string;
-    schemaClassNames: ReadonlySet<string>;
+    classNames: ReadonlySet<string>;
     enums?: ReadonlyMap<string, EnumInfo>;
     diagnostics: IRDiagnostic[];
     sourceFile: ts.SourceFile;
@@ -143,7 +143,7 @@ export function lowerDestructor(
  * and peels a `Promise<...>` return wrapper. Returns `null` on a type-mapping
  * error (a diagnostic is pushed). A `void`/`Promise<void>` return yields no
  * `returnType`. Parameter types use the bare-class-reference mapping (a bare
- * `@Schema` class means the whole record).
+ * class means a live instance of the whole record).
  */
 export function lowerSignature(
     member: ts.MethodDeclaration,
@@ -229,7 +229,7 @@ function mkTypeMapCtx(ctx: MethodLowerCtx): TypeMapContext {
     return {
         checker: ctx.checker,
         dslModuleName: ctx.dslModuleName,
-        schemaClassNames: ctx.schemaClassNames,
+        classNames: ctx.classNames,
         ...(ctx.enums !== undefined && { enums: ctx.enums }),
         bareClassInstance: true,
         diagnostics: ctx.diagnostics,
@@ -281,7 +281,7 @@ function lowerBody(
         sourceFile: ctx.sourceFile,
         checker: ctx.checker,
         dslModuleName: ctx.dslModuleName,
-        schemaClassNames: ctx.schemaClassNames,
+        classNames: ctx.classNames,
         // refMode defaults to "params": `this.x` → field, bare names → identifier.
         allowAssign: true,
         ...(ctx.classifyFunction !== undefined ? { classifyFunction: ctx.classifyFunction } : {}),

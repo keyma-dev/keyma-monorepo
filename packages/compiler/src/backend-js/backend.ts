@@ -1,7 +1,7 @@
 import { path, moduleRefOf, reachableFunctions, collectFunctionRefs, filterVisibleFields } from "@keyma/core/util";
 import type { KeymaIR, IRClassDeclaration, IRFunctionDeclaration } from "@keyma/core/ir";
 import type { KeymaBackend, KeymaTargetConfig, ResolvedConfig, EmitFile, EmitResult } from "../driver/index.js";
-import { emitModuleJs, emitModuleDts, collectFactoryNames, type ModuleEmitDeps, type ModuleContent } from "./emit-module.js";
+import { emitModuleJs, emitModuleDts, type ModuleEmitDeps, type ModuleContent } from "./emit-module.js";
 import { emitIndexJs, emitIndexDts } from "./emit-index.js";
 import { emitTypesJs, emitTypesDts } from "./emit-types.js";
 import { identitySanitizer } from "./module-path.js";
@@ -11,9 +11,8 @@ import { emitServicesJs, emitServicesDts } from "./emit-service.js";
 
 /**
  * Build a JS backend from the given domain emitter packs. The generic bundle shell here is
- * domain-neutral; the schema metadata + services come from the registered pack(s) (the schema
- * pack lives in `@keyma/schema/backend-js`, registered by the CLI). The first pack owns the
- * core `<Class>.schema` metadata.
+ * domain-neutral; the per-class metadata + services come from the registered pack(s) (the
+ * data-model pack is registered by the CLI). The first pack owns the core `<Class>.metadata`.
  */
 export function createJsBackend(packs: Iterable<JsEmitterPack>): KeymaBackend {
     const registry = new EmitterRegistry();
@@ -27,7 +26,7 @@ export function createJsBackend(packs: Iterable<JsEmitterPack>): KeymaBackend {
 
 type SharedDeps = Pick<
     ModuleEmitDeps,
-    "schemaModule" | "functionModule" | "embeddedTypeNames" | "functionDecls" | "claimedFunctionNames"
+    "classModule" | "functionModule" | "embeddedTypeNames" | "functionDecls" | "claimedFunctionNames"
 >;
 
 type Decls = {
@@ -43,10 +42,10 @@ export async function emitJs(
     const jsTarget = resolveJsTarget(target as JsTargetConfig);
     const files: EmitFile[] = [];
 
-    // The registered domain emit packs. The first (primary) supplies the per-schema metadata
-    // builder + services emitter + the validator/formatter render hook; the bundle shell below
-    // stays domain-agnostic. The full list is threaded through so every pack's `emitBundleFiles`
-    // can contribute its own bundle files (e.g. a UI domain). Empty for a core-only build.
+    // The registered domain emit packs. The first (primary) supplies the per-class metadata
+    // builder + the per-member function hook + the `.d.ts` shaping; the bundle shell below stays
+    // domain-agnostic. The full list is threaded through so every pack's `emitBundleFiles` can
+    // contribute its own bundle files (e.g. a UI domain). Empty for a core-only build.
     const packs = registry.list();
 
     const decls: Decls = {
@@ -54,9 +53,9 @@ export async function emitJs(
     };
 
     // Every declaration emits into the module derived from its SOURCE file: project-local
-    // declarations under `src/` (schemas authored in one file share a module), out-of-project
+    // declarations under `src/` (classes authored in one file share a module), out-of-project
     // (library) declarations into the single shared `vendor` module.
-    const schemaModule = new Map<string, string>(
+    const classModule = new Map<string, string>(
         ir.classes.map((s) => [s.sourceName, moduleRefOf(s.source.file, ir.sourceRoot, identitySanitizer)])
     );
     const functionModule = new Map<string, string>(
@@ -70,10 +69,10 @@ export async function emitJs(
     }
 
     const shared: SharedDeps = {
-        schemaModule,
+        classModule,
         functionModule,
-        // A reference/embedded/edge target is the schema's `name`; map it to the
-        // emitted class symbol (`sourceName`) for `.d.ts` types and `refs` values.
+        // A reference/embedded target is the target class's `name`; map it to the emitted
+        // class symbol (`sourceName`) for `.d.ts` types and `refs` values.
         embeddedTypeNames: new Map(ir.classes.map((s) => [s.name, s.sourceName])),
         functionDecls: new Map(decls.functions.map((d) => [d.name, d])),
         claimedFunctionNames,
@@ -81,18 +80,18 @@ export async function emitJs(
 
     if (jsTarget.emitClient) {
         files.push(...emitBundle(ir, path.posix.join(jsTarget.outDir, "client"), shared, decls, {
-            includePrivate: false, includeIndexes: false, formPhasesOnly: true, includeDefaults: false,
-        }, packs, "client"));
+            includePrivate: false, includeDefaults: false, bundle: "client",
+        }, packs));
     }
     if (jsTarget.emitServer) {
         files.push(...emitBundle(ir, path.posix.join(jsTarget.outDir, "server"), shared, decls, {
-            includePrivate: true, includeIndexes: true, formPhasesOnly: false, includeDefaults: true,
-        }, packs, "server"));
+            includePrivate: true, includeDefaults: true, bundle: "server",
+        }, packs));
     }
     if (jsTarget.emitLibrary) {
         files.push(...emitBundle(ir, jsTarget.outDir, shared, decls, {
-            includePrivate: true, includeIndexes: true, formPhasesOnly: false, includeDefaults: true,
-        }, packs, "library"));
+            includePrivate: true, includeDefaults: true, bundle: "library",
+        }, packs));
     }
 
     return { files, diagnostics: [] };
@@ -100,7 +99,7 @@ export async function emitJs(
 
 type BundleOptions = Pick<
     ModuleEmitDeps,
-    "includePrivate" | "includeIndexes" | "formPhasesOnly" | "includeDefaults"
+    "includePrivate" | "includeDefaults" | "bundle"
 >;
 
 function emitBundle(
@@ -110,38 +109,42 @@ function emitBundle(
     decls: Decls,
     opts: BundleOptions,
     packs: readonly JsEmitterPack[],
-    bundle: "client" | "server" | "library",
 ): EmitFile[] {
     const files: EmitFile[] = [];
+    const bundle = opts.bundle;
 
-    // The primary pack — the one that builds per-schema metadata + services (the schema
-    // domain) — selected by CAPABILITY, not registration order. Undefined only when no
-    // registered pack provides schema metadata (a core-only build, which produces no schemas).
-    const pack = packs.find((p) => p.buildSchemaData !== undefined);
+    // The primary pack — the one that builds per-class metadata (the data-model domain) —
+    // selected by CAPABILITY, not registration order. Undefined only when no registered pack
+    // builds class metadata (a core-only build, which produces no classes).
+    const pack = packs.find((p) => p.buildClassData !== undefined);
 
-    // Inlined, dependency-free type surface — every generated `.d.ts` imports its
-    // runtime types from here instead of `@keyma/runtime/schema`.
+    // Inlined, dependency-free type surface — every generated `.d.ts` imports its runtime types
+    // from here. The compiler base blob carries the service/request types; each domain pack
+    // appends its own metadata declarations (e.g. `ClassMetadata`).
+    const extraTypeDecls = packs
+        .map((p) => p.runtimeTypeDecls?.())
+        .filter((d): d is string => d !== undefined && d.length > 0);
     files.push({ path: path.posix.join(bundleDir, "types.js"), content: emitTypesJs() });
-    files.push({ path: path.posix.join(bundleDir, "types.d.ts"), content: emitTypesDts() });
+    files.push({ path: path.posix.join(bundleDir, "types.d.ts"), content: emitTypesDts(extraTypeDecls) });
 
-    const visibleSchemas: IRClassDeclaration[] = opts.includePrivate
+    const visibleClasses: IRClassDeclaration[] = opts.includePrivate
         ? ir.classes
         : ir.classes.filter((s) => s.visibility === "public");
 
     // Per-bundle tree-shaking: keep only the functions reachable from this bundle's visible
-    // roots (public/private class behaviors + defaults + the validator/formatter factories on
-    // visible fields, formatters gated to form phases for the client). Reachability is the
-    // client/server security gate — a helper reachable only from a private class's server method
-    // never lands in the client bundle.
+    // roots (public/private class behaviors + defaults + the per-member functions a domain
+    // attaches to visible members). Reachability is the client/server security gate — a helper
+    // reachable only from a private class's server method never lands in the client bundle.
     const functionsByName = new Map(decls.functions.map((d) => [d.name, d]));
-    const allVisibleFields = visibleSchemas.flatMap((s) => filterVisibleFields(s, opts.includePrivate));
-    const seeds = collectFunctionRefs(visibleSchemas, {
+    const allVisibleFields = visibleClasses.flatMap((s) => filterVisibleFields(s, opts.includePrivate));
+    const seeds = collectFunctionRefs(visibleClasses, {
         includePrivate: opts.includePrivate,
         includeDefaults: opts.includeDefaults,
         functionNames: new Set(functionsByName.keys()),
     });
-    for (const n of collectFactoryNames(allVisibleFields, "validators", opts.formPhasesOnly)) seeds.add(n);
-    for (const n of collectFactoryNames(allVisibleFields, "formatters", opts.formPhasesOnly)) seeds.add(n);
+    if (pack?.referencedFunctionNames !== undefined) {
+        for (const n of pack.referencedFunctionNames(allVisibleFields, { bundle })) seeds.add(n);
+    }
     const reachable = reachableFunctions(seeds, functionsByName);
     const reachableFns = decls.functions.filter((d) => reachable.has(d.name));
 
@@ -153,13 +156,13 @@ function emitBundle(
         if (c === undefined) { c = { classes: [], functions: [] }; moduleContent.set(ref, c); }
         return c;
     };
-    for (const s of visibleSchemas) slot(shared.schemaModule.get(s.sourceName)!).classes.push(s);
+    for (const s of visibleClasses) slot(shared.classModule.get(s.sourceName)!).classes.push(s);
     for (const d of reachableFns) slot(shared.functionModule.get(d.name)!).functions.push(d);
 
-    if (visibleSchemas.length > 0 && pack?.buildSchemaData === undefined) {
-        // Schemas need a domain's metadata builder (the schema domain). Absent only in a
-        // core-only build, which produces no schemas — so reaching here is a real error.
-        throw new Error("no JS emitter pack with a schema-metadata builder registered, but the IR has schemas to emit");
+    if (visibleClasses.length > 0 && pack?.buildClassData === undefined) {
+        // Classes need a domain's metadata builder. Absent only in a core-only build, which
+        // produces no classes — so reaching here is a real error.
+        throw new Error("no JS emitter pack with a class-metadata builder registered, but the IR has classes to emit");
     }
     if (moduleContent.size > 0) {
         const renderClaimedFunctions = pack?.renderClaimedFunctions !== undefined
@@ -167,8 +170,9 @@ function emitBundle(
             : undefined;
         const deps: ModuleEmitDeps = {
             ...opts, ...shared,
-            buildSchemaData: pack?.buildSchemaData ?? (() => ({})),
-            ...(pack?.shapeSchemaDts !== undefined ? { shapeSchemaDts: pack.shapeSchemaDts } : {}),
+            buildClassData: pack?.buildClassData ?? (() => ({})),
+            ...(pack?.shapeClassDts !== undefined ? { shapeClassDts: pack.shapeClassDts } : {}),
+            ...(pack?.referencedFunctionNames !== undefined ? { referencedFunctionNames: pack.referencedFunctionNames } : {}),
             ...(renderClaimedFunctions !== undefined ? { renderClaimedFunctions } : {}),
         };
         for (const [ref, content] of moduleContent) {
@@ -178,7 +182,7 @@ function emitBundle(
         }
     }
 
-    // Remotely-callable services (gated by visibility like schemas). `@Service` is a
+    // Remotely-callable services (gated by visibility like classes). `@Service` is a
     // base-language concern the compiler owns end-to-end, so the bundle shell emits services
     // directly from `ir.services` — no domain pack participates.
     const services = ir.services ?? [];
@@ -186,7 +190,7 @@ function emitBundle(
     if (visibleServices.length > 0) {
         const serviceDeps: ServiceEmitDeps = {
             includePrivate: opts.includePrivate,
-            schemaModule: shared.schemaModule,
+            classModule: shared.classModule,
             embeddedTypeNames: shared.embeddedTypeNames,
         };
         files.push({ path: path.posix.join(bundleDir, "services.js"), content: emitServicesJs(services, serviceDeps) });
@@ -195,12 +199,12 @@ function emitBundle(
 
     const serviceNames = visibleServices.map((s) => s.sourceName);
     const indexOpts = { includePrivate: opts.includePrivate };
-    files.push({ path: path.posix.join(bundleDir, "index.js"), content: emitIndexJs(visibleSchemas, shared.schemaModule, indexOpts, serviceNames) });
-    files.push({ path: path.posix.join(bundleDir, "index.d.ts"), content: emitIndexDts(visibleSchemas, shared.schemaModule, indexOpts, serviceNames) });
+    files.push({ path: path.posix.join(bundleDir, "index.js"), content: emitIndexJs(visibleClasses, shared.classModule, indexOpts, serviceNames) });
+    files.push({ path: path.posix.join(bundleDir, "index.d.ts"), content: emitIndexDts(visibleClasses, shared.classModule, indexOpts, serviceNames) });
 
     // Every registered pack may contribute its own bundle files from its IR slice (e.g. the
     // UI domain's view modules under `ui/`). Runs for all packs, not just the primary, so a
-    // second domain emits alongside schema. Inert for packs without the hook.
+    // second domain emits alongside the data model. Inert for packs without the hook.
     for (const p of packs) {
         if (p.emitBundleFiles !== undefined) {
             files.push(...p.emitBundleFiles(ir, { bundle, bundleDir, includePrivate: opts.includePrivate }));

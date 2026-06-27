@@ -100,14 +100,22 @@ describe("methods — portable instance method behaviors", () => {
         assert.ok(hasError(missingParam, CODES.KEYMA092), JSON.stringify(missingParam.diagnostics));
     });
 
-    it("rejects async methods as non-portable (KEYMA082)", () => {
+    it("lowers an async method (async=true, peels Promise<T>, lowers await) — async is now a supported marker", () => {
+        // Async methods are no longer rejected (KEYMA082): the compiler now lowers them with an
+        // `async` marker, peeling Promise<T> off the return type and lowering `await` in the body
+        // (see @keyma/compiler's authoritative frontend-ts/async.test.ts).
         const result = cv({
             "schema.ts": `
                 import { Schema } from "@keyma/schema/dsl";
-                @Schema() class Foo { declare x: string; async load(): string { return this.x; } }
+                @Schema() class Foo { declare x: string; async load(): Promise<string> { return await Promise.resolve(this.x); } }
             `,
         });
-        assert.ok(hasError(result, CODES.KEYMA082), JSON.stringify(result.diagnostics));
+        assert.deepEqual(errorCodes(result), [], JSON.stringify(result.diagnostics));
+        const m = methodsOf(result, "Foo")[0]!;
+        assert.equal(m.name, "load");
+        assert.equal(m.async, true);
+        assert.deepEqual(m.returnType, { kind: "string" });
+        assert.equal(m.statements[0]!.kind, "return");
     });
 
     it("rejects a method whose name collides with a field (KEYMA040)", () => {

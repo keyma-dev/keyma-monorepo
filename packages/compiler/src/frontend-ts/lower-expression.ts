@@ -10,7 +10,7 @@ export type GetterLowerDeps = {
     sourceFile: ts.SourceFile;
     checker: ts.TypeChecker;
     dslModuleName: string;
-    schemaClassNames: ReadonlySet<string>;
+    classNames: ReadonlySet<string>;
 };
 
 /** Whether a portable statement list reaches a `return` (recursing into `if` branches). */
@@ -28,7 +28,7 @@ function containsReturn(stmts: readonly IRStatement[]): boolean {
  * Lower a computed getter body to a portable `IRStatement[]`. The body may contain
  * the full portable statement subset (`const`/`if`/`return`, no assignment — a getter
  * reads, it does not mutate); statements are lowered through the shared portable engine
- * in field-reference mode, so `this.x`/bare names resolve to schema fields while local
+ * in field-reference mode, so `this.x`/bare names resolve to class fields while local
  * `const`s and arrow params resolve as locals. Pushes diagnostics (all `KEYMA014`) and
  * returns null on failure (no body, no reachable `return`, or any unlowerable statement).
  */
@@ -47,7 +47,7 @@ export function lowerGetterBody(
         sourceFile: deps.sourceFile,
         checker: deps.checker,
         dslModuleName: deps.dslModuleName,
-        schemaClassNames: deps.schemaClassNames,
+        classNames: deps.classNames,
         refMode: "fields",
         unsupportedCode: KEYMA014,
     };

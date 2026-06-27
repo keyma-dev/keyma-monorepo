@@ -39,7 +39,7 @@ const SOURCES: Record<string, string> = {
 };
 
 function compileWith(schemaPrefix: string) {
-    return compileVirtual(SOURCES, { baseDir: VIRTUAL_BASE, schemaPrefix });
+    return compileVirtual(SOURCES, { baseDir: VIRTUAL_BASE, namePrefix: schemaPrefix });
 }
 
 /** sourceName → schema (the class name is stable regardless of prefix). */
@@ -52,7 +52,7 @@ function bySourceName(result: ReturnType<typeof compileWith>, sourceName: string
 /** Reference/embedded target name of a field's (possibly array) type. */
 function refTarget(type: IRType): string | undefined {
     const inner = type.kind === "array" ? type.of : type;
-    return inner.kind === "reference" || inner.kind === "embedded" ? inner.schema : undefined;
+    return inner.kind === "reference" || inner.kind === "embedded" ? inner.target : undefined;
 }
 
 describe("schemaPrefix — name normalization", () => {

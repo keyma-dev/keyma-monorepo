@@ -1,11 +1,11 @@
 // Schema-domain IR extension payloads. These types and the per-node accessors are the
-// schema domain's slice of the generic `extensions` channel on `IRClassDeclaration`/`IRField`
+// schema domain's slice of the generic `extensions` channel on `IRClassDeclaration`/`IRMember`
 // (the `@keyma/core/ir` envelope reserves `extensions?: Record<string, unknown>` and
 // neither sets nor reads it). The edge/index/ephemeral metadata used to live as
 // first-class fields on the core IR; the carve relocated them here so `@keyma/core`'s
 // IR is genuinely domain-neutral. The `IREdge`/`IRIndex`/`IRFieldIndex` type definitions
 // moved here from `@keyma/core/ir` for the same reason.
-import type { IRClassDeclaration, IRField } from "@keyma/core/ir";
+import type { IRClassDeclaration, IRMember } from "@keyma/core/ir";
 
 /** Domain id keying the schema slice of the generic `extensions` channel. */
 export const SCHEMA_EXT = "schema";
@@ -103,7 +103,7 @@ export function schemaExt(schema: IRClassDeclaration): SchemaExtData | undefined
     return schema.extensions?.[SCHEMA_EXT] as SchemaExtData | undefined;
 }
 
-export function fieldExt(field: IRField): FieldExtData | undefined {
+export function fieldExt(field: IRMember): FieldExtData | undefined {
     return field.extensions?.[SCHEMA_EXT] as FieldExtData | undefined;
 }
 
@@ -113,7 +113,7 @@ export function schemaIndexes(schema: IRClassDeclaration): IRIndex[] {
 }
 
 /** Per-field indexes, defaulting to `[]` (always-present pre-carve). */
-export function fieldIndexes(field: IRField): IRFieldIndex[] {
+export function fieldIndexes(field: IRMember): IRFieldIndex[] {
     return fieldExt(field)?.indexes ?? [];
 }
 
@@ -125,17 +125,17 @@ export function schemaEphemeral(schema: IRClassDeclaration): boolean {
     return schemaExt(schema)?.ephemeral === true;
 }
 
-export function fieldEphemeral(field: IRField): boolean {
+export function fieldEphemeral(field: IRMember): boolean {
     return fieldExt(field)?.ephemeral === true;
 }
 
 /** Validators attached to a field, defaulting to `[]`. */
-export function fieldValidators(field: IRField): IRValidator[] {
+export function fieldValidators(field: IRMember): IRValidator[] {
     return fieldExt(field)?.validators ?? [];
 }
 
 /** Formatters attached to a field, defaulting to `[]`. */
-export function fieldFormatters(field: IRField): IRFormatter[] {
+export function fieldFormatters(field: IRMember): IRFormatter[] {
     return fieldExt(field)?.formatters ?? [];
 }
 
@@ -153,7 +153,7 @@ export function mutSchemaExt(schema: IRClassDeclaration): SchemaExtData {
 }
 
 /** Get-or-create the mutable schema-domain slice on a field. */
-export function mutFieldExt(field: IRField): FieldExtData {
+export function mutFieldExt(field: IRMember): FieldExtData {
     const exts = field.extensions ?? (field.extensions = {});
     let slice = exts[SCHEMA_EXT] as FieldExtData | undefined;
     if (slice === undefined) {
@@ -192,7 +192,7 @@ export function setSchemaExtSlice(schema: IRClassDeclaration, slice: SchemaExtDa
 }
 
 /** Replace (or remove, when empty) the schema-domain slice on a field. */
-export function setFieldExtSlice(field: IRField, slice: FieldExtData): void {
+export function setFieldExtSlice(field: IRMember, slice: FieldExtData): void {
     if (fieldSliceEmpty(slice)) {
         if (field.extensions !== undefined) {
             const { [SCHEMA_EXT]: _drop, ...rest } = field.extensions;
@@ -229,17 +229,17 @@ export type UiFieldExtData = {
 };
 
 /** Live read of a field's UI slice; `undefined` when the field carries no UI extension. */
-export function fieldUi(field: IRField): UiFieldExtData | undefined {
+export function fieldUi(field: IRMember): UiFieldExtData | undefined {
     return field.extensions?.[UI_EXT] as UiFieldExtData | undefined;
 }
 
 /** The field's `@FormField` metadata, or `undefined` when none. */
-export function fieldForm(field: IRField): IRFormField | undefined {
+export function fieldForm(field: IRMember): IRFormField | undefined {
     return fieldUi(field)?.form;
 }
 
 /** Attach `@FormField` metadata to a field's UI slice (no-op when `undefined`). */
-export function setFieldForm(field: IRField, form: IRFormField | undefined): void {
+export function setFieldForm(field: IRMember, form: IRFormField | undefined): void {
     if (form === undefined) return;
     const exts = field.extensions ?? (field.extensions = {});
     const slice = (exts[UI_EXT] as UiFieldExtData | undefined) ?? {};
