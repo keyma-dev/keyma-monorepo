@@ -77,7 +77,7 @@ int main() {
     assert(keyma::to_string(app::Status::Active) == "active");
     assert(keyma::from_string<app::Status>(std::string_view{"archived"}) == app::Status::Archived);
 
-    const keyma::SchemaMeta& m = app::User::schema();
+    const keyma::ClassMetadata& m = app::User::metadata();
     keyma::Context ctx{rec};
     for (const auto& fld : m.fields) {
         if (fld.name == "firstName") {
@@ -145,7 +145,7 @@ describe("compile-smoke — generated C++ compiles under -std=c++23", () => {
             const root = join(dir, "out");
             const main = join(dir, "main.cpp");
             writeFileSync(main, MAIN_CPP);
-            // -fsyntax-only is enough to instantiate from_value/schema()/validators that main odr-uses.
+            // -fsyntax-only is enough to instantiate from_value/metadata()/validators that main odr-uses.
             // The default bundle includes <keyma/runtime.hpp>, so the runtime's include/ is on -I.
             execFileSync(cxx, ["-std=c++23", "-I", root, "-I", RUNTIME_INC, "-fsyntax-only", main], { stdio: ["ignore", "ignore", "pipe"] });
         } catch (err) {
@@ -262,7 +262,7 @@ int main() {
 
     // Real inheritance: a derived schema (`Employee extends Person`) must emit `struct Employee :
     // Person` with own-only members, allocator ctors that chain to the base, traits that assign the
-    // FULL field set on the derived object, and a `.schema().base` accessor. This compiles AND
+    // FULL field set on the derived object, and a `.metadata().base` accessor. This compiles AND
     // RUNS — proving inherited members are real (upcast works), from_value/to_value cover the whole
     // chain, the own-only-metadata + base-walk (all_fields) is wired, and binary round-trips the
     // full set with chain-unique tags.
@@ -329,9 +329,9 @@ int main() {
     assert(back.at("salary").as_int() == 100);
 
     // Metadata: own-only fields + a base accessor pointing at Person::schema.
-    const keyma::SchemaMeta& m = p::Employee::schema();
+    const keyma::ClassMetadata& m = p::Employee::metadata();
     assert(m.base != nullptr);
-    assert(&m.base() == &p::Person::schema());
+    assert(&m.base() == &p::Person::metadata());
     assert(m.fields.size() == 2);                 // OWN fields only (department, salary)
     auto full = keyma::all_fields(m, a);          // walk the base chain
     assert(full.size() == 5);                     // id, firstName, lastName, department, salary

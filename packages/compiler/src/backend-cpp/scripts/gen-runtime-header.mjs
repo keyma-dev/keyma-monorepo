@@ -3,12 +3,14 @@
 // (and `pretest`) so the copy never drifts; the committed output also lets the published package
 // work without re-running it. Mirrors the JS backend's gen-emitted-runtime.mjs.
 //
-// runtime.hpp is now an UMBRELLA: it #includes its sibling headers (errors/async/serialize/binary/
+// runtime.hpp is now a pure INDEX: it #includes the dependency-free core headers (value/function/
+// metadata/intrinsics/value_traits) followed by the sibling headers (errors/async/serialize/binary/
 // binary-typed/json + the transport/service/client/service_host RPC seam). A vendored single-file
 // drop has no `keyma/` include path, so those `#include <keyma/...>` lines cannot resolve — this
 // script CONCATENATES the headers in dependency order instead, stripping each file's `#pragma once`
 // and its internal `#include <keyma/...>` lines (the standard-library includes are kept; their own
-// include guards make the duplicates harmless), under a single leading `#pragma once`.
+// include guards make the duplicates harmless), under a single leading `#pragma once`. (runtime.hpp
+// itself is omitted from the list below: its body is now nothing but the stripped keyma includes.)
 //
 // It reads the COMMITTED source headers (not dist/ artifacts), so it is independent of npm-workspace
 // build order: runtime-cpp is header-only and need not be "built" first.
@@ -21,11 +23,15 @@ const here = path.dirname(fileURLToPath(import.meta.url));
 const INCLUDE = path.resolve(here, "../../../../runtime-cpp/include/keyma");
 const OUT = path.resolve(here, "../runtime-header.generated.ts");
 
-// Dependency order: the dependency-free core (runtime.hpp's own body) first, then the leaf
-// errors/async, the serialization codecs, and finally the RPC seam built on top. This is exactly
-// the order runtime.hpp's umbrella block pulls them in — kept in sync by hand (a small, stable set).
+// Dependency order: the dependency-free core (the headers runtime.hpp pulls in first) before the
+// leaf errors/async, the serialization codecs, and finally the RPC seam built on top. This is
+// exactly the order runtime.hpp's index pulls them in — kept in sync by hand (a small, stable set).
 const ORDER = [
-    "runtime.hpp",      // core: keyma::Value, schema metadata, intrinsics, value_traits/from_value/to_value
+    "value.hpp",        // core: keyma::Value + std::formatter<Value>
+    "function.hpp",     // core: keyma::move_only_function
+    "metadata.hpp",     // core: validator/formatter types, Field, schema metadata
+    "intrinsics.hpp",   // core: JS-semantics intrinsics, alloc_t / DateTime, base64
+    "value_traits.hpp", // core: value_traits<T> / from_value<T> / to_value<T>
     "errors.hpp",       // keyma::error / result / err + the error-code taxonomy
     "async.hpp",        // keyma::task / scheduler / event_loop / sync_wait
     "serialize.hpp",    // record serialize + reference normalization
