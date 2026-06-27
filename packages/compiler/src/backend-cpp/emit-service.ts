@@ -95,6 +95,10 @@ function emitDispatch(svc: IRService, methods: readonly IRServiceMethod[], deps:
     if (!deps.binary) lines.push(`        (void)enc;`);
     for (const m of methods) lines.push(...emitMethodCase(svc, m, deps).map((l) => `        ${l}`));
     lines.push(`        co_return keyma::call_result::failure(keyma::error_code::method_not_found, "method not found");`);
+    // A KeymaRuntimeError carries a coded failure (e.g. an impl's opt-in VALIDATION_ERROR with
+    // structured details) — preserve its code + details; any other exception collapses to HANDLER_ERROR.
+    lines.push(`    } catch (const keyma::KeymaRuntimeError& __e) {`);
+    lines.push(`        co_return keyma::call_result::failure(__e.code(), __e.what(), keyma::Value(__e.details(), a));`);
     lines.push(`    } catch (const std::exception& __e) {`);
     lines.push(`        co_return keyma::call_result::failure(keyma::error_code::handler_error, __e.what());`);
     lines.push(`    }`, `}`);

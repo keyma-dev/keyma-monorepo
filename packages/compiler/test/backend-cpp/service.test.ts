@@ -67,7 +67,10 @@ describe("backend-cpp services — generated shape", () => {
         assert.match(out, /keyma::from_value<std::int64_t>\(__args\.at\("x"\), a\)/);
         assert.match(out, /co_await this->add\(__a0, __a1, ctx\)/);
         assert.match(out, /keyma::call_result::success/);
-        // Exceptions never cross the boundary.
+        // Exceptions never cross the boundary. A thrown KeymaRuntimeError preserves its code +
+        // structured details (the opt-in VALIDATION_ERROR surface); anything else → HANDLER_ERROR.
+        assert.match(out, /catch \(const keyma::KeymaRuntimeError& __e\) \{/);
+        assert.match(out, /keyma::call_result::failure\(__e\.code\(\), __e\.what\(\), keyma::Value\(__e\.details\(\), a\)\)/);
         assert.match(out, /keyma::error_code::handler_error/);
     });
 

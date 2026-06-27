@@ -32,6 +32,9 @@ const ORDER = [
     "metadata.hpp",     // core: validator/formatter types, Field, schema metadata
     "intrinsics.hpp",   // core: JS-semantics intrinsics, alloc_t / DateTime, base64
     "value_traits.hpp", // core: value_traits<T> / from_value<T> / to_value<T>
+    "validate.hpp",     // metadata-driven validate() driver (opt-in validation API)
+    "format.hpp",       // metadata-driven format() driver
+    "defaults.hpp",     // metadata-driven apply_defaults() driver
     "errors.hpp",       // keyma::error / result / err + the error-code taxonomy
     "async.hpp",        // keyma::task / scheduler / event_loop / sync_wait
     "serialize.hpp",    // record serialize + reference normalization

@@ -24,7 +24,7 @@ export class ServiceClient {
         const encoding = this.transport.encoding;
         const payload = encodeArgs(encoding, args, refs);
         const result = await this.transport.invoke({ service, method, args: payload });
-        if (!result.ok) throw new KeymaError(result.code, result.message);
+        if (!result.ok) throw new KeymaError(result.code, result.message, result.details);
         return decodeResult(encoding, result.data, returnType, refs);
     }
 }

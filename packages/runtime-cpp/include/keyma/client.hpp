@@ -26,7 +26,8 @@ inline task<result<wire_payload, error>> client_invoke(transport& tx, std::strin
     call_request req{std::pmr::string(service), std::pmr::string(method), std::move(args)};
     call_result res = co_await tx.invoke(std::move(req));
     if (!res.ok) {
-        co_return std::unexpected(error{std::string_view(res.code), std::string_view(res.message)});
+        co_return std::unexpected(error{std::string_view(res.code), std::string_view(res.message),
+                                        std::move(res.details)});
     }
     co_return result<wire_payload, error>(std::move(res.data));
 }

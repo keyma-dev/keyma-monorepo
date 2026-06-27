@@ -10,11 +10,16 @@ from keyma.runtime import (
     HANDLER_ERROR,
     METHOD_NOT_FOUND,
     SERVICE_NOT_FOUND,
+    VALIDATION_ERROR,
     CallRequest,
     KeymaError,
     ServiceHost,
     create_direct_transport,
 )
+
+# The structured payload a VALIDATION_ERROR carries — a ValidationError[] shape, passed through the
+# RPC stack opaquely (host fold → envelope → client re-raise).
+VALIDATION_DETAILS = [{"field": "name", "code": "required", "message": "name is required"}]
 
 from _generated import (
     AdminServiceBase,
@@ -154,6 +159,32 @@ async def test_handler_exception_collapses_to_handler_error():
         await client.get("x")
     assert exc.value.code == HANDLER_ERROR
     assert "kaboom" in exc.value.message
+
+
+async def test_validation_error_round_trips_with_structured_details():
+    # The opt-in validation pattern: an impl runs `validate(Model.metadata, arg)` and raises a
+    # VALIDATION_ERROR carrying the structured ValidationError[] as `details`. The host folds it
+    # into the envelope and the generated client re-raises it with `details` intact.
+    class Rejecting(UserServiceBase):
+        async def get(self, id, ctx):
+            raise KeymaError(VALIDATION_ERROR, "validation failed", VALIDATION_DETAILS)
+
+    host = ServiceHost()
+    host.register(Rejecting())
+
+    # Host-level: the failure envelope carries the structured details.
+    envelope = await host.handle(CallRequest("UserService", "get", {"id": "x"}), {}, "json")
+    assert envelope.ok is False
+    assert envelope.code == VALIDATION_ERROR
+    assert envelope.details == VALIDATION_DETAILS
+
+    # Client-level: the re-raised KeymaError preserves code + details.
+    transport = create_direct_transport(host)
+    client = UserServiceClient(transport)
+    with pytest.raises(KeymaError) as exc:
+        await client.get("x")
+    assert exc.value.code == VALIDATION_ERROR
+    assert exc.value.details == VALIDATION_DETAILS
 
 
 async def test_unimplemented_method_raises_not_implemented():

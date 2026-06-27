@@ -32,5 +32,5 @@ class ServiceClient:
         """Send one call; return the encoded return payload or raise the unwrapped error."""
         result = await self._transport.invoke(CallRequest(self.service_name, method, args))
         if not result.ok:
-            raise KeymaError(result.code or HANDLER_ERROR, result.message or "RPC call failed")
+            raise KeymaError(result.code or HANDLER_ERROR, result.message or "RPC call failed", result.details)
         return result.data

@@ -36,6 +36,7 @@ from .errors import (
     METHOD_NOT_FOUND,
     METHOD_NOT_IMPLEMENTED,
     HANDLER_ERROR,
+    VALIDATION_ERROR,
 )
 
 # ── RPC stack ──────────────────────────────────────────────────────────────────
@@ -88,6 +89,7 @@ __all__ = [
     "METHOD_NOT_FOUND",
     "METHOD_NOT_IMPLEMENTED",
     "HANDLER_ERROR",
+    "VALIDATION_ERROR",
     # rpc stack
     "CallRequest",
     "CallResult",

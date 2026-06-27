@@ -1,7 +1,10 @@
+import { path } from "@keyma/core/util";
+import type { EmitFile } from "@keyma/compiler";
 import type { PythonEmitterPack } from "@keyma/compiler/backend-python";
 import type { IRMember } from "@keyma/core/ir";
 import { buildClassData } from "./schema-data.js";
 import { factoryNames, renderClaimedFunctions } from "./emit-validators.js";
+import { EMITTED_PY_SCHEMA_RUNTIME, EMITTED_PY_SCHEMA_RUNTIME_MODULE } from "./emitted-schema-runtime.js";
 import { fieldValidators, fieldFormatters } from "../ir/extensions.js";
 
 const CLIENT_PHASES = new Set(["change", "blur", "submit"]);
@@ -41,4 +44,20 @@ export const schemaPythonEmitterPack: PythonEmitterPack = {
         return claimed;
     },
     renderClaimedFunctions,
+    /**
+     * The opt-in validation API: the `validate` / `format` / `apply_defaults` drivers (+ their
+     * shared `schema_fields` walker + `_context` invoker), baked verbatim from `@keyma/runtime`
+     * (the Python runtime) into a single self-contained `_keyma_schema.py`. A generated app imports
+     * them from there and calls them off a class's `.metadata` dict — no `keyma-runtime` dependency.
+     * The drivers are generic over the metadata, so the same module serves every bundle (the client
+     * bundle's metadata already carries only its form-phase formatters + public fields, and lacks
+     * server-only defaults, so `apply_defaults` is inert there). Emitted for every build, like the
+     * codec/RPC `_keyma_rpc.py` the compiler bakes.
+     */
+    emitBundleFiles(_ir, ctx): EmitFile[] {
+        return [{
+            path: path.posix.join(ctx.bundleDir, `${EMITTED_PY_SCHEMA_RUNTIME_MODULE}.py`),
+            content: EMITTED_PY_SCHEMA_RUNTIME,
+        }];
+    },
 };

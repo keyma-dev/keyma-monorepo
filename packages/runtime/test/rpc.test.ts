@@ -30,6 +30,10 @@ const REFS = new Map<string, ClassRef>([["User", User]]);
 const T_USER: FieldType = { kind: "instance", name: "User" };
 const T_STRING: FieldType = { kind: "string" };
 
+// The structured payload a VALIDATION_ERROR carries — a ValidationError[] shape, but the RPC stack
+// treats `details` opaquely (domain-neutral), passing it through host fold → envelope → client.
+const VALIDATION_DETAILS = [{ field: "name", code: "required", message: "name is required" }];
+
 type UserRec = { id: string; name: string };
 
 abstract class UserServiceServer {
@@ -40,6 +44,7 @@ abstract class UserServiceServer {
             { name: "greet" },
             { name: "whoami" },
             { name: "boom" },
+            { name: "reject" },
             { name: "wipe", visibility: "private" as const },
         ],
     });
@@ -48,6 +53,7 @@ abstract class UserServiceServer {
     abstract greet(user: unknown, ctx: RequestContext): string;
     abstract whoami(ctx: RequestContext): string;
     abstract boom(ctx: RequestContext): never;
+    abstract reject(ctx: RequestContext): never;
     abstract wipe(ctx: RequestContext): void;
 
     async dispatch(method: string, payload: unknown, ctx: RequestContext, encoding: WireEncoding): Promise<unknown> {
@@ -64,6 +70,8 @@ abstract class UserServiceServer {
                 return encodeResult(encoding, await this.whoami(ctx), T_STRING, REFS);
             case "boom":
                 return encodeResult(encoding, await this.boom(ctx), T_STRING, REFS);
+            case "reject":
+                return encodeResult(encoding, await this.reject(ctx), T_STRING, REFS);
             case "wipe":
                 return encodeResult(encoding, await this.wipe(ctx), undefined, REFS);
             default:
@@ -85,6 +93,11 @@ class UserServiceImpl extends UserServiceServer {
     boom(): never {
         throw new Error("handler exploded");
     }
+    reject(): never {
+        // The opt-in validation pattern: an impl runs `validate(Model.metadata, arg)` and, on
+        // failure, throws a VALIDATION_ERROR carrying the structured ValidationError[] as details.
+        throw new KeymaError("VALIDATION_ERROR", "validation failed", VALIDATION_DETAILS);
+    }
     wipe(): void {
         // system-only side effect — body irrelevant to the gating test.
     }
@@ -102,6 +115,9 @@ class UserServiceClient extends ServiceClient {
     }
     boom(): Promise<unknown> {
         return this._call("User", "boom", [], T_STRING, REFS);
+    }
+    reject(): Promise<unknown> {
+        return this._call("User", "reject", [], T_STRING, REFS);
     }
     wipe(): Promise<unknown> {
         return this._call("User", "wipe", [], undefined, REFS);
@@ -152,6 +168,18 @@ for (const encoding of ["json", "binary"] as WireEncoding[]) {
                 (e: unknown) => e instanceof KeymaError && e.code === "HANDLER_ERROR" && /exploded/.test(e.message),
             );
         });
+
+        it("round-trips a VALIDATION_ERROR with structured details through the envelope", async () => {
+            await assert.rejects(
+                () => client.reject(),
+                (e: unknown) => {
+                    assert.ok(e instanceof KeymaError);
+                    assert.equal(e.code, "VALIDATION_ERROR");
+                    assert.deepEqual(e.details, VALIDATION_DETAILS);
+                    return true;
+                },
+            );
+        });
     });
 }
 
@@ -168,5 +196,13 @@ describe("ServiceHost — resolution", () => {
         const result = await host.invoke({ service: "User", method: "nope", args: {} });
         assert.equal(result.ok, false);
         assert.equal((result as { code: string }).code, "METHOD_NOT_FOUND");
+    });
+
+    it("folds a thrown KeymaError's details into the failure envelope", async () => {
+        const host = new ServiceHost({ services: [new UserServiceImpl()] });
+        const result = await host.invoke({ service: "User", method: "reject", args: {} });
+        assert.equal(result.ok, false);
+        assert.equal((result as { code: string }).code, "VALIDATION_ERROR");
+        assert.deepEqual((result as { details: unknown }).details, VALIDATION_DETAILS);
     });
 });

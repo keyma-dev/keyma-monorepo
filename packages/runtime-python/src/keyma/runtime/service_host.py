@@ -59,7 +59,7 @@ class ServiceHost:
             if inspect.isawaitable(result):
                 result = await result
         except KeymaError as e:
-            return CallResult.failure(e.code, e.message)
+            return CallResult.failure(e.code, e.message, e.details)
         except Exception as e:  # noqa: BLE001 - any handler error collapses to one envelope code
             return CallResult.failure(HANDLER_ERROR, str(e))
 

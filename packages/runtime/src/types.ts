@@ -231,10 +231,13 @@ export type CallRequest = {
     args: unknown;
 };
 
-/** The slim result envelope. `data` is the encoded return payload (object or bytes). */
+/** The slim result envelope. `data` is the encoded return payload (object or bytes). On failure,
+ *  `details` carries an optional code-specific structured payload (e.g. a `VALIDATION_ERROR`'s
+ *  `ValidationError[]`) the host copied off the thrown `KeymaError`; domain-neutral, passed through
+ *  opaquely and re-thrown on the client. */
 export type CallResult =
     | { ok: true; data: unknown }
-    | { ok: false; code: string; message: string };
+    | { ok: false; code: string; message: string; details?: unknown };
 
 /** Reserved streaming capabilities. Streaming is NOT built this pass — the descriptor only keeps
  *  the interface from a breaking reshape when it lands. */

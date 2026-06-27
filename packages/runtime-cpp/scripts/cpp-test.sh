@@ -41,8 +41,10 @@ trap 'rm -rf "$WORK"' EXIT
 #                    event_loop-driven suspending transport);
 #      * binary-typed — the typed binary codec (struct↔bytes) parity with the dynamic codec;
 #      * schema    — the metadata-driven validate / format / apply_defaults drivers (incl. the
-#                    base-chain walk and parent-first defaults order).
-for t in coroutine rpc binary-typed schema; do
+#                    base-chain walk and parent-first defaults order);
+#      * validation-error — VALIDATION_ERROR code + structured `details` round-trip (the opt-in
+#                    validation surface: thrown KeymaRuntimeError folded into the envelope/error).
+for t in coroutine rpc binary-typed schema validation-error; do
     "$CXX" -std=c++23 $COMPAT -Iinclude "test/$t.test.cpp" -o "$WORK/$t.test"
     "$WORK/$t.test"
 done

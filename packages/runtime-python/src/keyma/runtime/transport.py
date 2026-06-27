@@ -37,20 +37,23 @@ class CallRequest:
 @dataclass
 class CallResult:
     """The slim call envelope: success carries ``data`` (the encoded return payload), failure
-    carries ``code`` + ``message``. ``ok`` is the 1-byte discriminator of the binary wire form."""
+    carries ``code`` + ``message`` (plus an optional code-specific structured ``details`` payload,
+    e.g. a ``VALIDATION_ERROR``'s ``ValidationError[]``). ``ok`` is the 1-byte discriminator of the
+    binary wire form."""
 
     ok: bool
     data: Any = None
     code: Optional[str] = None
     message: Optional[str] = None
+    details: Optional[Any] = None
 
     @staticmethod
     def success(data: Any) -> "CallResult":
         return CallResult(ok=True, data=data)
 
     @staticmethod
-    def failure(code: str, message: str) -> "CallResult":
-        return CallResult(ok=False, code=code, message=message)
+    def failure(code: str, message: str, details: Optional[Any] = None) -> "CallResult":
+        return CallResult(ok=False, code=code, message=message, details=details)
 
 
 @runtime_checkable

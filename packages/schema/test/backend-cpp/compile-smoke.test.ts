@@ -50,10 +50,10 @@ const MAIN_CPP = `#include "index.hpp"
 #include <string_view>
 
 struct AccountImpl : app::AccountService {
-    std::shared_ptr<app::User> signup(const app::User&) override { return nullptr; }
-    bool resend(const std::pmr::string&) override { return true; }
-    std::pmr::vector<app::Tag> listTags() override { return {}; }
-    bool purge() override { return false; }
+    keyma::task<std::shared_ptr<app::User>> signup(const app::User&, const keyma::RequestContext&) override { co_return nullptr; }
+    keyma::task<bool> resend(const std::pmr::string&, const keyma::RequestContext&) override { co_return true; }
+    keyma::task<std::pmr::vector<app::Tag>> listTags(const keyma::RequestContext&) override { co_return std::pmr::vector<app::Tag>{}; }
+    keyma::task<bool> purge(const keyma::RequestContext&) override { co_return false; }
 };
 
 int main() {
@@ -89,6 +89,23 @@ int main() {
     }
     if (m.apply_defaults) m.apply_defaults(rec, a);
     assert(rec.at("role").as_string() == "user");        // literal default applied
+
+    // The opt-in validation DRIVERS over the metadata — keyma::validate / format / apply_defaults.
+    // They live in the vendored runtime header too (gen-runtime-header ORDER), so THIS SAME consumer
+    // compiles in both the -I runtime bundle and the zero-dependency vendored bundle (the drivers
+    // are exercised behaviorally by the cross-language parity harness; here they only need to
+    // resolve + instantiate against whichever runtime header the bundle carries).
+    {
+        keyma::Value vrec = keyma::Value::object(a);
+        vrec.set("firstName", keyma::Value(std::string_view{"  Ada  "}, a));
+        std::pmr::vector<keyma::ValidationError> verrs = keyma::validate(m, vrec, a);
+        (void) verrs;                                    // required-but-absent fields → errors
+        keyma::format(m, vrec, keyma::Phase::Save);      // trim formatter on firstName
+        assert(vrec.at("firstName").as_string() == "Ada");
+        keyma::apply_defaults(m, vrec, a);
+        assert(vrec.at("role").as_string() == "user");
+    }
+
     // Getters are accessors on the typed struct (no materializer is emitted).
     assert(u.fullName() == "  Ada  Lovelace");
 
@@ -121,7 +138,8 @@ int main() {
     assert(tback.at("tags").as_array().size() == 2);
 
     AccountImpl svc;
-    assert(svc.resend(std::pmr::string{"x", a}));
+    keyma::Value svc_ctx = keyma::Value::object(a);
+    assert(keyma::sync_wait(svc.resend(std::pmr::string{"x", a}, svc_ctx)));
     return 0;
 }`;
 

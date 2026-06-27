@@ -66,17 +66,24 @@ struct call_request {
     wire_payload args;
 };
 
-// CallResult = ok{ data } | err{ code, message }. `data` is the encoded return payload (the bare
-// return value in JSON mode, the bare return blob in binary mode; void → null / empty bytes).
+// CallResult = ok{ data } | err{ code, message, details? }. `data` is the encoded return payload
+// (the bare return value in JSON mode, the bare return blob in binary mode; void → null / empty
+// bytes). On failure, `details` carries an optional code-specific structured payload (e.g. a
+// VALIDATION_ERROR's ValidationError list) the host/dispatch copied off the thrown error —
+// domain-neutral, passed through opaquely and surfaced on the client `keyma::error`.
 struct call_result {
     bool ok = true;
     wire_payload data{};
     std::pmr::string code{};
     std::pmr::string message{};
+    Value details{};
 
-    static call_result success(wire_payload data) { return call_result{true, std::move(data), {}, {}}; }
+    static call_result success(wire_payload data) { return call_result{true, std::move(data), {}, {}, {}}; }
     static call_result failure(std::string_view code, std::string_view message) {
-        return call_result{false, wire_payload{}, std::pmr::string(code), std::pmr::string(message)};
+        return call_result{false, wire_payload{}, std::pmr::string(code), std::pmr::string(message), {}};
+    }
+    static call_result failure(std::string_view code, std::string_view message, Value details) {
+        return call_result{false, wire_payload{}, std::pmr::string(code), std::pmr::string(message), std::move(details)};
     }
 };
 

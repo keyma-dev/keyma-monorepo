@@ -77,7 +77,11 @@ export class ServiceHost {
             const data = await entry.instance.dispatch(request.method, request.args, ctx, encoding);
             return { ok: true, data };
         } catch (e) {
-            if (e instanceof KeymaError) return { ok: false, code: e.code, message: e.message };
+            if (e instanceof KeymaError) {
+                return e.details !== undefined
+                    ? { ok: false, code: e.code, message: e.message, details: e.details }
+                    : { ok: false, code: e.code, message: e.message };
+            }
             return { ok: false, code: "HANDLER_ERROR", message: e instanceof Error ? e.message : String(e) };
         }
     }
