@@ -31,13 +31,14 @@ export type ValidatorFn = (
     value: unknown,
     field: string,
     context: ValidatorContext,
-) => ValidationError | null | Promise<ValidationError | null>;
+) => ValidationError | null;
 
-/** A field formatter: transforms the value, returning the new value. */
+/** A field formatter: transforms the value, returning the new value. Synchronous — async
+ *  formatters are rejected at the frontend (KEYMA026). */
 export type FormatterFn = (
     value: unknown,
     context: FormatterContext,
-) => unknown | Promise<unknown>;
+) => unknown;
 
 /** A formatter bound to a lifecycle phase, attached to a field. */
 export type FormatterEntry = {

@@ -14,6 +14,20 @@ export type { Reader } from "./binary.js";
 export { allFields, allRefs, targetOf } from "./fields.js";
 export type { ClassMeta, ClassRef, FieldMeta, FieldType } from "./fields.js";
 
+// ── Schema validation / formatting / defaults (metadata-driven) ─────────────
+// Generic drivers over the legacy `SchemaMetadata` shape the schema backend still emits into
+// `<Class>.metadata` (validators/formatters/applyDefaults callables). Synchronous — async
+// validators/formatters are rejected at the frontend (KEYMA026).
+export { validate } from "./validate.js";
+export { format } from "./format.js";
+export { applyDefaults } from "./defaults.js";
+export { allSchemaFields } from "./schema-fields.js";
+export type {
+    SchemaMetadata, FieldMetadata, FieldDefault, ValidationError,
+    ValidatorFn, ValidatorContext, FormatterFn, FormatterContext, FormatterEntry,
+    SchemaDefaultsFn,
+} from "./types.js";
+
 // ── RPC stack ──────────────────────────────────────────────────────────────
 export { ServiceHost } from "./service-host.js";
 export type { ServiceHostOptions } from "./service-host.js";

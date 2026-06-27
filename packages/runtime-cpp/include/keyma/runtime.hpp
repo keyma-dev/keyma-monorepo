@@ -24,6 +24,14 @@
 #include <keyma/intrinsics.hpp>
 #include <keyma/value_traits.hpp>
 
+// ── Metadata-driven validation / formatting / defaults drivers ──
+// Generic drivers over the `validators`/`formatters`/`apply_defaults` callables the C++ backend
+// still emits onto each `ClassMetadata` (the codec ignores them). Synchronous — async validators
+// /formatters are rejected at the frontend (KEYMA026).
+#include <keyma/validate.hpp>
+#include <keyma/format.hpp>
+#include <keyma/defaults.hpp>
+
 // ── Leaf errors + async, the serialization codecs, then the RPC seam ──
 #include <keyma/errors.hpp>
 #include <keyma/async.hpp>

@@ -39,8 +39,10 @@ trap 'rm -rf "$WORK"' EXIT
 #      * coroutine — the concrete async core (task / event_loop / scheduler concepts / sync_wait);
 #      * rpc       — end-to-end @Service over every transport (both encodings, gating + ctx, an
 #                    event_loop-driven suspending transport);
-#      * binary-typed — the typed binary codec (struct↔bytes) parity with the dynamic codec.
-for t in coroutine rpc binary-typed; do
+#      * binary-typed — the typed binary codec (struct↔bytes) parity with the dynamic codec;
+#      * schema    — the metadata-driven validate / format / apply_defaults drivers (incl. the
+#                    base-chain walk and parent-first defaults order).
+for t in coroutine rpc binary-typed schema; do
     "$CXX" -std=c++23 $COMPAT -Iinclude "test/$t.test.cpp" -o "$WORK/$t.test"
     "$WORK/$t.test"
 done
