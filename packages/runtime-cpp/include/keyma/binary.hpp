@@ -2,7 +2,7 @@
 
 // Binary wire codec for @keyma/runtime-cpp — the C++ mirror of runtime-js `binary.ts`
 // (see packages/runtime-js/binary-format.md for the canonical spec). It loops
-// `SchemaMeta.fields` exactly as serialize.hpp does (the metadata-driven path, NOT the
+// `ClassMetadata.fields` exactly as serialize.hpp does (the metadata-driven path, NOT the
 // code-driven value_traits path, so all three runtimes stay byte-aligned), emitting a
 // protobuf-like tag-keyed TLV stream. `bytes` go raw on the wire (the keyma::Value carries
 // them as a base64 string — the canonical Value repr — so encode base64-decodes once;
@@ -114,7 +114,7 @@ inline std::uint8_t wiretype_of(const TypeInfo& t) {
     }
 }
 
-inline void encode_record(ByteBuf& out, const SchemaMeta& schema, const Value& value, SerializeTarget target, alloc_t a);
+inline void encode_record(ByteBuf& out, const ClassMetadata& schema, const Value& value, SerializeTarget target, alloc_t a);
 
 inline void encode_json(ByteBuf& out, const Value& v) {
     if (v.is_null()) { put(out, JSON_NULL); return; }
@@ -145,7 +145,7 @@ inline void encode_json(ByteBuf& out, const Value& v) {
     put(out, JSON_NULL);
 }
 
-inline void encode_payload(ByteBuf& out, const TypeInfo& t, const Value& v, const SchemaMeta& schema, SerializeTarget target, alloc_t a) {
+inline void encode_payload(ByteBuf& out, const TypeInfo& t, const Value& v, const ClassMetadata& schema, SerializeTarget target, alloc_t a) {
     switch (t.tag) {
         case TypeTag::Boolean:
             write_varint(out, v.is_bool() && v.as_bool() ? 1 : 0);
@@ -184,7 +184,7 @@ inline void encode_payload(ByteBuf& out, const TypeInfo& t, const Value& v, cons
         }
         case TypeTag::Embedded: {
             ByteBuf body(a);
-            const SchemaMeta* sub = resolve_ref(schema, t.target);
+            const ClassMetadata* sub = resolve_ref(schema, t.target);
             if (sub != nullptr && v.is_object()) encode_record(body, *sub, v, target, a);
             write_len_raw(out, std::span<const std::byte>(body.data(), body.size()));
             return;
@@ -227,14 +227,14 @@ inline void encode_payload(ByteBuf& out, const TypeInfo& t, const Value& v, cons
     }
 }
 
-inline void encode_record(ByteBuf& out, const SchemaMeta& schema, const Value& value, SerializeTarget target, alloc_t a) {
+inline void encode_record(ByteBuf& out, const ClassMetadata& schema, const Value& value, SerializeTarget target, alloc_t a) {
     // Real inheritance: walk the base chain. Records are tag-keyed (chain-unique tags assigned by
     // the compiler), so emit order is irrelevant. The 1-based `idx` fallback is reached only when
     // tags are absent — which never happens on the configured binary path — but it runs CHAIN-GLOBAL
     // (idx continues across the base chain, not restarting per schema) so an untagged child field
     // can never collide with an untagged inherited one; find_by_tag mirrors this exactly.
     std::uint32_t idx = 0;
-    for (const SchemaMeta* s = &schema; s != nullptr; s = (s->base != nullptr ? &s->base() : nullptr)) {
+    for (const ClassMetadata* s = &schema; s != nullptr; s = (s->base != nullptr ? &s->base() : nullptr)) {
         for (const FieldMeta& f : s->fields) {
             ++idx;  // 1-based declaration index across the whole chain (child-first)
             if (target == SerializeTarget::Client && f.visibility == Visibility::Private) continue;
@@ -309,11 +309,11 @@ inline void skip_value(Reader& r, std::uint8_t wt) {
     }
 }
 
-inline const FieldMeta* find_by_tag(const SchemaMeta& schema, std::uint32_t tag) {
+inline const FieldMeta* find_by_tag(const ClassMetadata& schema, std::uint32_t tag) {
     // Walk the base chain (own + inherited); the chain-global `idx` fallback mirrors encode_record
     // (idx continues across the chain, never restarting per schema) so untagged fields stay unique.
     std::uint32_t idx = 0;
-    for (const SchemaMeta* s = &schema; s != nullptr; s = (s->base != nullptr ? &s->base() : nullptr)) {
+    for (const ClassMetadata* s = &schema; s != nullptr; s = (s->base != nullptr ? &s->base() : nullptr)) {
         for (const FieldMeta& f : s->fields) {
             ++idx;
             std::uint32_t ft = f.tag != 0 ? f.tag : idx;
@@ -323,7 +323,7 @@ inline const FieldMeta* find_by_tag(const SchemaMeta& schema, std::uint32_t tag)
     return nullptr;
 }
 
-inline Value decode_record(const SchemaMeta& schema, Reader& r, alloc_t a);
+inline Value decode_record(const ClassMetadata& schema, Reader& r, alloc_t a);
 
 inline Value decode_json(Reader& r, alloc_t a) {
     std::uint8_t kind = std::to_integer<std::uint8_t>(r.buf[r.pos++]);
@@ -359,7 +359,7 @@ inline Value decode_json(Reader& r, alloc_t a) {
     }
 }
 
-inline Value decode_value(Reader& r, const TypeInfo& t, std::uint8_t wt, const SchemaMeta& schema, alloc_t a) {
+inline Value decode_value(Reader& r, const TypeInfo& t, std::uint8_t wt, const ClassMetadata& schema, alloc_t a) {
     switch (t.tag) {
         case TypeTag::Boolean:
             return Value(read_varint(r) != 0, a);
@@ -392,7 +392,7 @@ inline Value decode_value(Reader& r, const TypeInfo& t, std::uint8_t wt, const S
         }
         case TypeTag::Embedded: {
             Reader inner = read_len_window(r);
-            const SchemaMeta* sub = resolve_ref(schema, t.target);
+            const ClassMetadata* sub = resolve_ref(schema, t.target);
             if (sub == nullptr) return Value::object(a);
             return decode_record(*sub, inner, a);
         }
@@ -425,7 +425,7 @@ inline Value decode_value(Reader& r, const TypeInfo& t, std::uint8_t wt, const S
     }
 }
 
-inline Value decode_record(const SchemaMeta& schema, Reader& r, alloc_t a) {
+inline Value decode_record(const ClassMetadata& schema, Reader& r, alloc_t a) {
     Value out = Value::object(a);
     while (r.pos < r.end) {
         std::uint64_t key = read_varint(r);
@@ -443,13 +443,13 @@ inline Value decode_record(const SchemaMeta& schema, Reader& r, alloc_t a) {
 
 // ── Public API ──
 
-inline ByteBuf encode_binary(const SchemaMeta& schema, const Value& value, SerializeTarget target, alloc_t a) {
+inline ByteBuf encode_binary(const ClassMetadata& schema, const Value& value, SerializeTarget target, alloc_t a) {
     ByteBuf out(a);
     binary_detail::encode_record(out, schema, value, target, a);
     return out;
 }
 
-inline Value decode_binary(const SchemaMeta& schema, std::span<const std::byte> bytes, alloc_t a) {
+inline Value decode_binary(const ClassMetadata& schema, std::span<const std::byte> bytes, alloc_t a) {
     binary_detail::Reader r{bytes, 0, bytes.size()};
     return binary_detail::decode_record(schema, r, a);
 }

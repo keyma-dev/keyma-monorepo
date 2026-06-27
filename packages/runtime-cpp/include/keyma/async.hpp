@@ -1,174 +1,299 @@
 #pragma once
 
-// Async policy core (@keyma/runtime-cpp).
+// Concrete C++23 async core for @keyma/runtime-cpp — the heavy lift of the RPC rewrite. It
+// replaces the old `Async<>` policy monad (`async_traits`/`Sync`/`seq_fold`) with a real,
+// promoted coroutine machine:
 //
-// WHAT `Async<>` IS. The runtime's I/O-bearing interfaces (adapter, plugin, transport,
-// service, server) are templated on an async *policy* `template<class> class Async` —
-// a one-argument class template where `Async<T>` is "a T that will be available, maybe
-// later". The default is `keyma::Sync` (an identity wrapper: `Sync<T>` simply holds a T,
-// already available), so out of the box everything is synchronous and zero-overhead. Plug
-// `Async = std::future`, a coroutine task, an executor's future, etc. to run asynchronously.
-// The whole server/client is written exactly once, in continuation-passing style, against
-// the `async_traits<Async>` customization point — it never names a concrete async type.
+//   * keyma::task<T>           — a lazy, single-consumer coroutine task (promise_type, symmetric
+//                                transfer, exception capture). The kind cppcoro/folly ship; this
+//                                is the type every RPC-surface function returns.
+//   * keyma::scheduler         — an UNPARAMETERIZED concept: a `schedule_return_type` typedef +
+//                                `s.schedule(handle, schedule_op_result<schedule_return_type>*)`.
+//   * keyma::DelayedScheduler  — refines `scheduler` with `schedule_after(handle, milliseconds)`.
+//   * keyma::schedule_op_result<T> — the awaitable result bridge for a deferred scheduler op.
+//   * keyma::schedule_op / schedule_on(s) — an I/O-leaf awaitable: suspend, hand the handle to
+//                                the scheduler, resume later (stands in for async I/O completing).
+//   * keyma::event_loop        — a pmr-allocated single-threaded reference scheduler satisfying
+//                                both concepts (schedule / schedule_after / process / flush /
+//                                has_immediate_work); `flush()` runs in the destructor.
+//   * keyma::sync_wait(task)   — drive a root task to completion (inline, or on an event_loop).
 //
-// HOW TO PLUG IN A POLICY (bring your own scheduler). For your `template<class> class A`,
-// provide three pieces:
-//
-//   1. `template<class U> struct keyma::is_async<A<U>> : std::true_type {};`
-//      `template<class U> struct keyma::payload<A<U>> { using type = U; };`
-//      — so the runtime can recognise your type and read the T out of `A<T>`.
-//
-//   2. `template<> struct keyma::async_traits<A> { ...static members... };`
-//      — the monad. Exactly these static members are required (T, U arbitrary; F a callable):
-//
-//        A<decay_t<T>> ready(T&& v)         // wrap an already-available value
-//        A<void>       ready()              // the void-carrier, already-available
-//        A<U>          then(A<T>&& m, F&& f) // SEQUENCING: when m yields its T, call f(T).
-//        A<U>          then(A<void>&& m, F&& f) //   f returns U  -> A<U>
-//                                              //   f returns void -> A<void>
-//                                              //   f returns A<U> -> A<U>  (FLATTENED, not A<A<U>>)
-//        A<T>          attempt(Thunk th, OnError oe) // run th() (a ()->A<T> producer) guarded;
-//                                                    //   map any exception to oe(exception_ptr)->T
-//        A<void>       swallow(Thunk th)             // run th() (a ()->A<void>), discard exceptions
-//
-//      `then`'s flatten rule (f returning A<U> collapses to A<U>) is what lets a handler
-//      hand back another async step mid-chain — it mirrors JS `await` over a value-or-promise.
-//
-// CONTRACT FOR DEFERRED POLICIES (anything other than Sync, i.e. work that actually runs
-// later rather than inline):
-//   * `then`/`attempt`/`swallow` must capture an exception INTO the resulting `A<...>` (the
-//     way std::future stores it) and re-raise it at the next `then`/extraction — a throw
-//     can't unwind out of a continuation that runs after its caller returned.
-//   * YOU own where continuations run: `then` may resume on whatever executor/loop you like.
-//     The runtime provides the algebra, never a scheduler.
-//   * The runtime keeps the `request` and `RequestContext` passed to `KeymaServer::handle`
-//     alive for the whole returned `A<...>` (so your continuations may reference them), and
-//     it sequences its own state correctly across suspension. But a *plugin/adapter* you
-//     write must itself capture by VALUE anything it reads after the first suspension point
-//     (e.g. don't stash a `const Value&` argument and read it after a `co_await`).
-//
-// `keyma::Sync` is the worked reference implementation below; `test/coroutine.test.cpp`
-// is a worked lazy-coroutine-task policy with a single-threaded run loop and genuinely
-// suspending adapter, and `test/futures.test.cpp` is a (blocking) std::future policy.
-//
-// This header is standalone (no <future>, no <coroutine>, no runtime.hpp); the
-// std::future / coroutine specializations live in the consuming code, not here.
+// The RPC surface is SCHEDULER-AGNOSTIC: client / host / transport speak only `keyma::task<...>`,
+// never naming a scheduler. A concrete async transport holds its own `event_loop` and binds to it
+// at its I/O-leaf awaitables (`schedule` / `schedule_op_result<T>`). Tasks carry the value `<T>`;
+// the scheduler is value-type-agnostic.
 
+#include <algorithm>
+#include <chrono>
+#include <coroutine>
+#include <cstddef>
+#include <deque>
 #include <exception>
-#include <iterator>
+#include <limits>
+#include <memory_resource>
 #include <type_traits>
 #include <utility>
+#include <variant>
+#include <vector>
 
 namespace keyma {
 
-// ── Sync: the identity policy. Sync<T> holds a T by value. ────────────────────────────
+// ─────────────────────────────── task<T> (lazy coroutine) ───────────────────────────────────
+
+template <class T> class task;
+
 template <class T>
-struct Sync {
-    T value;
-    const T& get() const& noexcept { return value; }
-    T&& get() && noexcept { return std::move(value); }
-};
-template <>
-struct Sync<void> {};
+struct task_promise {
+    // monostate (pending) | T (value) | exception_ptr (failure). Captures an exception INTO the
+    // task so a throw never unwinds out of a continuation running after its caller returned.
+    std::variant<std::monostate, T, std::exception_ptr> value;
+    std::coroutine_handle<> continuation = nullptr;
 
-// is_async<X>: true when X is some Async<U>. Lets `then` flatten an `f` that already
-// returns an Async<U> (mirrors JS `await` over a value-or-promise). Each policy adds a
-// partial specialization for its own template.
-template <class> struct is_async : std::false_type {};
-template <class U> struct is_async<Sync<U>> : std::true_type {};
-template <class X> inline constexpr bool is_async_v = is_async<std::remove_cvref_t<X>>::value;
-
-// payload<Async<U>>::type == U.
-template <class> struct payload;
-template <class U> struct payload<Sync<U>> { using type = U; };
-template <class X> using payload_t = typename payload<std::remove_cvref_t<X>>::type;
-
-// ── Customization point. Primary is undefined: a missing specialization fails loudly. ──
-template <template <class> class Async>
-struct async_traits;
-
-template <>
-struct async_traits<Sync> {
-    template <class T>
-    static Sync<std::remove_cvref_t<T>> ready(T&& v) {
-        return Sync<std::remove_cvref_t<T>>{std::forward<T>(v)};
-    }
-    static Sync<void> ready() { return Sync<void>{}; }
-
-    // then(Sync<T>, f): f(T)->U ⇒ Sync<U>; f(T)->Sync<U> ⇒ Sync<U> (flattened); f(T)->void ⇒ Sync<void>.
-    template <class T, class F>
-    static auto then(Sync<T>&& m, F&& f) {
-        using R = std::invoke_result_t<F, T&&>;
-        if constexpr (is_async_v<R>) return std::forward<F>(f)(std::move(m.value));
-        else if constexpr (std::is_void_v<R>) { std::forward<F>(f)(std::move(m.value)); return Sync<void>{}; }
-        else return Sync<std::remove_cvref_t<R>>{std::forward<F>(f)(std::move(m.value))};
-    }
-    // then(Sync<void>, f): f()->U|Sync<U>|void.
-    template <class F>
-    static auto then(Sync<void>&&, F&& f) {
-        using R = std::invoke_result_t<F>;
-        if constexpr (is_async_v<R>) return std::forward<F>(f)();
-        else if constexpr (std::is_void_v<R>) { std::forward<F>(f)(); return Sync<void>{}; }
-        else return Sync<std::remove_cvref_t<R>>{std::forward<F>(f)()};
-    }
-
-    // attempt(thunk, on_error): run `thunk` (a () -> Sync<T> producer) under a guard; map
-    // any thrown exception to on_error(exception_ptr) -> T. The producer is wrapped (not a
-    // ready value) so the try actually guards execution — for Sync the work is eager.
-    template <class Thunk, class OnError>
-    static auto attempt(Thunk&& thunk, OnError&& on_error) {
-        using T = payload_t<std::invoke_result_t<Thunk>>;
-        try {
-            return std::forward<Thunk>(thunk)();
-        } catch (...) {
-            return Sync<T>{std::forward<OnError>(on_error)(std::current_exception())};
+    task<T> get_return_object() noexcept;
+    std::suspend_always initial_suspend() noexcept { return {}; }  // lazy: nothing runs until awaited
+    struct final_awaiter {
+        bool await_ready() const noexcept { return false; }
+        // Symmetric transfer: on completion, resume the awaiting coroutine (or noop if root).
+        std::coroutine_handle<> await_suspend(std::coroutine_handle<task_promise> h) const noexcept {
+            std::coroutine_handle<> c = h.promise().continuation;
+            return c ? c : std::noop_coroutine();
         }
-    }
-
-    // swallow(thunk): run `thunk` (a () -> Sync<void> producer), discarding any exception.
-    template <class Thunk>
-    static Sync<void> swallow(Thunk&& thunk) {
-        try {
-            (void)std::forward<Thunk>(thunk)();
-        } catch (...) {
-        }
-        return Sync<void>{};
+        void await_resume() const noexcept {}
+    };
+    final_awaiter final_suspend() noexcept { return {}; }
+    template <class U> void return_value(U&& u) { value.template emplace<1>(std::forward<U>(u)); }
+    void unhandled_exception() { value.template emplace<2>(std::current_exception()); }
+    T result() {
+        if (value.index() == 2) std::rethrow_exception(std::get<2>(value));
+        return std::move(std::get<1>(value));
     }
 };
 
-// ── Combinators (policy-generic, built on async_traits<Async>) ─────────────────────────
+template <>
+struct task_promise<void> {
+    std::exception_ptr eptr;
+    std::coroutine_handle<> continuation = nullptr;
 
-// Sequential async fold: thread `init` through `step` for each item in order, returning
-// Async<Acc>. The workhorse for the plugin-hook folds and the per-operation loop in the
-// server — both sequential async loops with an accumulator. `step` is (Acc, const Item&)
-// -> Async<Acc>. Contract: the [first,last) range must outlive the returned Async (the
-// step is invoked synchronously per item, so the item is read before any deferral).
-template <template <class> class Async, class It, class Acc, class Step>
-auto seq_fold(It first, It last, Acc init, Step step)
-    -> decltype(async_traits<Async>::ready(std::declval<Acc>())) {
-    using AT = async_traits<Async>;
-    if (first == last) return AT::ready(std::move(init));
-    auto stepped = step(std::move(init), *first);  // Async<Acc>
-    return AT::then(std::move(stepped), [first, last, step = std::move(step)](Acc acc) mutable {
-        return seq_fold<Async>(std::next(first), last, std::move(acc), std::move(step));
-    });
-}
+    task<void> get_return_object() noexcept;
+    std::suspend_always initial_suspend() noexcept { return {}; }
+    struct final_awaiter {
+        bool await_ready() const noexcept { return false; }
+        std::coroutine_handle<> await_suspend(std::coroutine_handle<task_promise> h) const noexcept {
+            std::coroutine_handle<> c = h.promise().continuation;
+            return c ? c : std::noop_coroutine();
+        }
+        void await_resume() const noexcept {}
+    };
+    final_awaiter final_suspend() noexcept { return {}; }
+    void return_void() {}
+    void unhandled_exception() { eptr = std::current_exception(); }
+    void result() { if (eptr) std::rethrow_exception(eptr); }
+};
 
-// Free wrappers so call sites read uniformly without naming async_traits.
-template <template <class> class Async, class Thunk, class OnError>
-auto async_attempt(Thunk&& thunk, OnError&& on_error) {
-    return async_traits<Async>::attempt(std::forward<Thunk>(thunk), std::forward<OnError>(on_error));
-}
-template <template <class> class Async, class Thunk>
-auto async_swallow(Thunk&& thunk) {
-    return async_traits<Async>::swallow(std::forward<Thunk>(thunk));
-}
-
-// Extract the value from a Sync<T> (tests, and the synchronous transport entrypoint).
 template <class T>
-T sync_get(Sync<T>&& m) { return std::move(m).get(); }
+class task {
+public:
+    using promise_type = task_promise<T>;
+    using value_type = T;
+    using handle = std::coroutine_handle<promise_type>;
+
+    task() noexcept = default;
+    explicit task(handle h) noexcept : h_(h) {}
+    task(task&& o) noexcept : h_(std::exchange(o.h_, {})) {}
+    task& operator=(task&& o) noexcept {
+        if (this != &o) { if (h_) h_.destroy(); h_ = std::exchange(o.h_, {}); }
+        return *this;
+    }
+    task(const task&) = delete;
+    task& operator=(const task&) = delete;
+    ~task() { if (h_) h_.destroy(); }
+
+    bool valid() const noexcept { return static_cast<bool>(h_); }
+    bool done() const noexcept { return h_ && h_.done(); }
+
+    // co_await on an rvalue task: start the awaited task (symmetric transfer) and resume the
+    // awaiter when it completes.
+    struct awaiter {
+        handle h;
+        bool await_ready() const noexcept { return !h || h.done(); }
+        std::coroutine_handle<> await_suspend(std::coroutine_handle<> cont) noexcept {
+            h.promise().continuation = cont;
+            return h;  // symmetric transfer — begin the awaited task
+        }
+        T await_resume() { return h.promise().result(); }
+    };
+    awaiter operator co_await() && noexcept { return awaiter{h_}; }
+
+    // Root driving: resume from the initial suspend.
+    void start() { if (h_ && !h_.done()) h_.resume(); }
+    T take() { return h_.promise().result(); }
+
+private:
+    handle h_{};
+};
+
 template <class T>
-const T& sync_get(const Sync<T>& m) { return m.get(); }
-inline void sync_get(Sync<void>&&) {}
+inline task<T> task_promise<T>::get_return_object() noexcept {
+    return task<T>{std::coroutine_handle<task_promise>::from_promise(*this)};
+}
+inline task<void> task_promise<void>::get_return_object() noexcept {
+    return task<void>{std::coroutine_handle<task_promise>::from_promise(*this)};
+}
+
+// ──────────────────────────── scheduler concept + result bridge ─────────────────────────────
+
+// schedule_op_result<T>: the result slot + completion bridge a deferred scheduler op fills. An
+// I/O-leaf awaitable owns one; the scheduler resumes the awaiting coroutine, after which the
+// awaiter's await_resume() reads the (possibly exceptional) result out of the slot. For a
+// value-less leaf (the common "resume me later" case) `T` is void and the slot only carries an
+// optional error.
+template <class T>
+struct schedule_op_result {
+    std::variant<std::monostate, T, std::exception_ptr> slot{};
+    void set_value(T v) { slot.template emplace<1>(std::move(v)); }
+    void set_error(std::exception_ptr e) { slot.template emplace<2>(std::move(e)); }
+    T result() {
+        if (slot.index() == 2) std::rethrow_exception(std::get<2>(slot));
+        return std::move(std::get<1>(slot));
+    }
+};
+template <>
+struct schedule_op_result<void> {
+    std::exception_ptr error{};
+    void set_error(std::exception_ptr e) { error = std::move(e); }
+    void result() { if (error) std::rethrow_exception(error); }
+};
+
+// scheduler: a value-type-agnostic executor. It publishes the value type its ops bridge through
+// (`schedule_return_type`) and accepts a coroutine handle + a result-slot pointer to resume.
+template <class S>
+concept scheduler = requires(S& s, std::coroutine_handle<> h,
+                             schedule_op_result<typename S::schedule_return_type>* r) {
+    typename S::schedule_return_type;
+    { s.schedule(h, r) };
+};
+
+// DelayedScheduler: a scheduler that can also defer a resume by a wall-clock delay.
+template <class S>
+concept DelayedScheduler = scheduler<S> && requires(S& s, std::coroutine_handle<> h,
+                                                     std::chrono::milliseconds d) {
+    { s.schedule_after(h, d) };
+};
+
+// schedule_op<S>: the I/O-leaf awaitable. `co_await schedule_on(loop)` suspends the current
+// coroutine and hands its handle to `S` (which resumes it later) — the suspension point a real
+// async transport binds its I/O completion to.
+template <class S>
+struct schedule_op {
+    S* sched;
+    schedule_op_result<typename S::schedule_return_type> slot{};
+    bool await_ready() const noexcept { return false; }
+    void await_suspend(std::coroutine_handle<> h) { sched->schedule(h, &slot); }
+    auto await_resume() { return slot.result(); }
+};
+template <class S>
+schedule_op<S> schedule_on(S& s) { return schedule_op<S>{&s}; }
+
+// ──────────────────────────────────── event_loop ───────────────────────────────────────────
+
+// The provided single-threaded reference scheduler. pmr-allocated, satisfies `scheduler` +
+// `DelayedScheduler`. Immediate work is a FIFO of ready handles; delayed work is a min-heap keyed
+// on a LOGICAL clock that `flush()` advances (so tests never sleep). `flush()` runs in the dtor.
+class event_loop {
+public:
+    using schedule_return_type = void;
+    using alloc_t = std::pmr::polymorphic_allocator<std::byte>;
+
+    explicit event_loop(const alloc_t& a = {}) : ready_(a), timers_(a) {}
+    event_loop(const event_loop&) = delete;
+    event_loop& operator=(const event_loop&) = delete;
+    ~event_loop() { flush(); }
+
+    // scheduler: resume `h` on the next tick. The result slot is unused (a value-less resume).
+    void schedule(std::coroutine_handle<> h, schedule_op_result<void>* = nullptr) {
+        ready_.push_back(h);
+    }
+    // DelayedScheduler: resume `h` once the logical clock reaches now + delay.
+    void schedule_after(std::coroutine_handle<> h, std::chrono::milliseconds delay) {
+        timers_.push_back(timer{now_ + delay, h});
+        std::push_heap(timers_.begin(), timers_.end(), later);
+    }
+
+    bool has_immediate_work() const noexcept { return !ready_.empty(); }
+
+    // A bounded tick: promote any due timers, then run up to `max` ready handles. Returns the
+    // number of handles resumed.
+    std::size_t process(std::size_t max = (std::numeric_limits<std::size_t>::max)()) {
+        promote_due();
+        std::size_t n = 0;
+        while (n < max && !ready_.empty()) {
+            std::coroutine_handle<> h = ready_.front();
+            ready_.pop_front();
+            h.resume();
+            ++n;
+            promote_due();
+        }
+        return n;
+    }
+
+    // Drain everything to quiescence, advancing the logical clock past pending timers.
+    void flush() {
+        while (!ready_.empty() || !timers_.empty()) {
+            if (ready_.empty()) advance_to_next_timer();
+            process();
+        }
+    }
+
+private:
+    using clock = std::chrono::steady_clock;
+    struct timer {
+        clock::time_point due;
+        std::coroutine_handle<> h;
+    };
+    // Min-heap on `due` (std::*_heap are max-heaps, so invert the comparator).
+    static bool later(const timer& a, const timer& b) noexcept { return a.due > b.due; }
+
+    void promote_due() {
+        while (!timers_.empty() && timers_.front().due <= now_) {
+            std::pop_heap(timers_.begin(), timers_.end(), later);
+            ready_.push_back(timers_.back().h);
+            timers_.pop_back();
+        }
+    }
+    void advance_to_next_timer() {
+        if (timers_.empty()) return;
+        now_ = timers_.front().due;
+        promote_due();
+    }
+
+    std::pmr::deque<std::coroutine_handle<>> ready_;
+    std::pmr::vector<timer> timers_;
+    clock::time_point now_ = clock::now();
+};
+
+static_assert(scheduler<event_loop>);
+static_assert(DelayedScheduler<event_loop>);
+
+// ───────────────────────────────────── sync_wait ───────────────────────────────────────────
+
+// Drive a root task to completion INLINE (the synchronous path — e.g. the inline-completing
+// direct transport). The task must not suspend on an external scheduler; if it does this returns
+// before completion and `take()` is ill-formed. Use the event_loop overload for deferred tasks.
+template <class T>
+T sync_wait(task<T> t) {
+    t.start();
+    if constexpr (std::is_void_v<T>) (void)t.take();
+    else return t.take();
+}
+
+// Drive a root task to completion ON an event_loop: start it (runs to its first I/O-leaf
+// suspension), then drain the loop, then read the result.
+template <class T>
+T sync_wait(task<T> t, event_loop& loop) {
+    t.start();
+    loop.flush();
+    if constexpr (std::is_void_v<T>) (void)t.take();
+    else return t.take();
+}
 
 }  // namespace keyma

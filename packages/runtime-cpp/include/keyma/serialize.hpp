@@ -24,10 +24,10 @@ enum class SerializeTarget { Client, Server, Database };
 
 // Resolve a target schema by `name` via the parent's refs (the name → metadata accessor
 // span). Returns nullptr when the name is not a declared ref of `schema`.
-inline const SchemaMeta* resolve_ref(const SchemaMeta& schema, std::string_view target_name) {
+inline const ClassMetadata* resolve_ref(const ClassMetadata& schema, std::string_view target_name) {
     // `refs` is own-only (real inheritance); a ref target of an inherited field lives on an
     // ancestor, so walk the base chain.
-    for (const SchemaMeta* s = &schema; s != nullptr; s = (s->base != nullptr ? &s->base() : nullptr)) {
+    for (const ClassMetadata* s = &schema; s != nullptr; s = (s->base != nullptr ? &s->base() : nullptr)) {
         for (const auto& entry : s->refs) {
             if (entry.first == target_name) return &entry.second();
         }
@@ -35,12 +35,12 @@ inline const SchemaMeta* resolve_ref(const SchemaMeta& schema, std::string_view 
     return nullptr;
 }
 
-Value serialize(const SchemaMeta& schema, const Value& value, SerializeTarget target, alloc_t a);
+Value serialize(const ClassMetadata& schema, const Value& value, SerializeTarget target, alloc_t a);
 
 inline Value serialize_element(const Value& v, TypeTag tag, std::string_view target_name,
-                               const SchemaMeta& schema, SerializeTarget target, alloc_t a) {
+                               const ClassMetadata& schema, SerializeTarget target, alloc_t a) {
     if (tag == TypeTag::Embedded && v.is_object()) {
-        const SchemaMeta* sub = resolve_ref(schema, target_name);
+        const ClassMetadata* sub = resolve_ref(schema, target_name);
         if (sub != nullptr) return serialize(*sub, v, target, a);
         return Value(v, a);
     }
@@ -49,7 +49,7 @@ inline Value serialize_element(const Value& v, TypeTag tag, std::string_view tar
     return Value(v, a);
 }
 
-inline Value serialize_value(const Value& v, const FieldMeta& f, const SchemaMeta& schema,
+inline Value serialize_value(const Value& v, const FieldMeta& f, const ClassMetadata& schema,
                              SerializeTarget target, alloc_t a) {
     if (f.type == TypeTag::Array && v.is_array()) {
         Value arr = Value::array(a);
@@ -60,7 +60,7 @@ inline Value serialize_value(const Value& v, const FieldMeta& f, const SchemaMet
     return serialize_element(v, f.type, f.target, schema, target, a);
 }
 
-inline Value serialize(const SchemaMeta& schema, const Value& value, SerializeTarget target, alloc_t a) {
+inline Value serialize(const ClassMetadata& schema, const Value& value, SerializeTarget target, alloc_t a) {
     Value out = Value::object(a);
     for (const FieldMeta& f : all_fields(schema, a)) {  // own + inherited (real inheritance)
         if (target == SerializeTarget::Client && f.visibility == Visibility::Private) continue;
@@ -124,7 +124,7 @@ inline Value normalize_reference_field_value(const Value& v, alloc_t a) {
 
 // Collapse every reference-typed field in a where/data record to bare id(s). The core type
 // unwraps an array field to its element (FieldMeta.element). Returns a new Value.
-inline Value normalize_reference_ids(const Value& record, const SchemaMeta& schema, alloc_t a) {
+inline Value normalize_reference_ids(const Value& record, const ClassMetadata& schema, alloc_t a) {
     Value out(record, a);
     for (const FieldMeta& f : all_fields(schema, a)) {  // own + inherited (real inheritance)
         if (out.find(f.name) == nullptr) continue;

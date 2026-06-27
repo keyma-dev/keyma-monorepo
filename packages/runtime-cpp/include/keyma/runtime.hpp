@@ -1300,3 +1300,25 @@ template <class T> struct value_traits<std::shared_ptr<T>> {
 };
 
 }  // namespace keyma
+
+// ─── Umbrella ─────────────────────────────────────────────────────────────────
+//
+// runtime.hpp is the single external header generated code includes: everything above is the
+// dependency-free core (keyma::Value, the schema metadata, the intrinsics, value_traits<T> /
+// from_value<T> / to_value<T>). The sibling headers below — pulled in AFTER the core so each
+// sees the complete `keyma::Value` / `keyma::ClassMetadata` — layer the serialization codecs and
+// the RPC surface (errors/result, the coroutine async core, the JSON + binary wire codecs, and
+// the transport / service / client / service_host seam) on top. Order is dependency order:
+// errors + async are leaf, then the codecs, then the RPC seam built on them. A generated header
+// thus `#include <keyma/runtime.hpp>` and nothing else external. (The `vendorRuntime` opt-in
+// inlines the same set, concatenated, via scripts/gen-runtime-header.mjs.)
+#include <keyma/errors.hpp>
+#include <keyma/async.hpp>
+#include <keyma/serialize.hpp>
+#include <keyma/binary.hpp>
+#include <keyma/binary-typed.hpp>
+#include <keyma/json.hpp>
+#include <keyma/transport.hpp>
+#include <keyma/service.hpp>
+#include <keyma/client.hpp>
+#include <keyma/service_host.hpp>

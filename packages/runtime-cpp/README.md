@@ -3,14 +3,15 @@
 The C++23 header-only runtime consumed by Keyma-generated C++ models. It is the C++
 counterpart of `@keyma/runtime-js` and `keyma-runtime` (Python).
 
-It ships a single header — `include/keyma/runtime.hpp` — which is the **single source of
-truth** for the C++ runtime. It provides:
+It ships a single **umbrella** header — `include/keyma/runtime.hpp` — which is the **single
+source of truth** for the C++ runtime: a generated header `#include <keyma/runtime.hpp>` and
+nothing else external. Its dependency-free core provides:
 
 - `keyma::Value` — the dynamic, allocator-aware (`std::pmr`) value type used at the
   validator/formatter/defaults boundary and for `json` fields.
 - The validation/formatting result types and callable typedefs (`keyma::ValidatorFn`,
   `keyma::FormatterFn`, `keyma::ValidationError`, `keyma::Context`).
-- The schema-metadata structs (`keyma::SchemaMeta`, `keyma::FieldMeta`, …) and
+- The schema-metadata structs (`keyma::ClassMetadata`, `keyma::FieldMeta`, …) and
   `keyma::Field<T>` for two-axis (optional × nullable) fields.
 - The intrinsic helpers the expression lowering emits (string/array/date/regex ops,
   `keyma::to_string<E>` / `keyma::from_string<E>` enum conversions).
@@ -20,36 +21,44 @@ truth** for the C++ runtime. It provides:
 
 ## Runtime consumer layer
 
-Beyond the model substrate, the package ships the C++ counterpart of the
-`@keyma/runtime-js` server/client stack as additional headers under `include/keyma/`
-(each `#include <keyma/runtime.hpp>` and compose):
+The umbrella pulls in the codec + RPC headers under `include/keyma/` (in dependency order),
+so all of the below are reachable from `<keyma/runtime.hpp>` alone:
 
 - `keyma/json.hpp` — a dependency-free JSON (de)serializer for `keyma::Value`:
   `json_parse(string_view, alloc_t)` / `json_stringify(const Value&, alloc_t)` (plus a
   pretty variant). Integral tokens become `int64`, fractional ones `double`; strings carry
   full escape/`\uXXXX`-surrogate handling; bytes serialize as base64.
-- `keyma/errors.hpp` — the `KeymaError` hierarchy (`KeymaRuntimeError`,
-  `KeymaPluginError`, `KeymaAdapterError`, `ValidationFailedError`) and `error_to_result`.
-- `keyma/protocol.hpp` — `proto::` builders/accessors for the wire operations, requests,
-  and responses (all plain `keyma::Value` objects), and `RequestContext`.
-- `keyma/adapter.hpp` — the pure-virtual `KeymaDatabaseAdapter<Async>` plus the
-  adapter-facing structs (`AdapterProjection`, `ListQuery`, `AdapterTraversalContext`, …).
-- `keyma/plugin.hpp` — the pure-virtual `KeymaServerPlugin<Async>` (seven optional hooks
-  with `has_*()` predicates) and `PluginServerHandle<Async>`.
-- `keyma/service.hpp` — `ServiceMeta`/`ServiceMethodMeta`/`ServiceParamMeta` and the
-  pure-virtual `Service<Async>` (`meta()` + `dispatch()`).
-- `keyma/validate.hpp`, `keyma/format.hpp`, `keyma/defaults.hpp`, `keyma/serialize.hpp` —
-  synchronous validate / format / apply-defaults / serialize (visibility & ephemeral
-  filtering) and `normalize_reference_ids`.
-- `keyma/server.hpp` — `KeymaServer<Async>`: `ensure_schemas` / `handle` / `close`, the
-  full eight-operation dispatch (list/read/create/update/delete/count/traverse/call), the
-  plugin-hook folds, and the adapter-projection builder.
-- `keyma/client.hpp` — `Transport<Async>`, the `Keyma` query builder (dynamic and typed
-  `Keyma::list<T>(…)`), `Document<Async>` batching with `input(…)` placeholders, the typed
-  `*_as<T>` convenience helpers, and `create_direct_transport`.
+- `keyma/binary.hpp` + `keyma/binary-typed.hpp` — the binary wire codec: a metadata-driven
+  dynamic encoder/decoder and the allocation-free typed `binary_traits<T>` twin, both
+  byte-identical to the JS/Python runtimes (the cross-runtime parity oracle).
+- `keyma/serialize.hpp` — record serialize (visibility & ephemeral filtering) and
+  `normalize_reference_ids`.
+- `keyma/errors.hpp` — the slim RPC error model: `keyma::error { code, message }`,
+  `keyma::result<T, E>` (an alias of `std::expected`), the frozen error-code taxonomy, and
+  the lone surviving `KeymaRuntimeError` (the JSON parser's failure type).
+- `keyma/async.hpp` — the concrete C++23 coroutine async core: `keyma::task<T>` (the type
+  every RPC-surface function returns), the unparameterized `scheduler` / `DelayedScheduler`
+  concepts, the pmr-allocated reference `keyma::event_loop`, and `keyma::sync_wait`.
+- `keyma/transport.hpp` — the capability-flagged `keyma::transport` (`invoke(call_request)
+  -> task<call_result>`; streaming reserved), the `wire_payload` envelope (a `keyma::Value`
+  in JSON mode, a `ByteBuf` in binary mode), and the inline-completing `direct_transport`.
+- `keyma/service.hpp` — the generated server base `keyma::service` (`meta()` + a generated
+  `dispatch(method, payload, ctx, encoding, a)` switch) plus the service metadata structs.
+- `keyma/client.hpp` — `keyma::client_invoke` and the `service_client` base a generated
+  per-service client binds to a transport.
+- `keyma/service_host.hpp` — the slim `keyma::service_host`: resolve + visibility-gate +
+  inject `RequestContext` + dispatch, encoding-agnostic and validation-free.
 
-Adapters and plugins are **interfaces only** — concrete database adapters and plugins are
-separate `@keyma/adapter-*-cpp` / `@keyma/plugin-*-cpp` packages.
+### @Service RPC
+
+The C++ backend emits, per `@Service`, a server base deriving `keyma::service` (the app
+overrides its typed `keyma::task<Ret>` virtuals; the generated `dispatch` decodes args,
+calls the override, encodes the result) and a typed client returning
+`keyma::task<keyma::result<Ret, keyma::error>>` — no exception ever crosses the RPC
+boundary. Args/results marshal through the same per-type codec the model serializer uses
+(JSON: named-arg object + bare result; binary: positional payloads, no names). A
+`keyma::service_host` resolves + visibility-gates the call; the `direct_transport` carries
+the envelope in-process and completes inline.
 
 > Note on wire format: a `dateTime` is an epoch-ms `int64` and a `bytes` is a base64 string
 > on the wire — the canonical cross-runtime format the JS, Python, and C++ runtimes all share,
@@ -57,22 +66,25 @@ separate `@keyma/adapter-*-cpp` / `@keyma/plugin-*-cpp` packages.
 > `keyma::date_parse` are application-logic helpers backing the `date.toISOString()` /
 > `new Date("…")` body intrinsics, not wire helpers.)
 
-## Async policy — bring your own scheduler
+## Async core — coroutines, bring your own scheduler
 
-C++23 has no standard event loop, so the I/O-bearing interfaces are templated on a policy
-`template<class> class Async`, defaulting to `keyma::Sync` (an identity wrapper): with the
-default everything is synchronous and zero-overhead. To run on `std::future`, a coroutine
-task, or any executor, specialize the single `async_traits<YourAsync>` customization point
-(`ready` / `then` / `attempt` / `swallow`) and `is_async`/`payload` for your type — the
-runtime never spawns threads or assumes an executor. `async.hpp` documents the exact
-contract; `test/coroutine.test.cpp` is a worked, genuinely-suspending C++23 coroutine-task
-policy with a single-threaded run loop, and `test/futures.test.cpp` a (blocking)
-`std::future` policy.
+C++23 has no standard event loop. Every RPC-surface function returns a lazy
+`keyma::task<T>` (promise type, symmetric transfer, exception capture); the surface is
+**scheduler-agnostic** — client / host / transport speak only `keyma::task<…>`, never naming
+a scheduler. A concrete async transport binds its I/O-leaf awaitables to a scheduler
+satisfying the unparameterized `keyma::scheduler` / `DelayedScheduler` concepts. The package
+ships a pmr-allocated single-threaded reference `keyma::event_loop` (logical-clock timers, so
+tests never sleep) and `keyma::sync_wait` to drive a root task inline or on a loop.
+`async.hpp` documents the contract; `test/coroutine.test.cpp` exercises it and
+`test/rpc.test.cpp` drives an end-to-end `@Service` call over a genuinely-suspending
+transport on an `event_loop`.
 
 ```cpp
-keyma::KeymaServer<> server({ .schemas = schemas, .adapter = &adapter, .alloc = a });
-keyma::Transport<> tx = keyma::create_direct_transport(server);
-User u = keyma::sync_get(keyma::create_as<User>(tx, data, {}, a));
+keyma::service_host host(a);
+host.add(impl);                                    // impl extends the generated service base
+keyma::direct_transport tx = keyma::create_direct_transport(host, keyma::encoding::json, a);
+app::client::UserService client(tx, a);
+keyma::result<User, keyma::error> r = keyma::sync_wait(client.get(id));
 ```
 
 ## Usage
@@ -123,9 +135,9 @@ and runs the test suite; tests and install rules default off when consumed via
 
 If you prefer a self-contained drop with no external include path, set
 `vendorRuntime: true` on the C++ target in `keyma.config.ts`. The backend then emits a
-verbatim copy of this header as `keyma_runtime.hpp` into each bundle, and generated
-headers include it by quoted local name. Either way this header remains the source of
-truth — the backend's vendored copy is auto-generated from it
+self-contained concatenation of the umbrella header set as `keyma_runtime.hpp` into each
+bundle, and generated headers include it by quoted local name. Either way these headers
+remain the source of truth — the backend's vendored copy is auto-generated from them
 (`scripts/gen-runtime-header.mjs`) and must not be edited by hand.
 
 ## C++23 requirement

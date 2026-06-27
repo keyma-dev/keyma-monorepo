@@ -1,10 +1,15 @@
-// Cross-runtime binary parity for @keyma/runtime-cpp. Reads the SAME canonical fixtures the
-// JS reference codec generates (packages/runtime-js/test/binary-fixtures.json, passed in via
-// -DKEYMA_BINARY_FIXTURES) and asserts byte-identical output, a decode→re-encode round-trip,
+// Cross-runtime binary parity for @keyma/runtime-cpp. Reads the SAME canonical fixtures the JS
+// reference codec generates (packages/runtime/test/binary-fixtures.json, passed in via
+// -DKEYMA_BINARY_FIXTURES) and asserts byte-identical output plus a decode→re-encode round-trip,
 // and the unknown-tag skip (durability) guarantee. Compiled and run by scripts/cpp-test.sh.
+//
+// The fixture file is the JS-canonical, target-free + visibility-blind form: a wrapper
+// `{ format, version, fixtures: [...] }`, each fixture `{ name, schema, [schemas], record, hex }`,
+// with NO per-fixture `target` (the codec encodes every declared field — `SerializeTarget::Server`
+// skips nothing). The reference/embedded field descriptors carry the target class identity under
+// `target` (the emitted `ClassMetadata` shape).
 
-#include <keyma/binary.hpp>
-#include <keyma/json.hpp>
+#include <keyma/runtime.hpp>
 
 #include <array>
 #include <cassert>
@@ -28,16 +33,16 @@ using namespace keyma;
 
 namespace {
 
-// ── Stable storage for the dynamically-built SchemaMeta graph ──
+// ── Stable storage for the dynamically-built ClassMetadata graph ──
 // std::deque keeps element references stable across growth (string_views and spans into
 // these outlive their construction). Function-pointer refs are wired via indexed accessor
-// thunks (a SchemaMeta::refs entry is a `const SchemaMeta& (*)()`).
+// thunks (a ClassMetadata::refs entry is a `const ClassMetadata& (*)()`).
 struct Registry {
     std::deque<std::string> strings;
     std::deque<std::vector<FieldMeta>> field_lists;
-    std::deque<SchemaMeta> schemas;
-    std::deque<std::vector<std::pair<std::string_view, const SchemaMeta& (*)()>>> ref_lists;
-    std::vector<const SchemaMeta*> by_index;
+    std::deque<ClassMetadata> schemas;
+    std::deque<std::vector<std::pair<std::string_view, const ClassMetadata& (*)()>>> ref_lists;
+    std::vector<const ClassMetadata*> by_index;
 
     std::string_view intern(std::string_view s) {
         strings.emplace_back(s);
@@ -47,10 +52,10 @@ struct Registry {
 Registry g_reg;
 
 template <std::size_t I>
-const SchemaMeta& schema_acc() {
+const ClassMetadata& schema_acc() {
     return *g_reg.by_index[I];
 }
-using Acc = const SchemaMeta& (*)();
+using Acc = const ClassMetadata& (*)();
 template <std::size_t... Is>
 std::array<Acc, sizeof...(Is)> make_accs(std::index_sequence<Is...>) {
     return {{&schema_acc<Is>...}};
@@ -101,8 +106,9 @@ FieldMeta build_field(const Value& f) {
         fm.bits = static_cast<int>(b->as_int());
     if (const Value* u = core->find("unsigned"); u && u->is_bool() && u->as_bool())
         fm.is_unsigned = true;
-    if (const Value* sc = core->find("schema"); sc && sc->is_string())
-        fm.target = g_reg.intern(sc->as_string());
+    // The embedded/reference target class identity is keyed under `target` (ClassMetadata shape).
+    if (const Value* tgt = core->find("target"); tgt && tgt->is_string())
+        fm.target = g_reg.intern(tgt->as_string());
     if (const Value* idt = core->find("idType"); idt && idt->is_object()) {
         fm.id_type = tag_of(idt->at("kind").as_string());
         if (const Value* iu = idt->find("unsigned"); iu && iu->is_bool() && iu->as_bool())
@@ -111,8 +117,8 @@ FieldMeta build_field(const Value& f) {
     return fm;
 }
 
-void fill_schema(SchemaMeta& sm, const Value& meta,
-                 std::span<const std::pair<std::string_view, const SchemaMeta& (*)()>> refs) {
+void fill_schema(ClassMetadata& sm, const Value& meta,
+                 std::span<const std::pair<std::string_view, const ClassMetadata& (*)()>> refs) {
     sm.name = g_reg.intern(meta.at("name").as_string());
     sm.source_name = g_reg.intern(meta.at("sourceName").as_string());
     g_reg.field_lists.emplace_back();
@@ -122,16 +128,16 @@ void fill_schema(SchemaMeta& sm, const Value& meta,
     sm.refs = refs;
 }
 
-const SchemaMeta& build_all(const Value& top_meta, const Value* schemas_map) {
+const ClassMetadata& build_all(const Value& top_meta, const Value* schemas_map) {
     g_reg.ref_lists.emplace_back();
     auto& reflist = g_reg.ref_lists.back();
 
-    // Phase A: reserve a stable SchemaMeta + accessor slot per sub-schema.
-    std::vector<SchemaMeta*> subs;
+    // Phase A: reserve a stable ClassMetadata + accessor slot per sub-schema.
+    std::vector<ClassMetadata*> subs;
     if (schemas_map != nullptr && schemas_map->is_object()) {
         for (const Value::Member& m : schemas_map->as_object()) {
             g_reg.schemas.emplace_back();
-            SchemaMeta* sm = &g_reg.schemas.back();
+            ClassMetadata* sm = &g_reg.schemas.back();
             std::size_t slot = g_reg.by_index.size();
             assert(slot < g_accs.size());
             g_reg.by_index.push_back(sm);
@@ -139,7 +145,7 @@ const SchemaMeta& build_all(const Value& top_meta, const Value* schemas_map) {
             subs.push_back(sm);
         }
     }
-    std::span<const std::pair<std::string_view, const SchemaMeta& (*)()>> refspan(reflist.data(), reflist.size());
+    std::span<const std::pair<std::string_view, const ClassMetadata& (*)()>> refspan(reflist.data(), reflist.size());
 
     // Phase B: fill the sub-schemas (every schema shares the full ref list, like the JS map).
     std::size_t si = 0;
@@ -148,7 +154,7 @@ const SchemaMeta& build_all(const Value& top_meta, const Value* schemas_map) {
     }
 
     g_reg.schemas.emplace_back();
-    SchemaMeta* top = &g_reg.schemas.back();
+    ClassMetadata* top = &g_reg.schemas.back();
     fill_schema(*top, top_meta, refspan);
     return *top;
 }
@@ -204,12 +210,6 @@ std::string to_hex(std::span<const std::byte> b) {
     return s;
 }
 
-SerializeTarget target_of(std::string_view s) {
-    if (s == "client") return SerializeTarget::Client;
-    if (s == "database") return SerializeTarget::Database;
-    return SerializeTarget::Server;
-}
-
 void test_skip_unknown_tags(alloc_t a) {
     static const FieldMeta wfields[] = {
         FieldMeta{.name = "id", .type = TypeTag::Id, .tag = 1},
@@ -221,8 +221,8 @@ void test_skip_unknown_tags(alloc_t a) {
         FieldMeta{.name = "_gap", .type = TypeTag::String, .tag = 99},
         FieldMeta{.name = "n", .type = TypeTag::Integer, .tag = 3},
     };
-    SchemaMeta writer{.name = "evolved", .source_name = "Evolved", .fields = wfields};
-    SchemaMeta reader{.name = "evolved", .source_name = "Evolved", .fields = rfields};
+    ClassMetadata writer{.name = "evolved", .source_name = "Evolved", .fields = wfields};
+    ClassMetadata reader{.name = "evolved", .source_name = "Evolved", .fields = rfields};
 
     Value rec = Value::object(a);
     rec.set("id", Value("z1", a));
@@ -255,11 +255,15 @@ int main() {
     Value doc = json_parse(text, a);
     const Value& fixtures = doc.at("fixtures");
 
+    // The codec is visibility-blind / target-free: encode every declared field. `Server` skips
+    // neither private (a Client concern) nor ephemeral (a Database concern), so it is the
+    // visibility-blind target.
+    const SerializeTarget target = SerializeTarget::Server;
+
     int passed = 0, failed = 0;
     for (const Value& fx : fixtures.as_array()) {
         std::string name(fx.at("name").as_string());
-        SerializeTarget target = target_of(fx.at("target").as_string());
-        const SchemaMeta& schema = build_all(fx.at("schema"), fx.find("schemas"));
+        const ClassMetadata& schema = build_all(fx.at("schema"), fx.find("schemas"));
         Value record = build_record(fx.at("record"), a);
 
         ByteBuf bytes = encode_binary(schema, record, target, a);

@@ -1,9 +1,11 @@
-// A standalone translation unit that includes the runtime header and exercises the
-// pieces generated code relies on (Value::push, the serialization entry points, the
-// intrinsic helpers). Compiled with `-std=c++23 -Iinclude -fsyntax-only` by
-// scripts/cpp-test.sh. Catches header rot at the source, independent of the backend.
+// A standalone translation unit that includes the umbrella runtime header and exercises the
+// pieces generated code relies on (Value::push, the serialization entry points, the intrinsic
+// helpers, AND the @Service RPC surface — task / service / transport / service_host / result /
+// error — all reachable from `<keyma/runtime.hpp>` alone). Compiled with
+// `-std=c++23 -Iinclude -fsyntax-only` by scripts/cpp-test.sh. Catches header rot at the source,
+// independent of the backend.
 #include <keyma/runtime.hpp>
-#include <keyma/binary-typed.hpp>  // syntax-check the typed binary codec header standalone
+#include <keyma/binary-typed.hpp>  // syntax-check the typed binary codec header standalone (re-include no-op)
 
 #include <cassert>
 #include <memory>
@@ -58,6 +60,37 @@ struct keyma::value_traits<app::Point> {
     }
     static keyma::Value id_value(const T& t, keyma::alloc_t a) { return keyma::to_value(t.id, a); }
 };
+
+// The generated-service shape, syntax-checked: a service base deriving keyma::service (meta() +
+// dispatch over the wire_payload envelope), a client returning keyma::task<keyma::result<T, error>>,
+// and the host/transport seam — all reached through the umbrella header only. Never called; it only
+// has to type-check (the umbrella exposes the full RPC surface generated headers depend on).
+namespace shape {
+struct DemoService : keyma::service {
+    virtual keyma::task<std::int64_t> echo(std::int64_t n, const keyma::RequestContext& ctx) = 0;
+    const keyma::service_meta& meta() const override {
+        static const keyma::service_method_meta methods[] = {{"echo", keyma::Visibility::Public, {}}};
+        static const keyma::service_meta m{"DemoService", keyma::Visibility::Public,
+                                           std::span<const keyma::service_method_meta>(methods)};
+        return m;
+    }
+    keyma::task<keyma::call_result> dispatch(std::string_view, const keyma::wire_payload&,
+                                             const keyma::RequestContext&, keyma::encoding, keyma::alloc_t a) override {
+        co_return keyma::call_result::success(keyma::wire_payload(keyma::Value(nullptr, a)));
+    }
+};
+[[maybe_unused]] inline keyma::task<keyma::result<std::int64_t, keyma::error>> demo_client(keyma::transport& tx) {
+    keyma::result<keyma::wire_payload, keyma::error> r =
+        co_await keyma::client_invoke(tx, "DemoService", "echo", keyma::empty_payload(tx.wire_encoding()));
+    if (!r.has_value()) co_return std::unexpected(r.error());
+    co_return keyma::result<std::int64_t, keyma::error>(0);
+}
+[[maybe_unused]] inline void host_shape() {
+    keyma::service_host host;
+    keyma::direct_transport tx = keyma::create_direct_transport(host);
+    (void)tx;
+}
+}  // namespace shape
 
 int main() {
     std::pmr::monotonic_buffer_resource pool;

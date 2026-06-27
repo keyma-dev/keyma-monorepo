@@ -1,117 +1,118 @@
-import type { IRService, IRType } from "@keyma/core/ir";
+import type { IRService, IRServiceMethod, IRType } from "@keyma/core/ir";
 import { filterVisible } from "@keyma/core/util";
 import { irTypeToCpp } from "./ir-type-to-cpp.js";
 import { includePath } from "./module-path.js";
+import {
+    jsonEncode, jsonDecode, binaryEncode, binaryDecode, cppType, passByRef,
+} from "./emit-service-marshal.js";
 import type { ServiceClientEmitDeps } from "./emitter-registry.js";
 
-// `@Service`/RPC is a base-language concern the compiler owns end-to-end: the bundle shell
-// calls this emitter directly on `ir.services`. No domain pack participates.
+// `@Service`/RPC is a base-language concern the compiler owns end-to-end: the bundle shell calls
+// this emitter directly on `ir.services`. No domain pack participates.
+//
+// The C++ client bundle emits, per `@Service`, a per-service client class bound to a
+// `keyma::transport`, with one coroutine method per RPC. Each method reads the transport's
+// `wire_encoding()`, marshals its declared args into the call payload (a named-arg Value object in
+// JSON mode, or the positional binary blob), round-trips the envelope via `keyma::client_invoke`,
+// and decodes the OK payload into the typed return — yielding
+// `keyma::task<keyma::result<Ret, keyma::error>>`. NO exception crosses the RPC boundary: a failure
+// envelope becomes a `keyma::error` value in the `result`.
+//
+// Unlike the model headers this one inherently needs the runtime transport, so it is an OPT-IN
+// header (not pulled in by index.hpp) — a vendored model bundle stays self-contained.
 
 /**
- * Emit `service-client.hpp`: one struct per service in `<nsRoot>::client`, with a static
- * typed builder per method returning a `keyma::CallLeaf<Ret>`. It is the C++ counterpart of
- * the typed `Keyma.call` in runtime-js's query builder — the args object is built from the
- * IR-declared params (typed in, lowered via keyma::to_value), the call is dispatched as a
- * leaf, and `keyma::send` hydrates the response to `Ret` (a scalar/struct/vector/void).
- *
- * Unlike the model headers, this one depends on <keyma/client.hpp> (for CallLeaf / Keyma::call):
- * calling a service inherently needs the runtime transport, so it is never zero-dependency.
- * It is therefore an OPT-IN header — not pulled in by index.hpp — so a vendored model bundle
- * stays self-contained.
+ * Emit `service-client.hpp`: one client class per service in `<nsRoot>::client`, bound to a
+ * `keyma::transport`. Generated from `<keyma/runtime.hpp>` (the umbrella) only.
  */
 export function emitServiceClientCpp(services: readonly IRService[], deps: ServiceClientEmitDeps): string {
     const shown = filterVisible(services, deps.includePrivate);
-    const lines: string[] = ["#pragma once", "#include <keyma/client.hpp>"];
+    const lines: string[] = ["#pragma once", `#include ${deps.runtimeInclude}`];
     for (const inc of buildIncludes(shown, deps)) lines.push(`#include "${inc}"`);
     lines.push("", `namespace ${deps.nsRoot}::client {`, "");
-    for (const svc of shown) lines.push(...emitClientStub(svc, deps), "");
+    for (const svc of shown) lines.push(...emitClient(svc, deps), "");
     lines.push(`}  // namespace ${deps.nsRoot}::client`, "");
     return lines.join("\n");
 }
 
-function emitClientStub(svc: IRService, deps: ServiceClientEmitDeps): string[] {
+function emitClient(svc: IRService, deps: ServiceClientEmitDeps): string[] {
+    const methods = filterVisible(svc.methods, deps.includePrivate);
     const lines: string[] = [];
-    if (svc.description !== undefined) lines.push(`// Typed client stub — ${svc.description}`);
-    lines.push(`struct ${svc.sourceName} {`);
-    for (const m of filterVisible(svc.methods, deps.includePrivate)) {
-        const ret = returnLeafType(m.returnType, deps);
-        const sig = [...m.params.map((p) => paramDecl(p.name, p.type, deps)), "keyma::alloc_t __alloc = {}"].join(", ");
-        lines.push(`    static keyma::CallLeaf<${ret}> ${m.name}(${sig}) {`);
-        lines.push(`        keyma::Value __args = keyma::Value::object(__alloc);`);
-        for (const p of m.params) lines.push(...argLines(p.name, p.type, deps));
-        lines.push(
-            `        return keyma::CallLeaf<${ret}>{ keyma::Keyma::call(${JSON.stringify(svc.name)}, ` +
-            `${JSON.stringify(m.name)}, std::move(__args), __alloc) };`,
-        );
-        lines.push(`    }`);
-    }
+    if (svc.description !== undefined) lines.push(`// Typed client — ${svc.description}`);
+    lines.push(`class ${svc.sourceName} {`, `public:`);
+    lines.push(`    explicit ${svc.sourceName}(keyma::transport& transport, keyma::alloc_t alloc = {})`);
+    lines.push(`        : __tx(&transport), __alloc(alloc) {}`, "");
+    for (const m of methods) lines.push(...emitMethod(svc, m, deps).map((l) => `    ${l}`), "");
+    lines.push(`private:`);
+    lines.push(`    keyma::transport* __tx;`);
+    lines.push(`    keyma::alloc_t __alloc;`);
     lines.push(`};`);
     return lines;
 }
 
-/** The target class `name` of a shared_ptr-shaped class type — a `reference`
- *  (id handle) or an `instance` (a live value of class T). Both lower to
- *  `std::shared_ptr<T>` and share the client's full-object hydration/serialization. */
-function sharedPtrTarget(t: IRType): string | undefined {
-    if (t.kind === "reference") return t.target;
-    if (t.kind === "instance") return t.name;
-    return undefined;
+function emitMethod(svc: IRService, m: IRServiceMethod, deps: ServiceClientEmitDeps): string[] {
+    const ret = m.returnType !== undefined ? cppType(m.returnType, deps) : "void";
+    const params = m.params.map((p) => paramDecl(p.name, p.type, deps)).join(", ");
+    const lines: string[] = [`keyma::task<keyma::result<${ret}, keyma::error>> ${m.name}(${params}) {`];
+    lines.push(`    keyma::encoding __enc = __tx->wire_encoding();`);
+    lines.push(...emitBuildArgs(m, deps).map((l) => `    ${l}`));
+    lines.push(`    keyma::result<keyma::wire_payload, keyma::error> __r =`);
+    lines.push(`        co_await keyma::client_invoke(*__tx, ${JSON.stringify(svc.name)}, ${JSON.stringify(m.name)}, std::move(__args));`);
+    lines.push(`    if (!__r.has_value()) co_return std::unexpected(__r.error());`);
+    lines.push(...emitDecodeResult(m.returnType, ret, deps).map((l) => `    ${l}`));
+    lines.push(`}`);
+    return lines;
 }
 
-/**
- * The CallLeaf element type for a method's return — what `keyma::send` hydrates to. A
- * class return is modelled in the IR as a `reference`/`instance`; the client hydrates the
- * FULL wire object to the value type (not a shared_ptr id-stub), so it unwraps to its target
- * struct and an array of them to a vector. `void` for a no-return method.
- */
-function returnLeafType(rt: IRType | undefined, deps: ServiceClientEmitDeps): string {
-    if (rt === undefined) return "void";
-    const direct = sharedPtrTarget(rt);
-    if (direct !== undefined) return deps.cppTypeByName.get(direct) ?? direct;
-    if (rt.kind === "array") {
-        const elem = sharedPtrTarget(rt.of);
-        if (elem !== undefined) return `std::pmr::vector<${deps.cppTypeByName.get(elem) ?? elem}>`;
+/** Build the call payload (`__args`) from the declared params, per the transport encoding. */
+function emitBuildArgs(m: IRServiceMethod, deps: ServiceClientEmitDeps): string[] {
+    if (m.params.length === 0) {
+        return [`keyma::wire_payload __args = keyma::empty_payload(__enc, __alloc);`];
     }
-    return irTypeToCpp(rt, deps.cppTypeByName, deps.enumTypeByName);
+    const jsonBlock = [
+        `keyma::Value __obj = keyma::Value::object(__alloc);`,
+        ...m.params.map((p) => `__obj.set(${JSON.stringify(p.name)}, ${jsonEncode(p.type, p.name, "__alloc", deps)});`),
+        `__args = keyma::wire_payload(std::move(__obj));`,
+    ];
+    if (!deps.binary) {
+        return [`keyma::wire_payload __args;`, ...jsonBlock];
+    }
+    const binaryBlock = [
+        `keyma::ByteBuf __buf(__alloc);`,
+        ...m.params.map((p) => binaryEncode(p.type, p.name, "__buf", "__alloc", deps)),
+        `__args = keyma::wire_payload(std::move(__buf));`,
+    ];
+    return [
+        `keyma::wire_payload __args;`,
+        `if (__enc == keyma::encoding::binary) {`,
+        ...binaryBlock.map((l) => `    ${l}`),
+        `} else {`,
+        ...jsonBlock.map((l) => `    ${l}`),
+        `}`,
+    ];
 }
 
-/**
- * Serialize one argument into `__args`. A class-typed (reference/instance) param is a
- * shared_ptr; its FULL object is the payload (a service input is not a stored relation), so
- * it is serialized via the struct's own to_value — never the id-only shared_ptr value_traits.
- * Everything else lowers through keyma::to_value.
- */
-function argLines(name: string, type: IRType, deps: ServiceClientEmitDeps): string[] {
-    const key = JSON.stringify(name);
-    if (sharedPtrTarget(type) !== undefined) {
-        return [`        __args.set(${key}, ${name} ? ${name}->to_value(__alloc) : keyma::Value(nullptr, __alloc));`];
+/** Decode the OK payload (`*__r`) into the typed return value, per the transport encoding. */
+function emitDecodeResult(rt: IRType | undefined, ret: string, deps: ServiceClientEmitDeps): string[] {
+    if (rt === undefined) {
+        return [`co_return keyma::result<void, keyma::error>{};`];
     }
-    if (type.kind === "array" && sharedPtrTarget(type.of) !== undefined) {
-        return [
-            `        { keyma::Value __a = keyma::Value::array(__alloc);`,
-            `          for (const auto& __e : ${name}) __a.push(__e ? __e->to_value(__alloc) : keyma::Value(nullptr, __alloc));`,
-            `          __args.set(${key}, std::move(__a)); }`,
-        ];
-    }
-    return [`        __args.set(${key}, keyma::to_value(${name}, __alloc));`];
+    const jsonLine = `co_return keyma::result<${ret}, keyma::error>(${jsonDecode(rt, "std::get<keyma::Value>(*__r)", "__alloc", deps)});`;
+    if (!deps.binary) return [jsonLine];
+    return [
+        `if (__enc == keyma::encoding::binary) {`,
+        `    const keyma::ByteBuf& __b = std::get<keyma::ByteBuf>(*__r);`,
+        `    keyma::binary_detail::Reader __rd{std::span<const std::byte>(__b.data(), __b.size()), 0, __b.size()};`,
+        `    co_return keyma::result<${ret}, keyma::error>(${binaryDecode(rt, "__rd", "__alloc", deps)});`,
+        `}`,
+        jsonLine,
+    ];
 }
 
 /** A method parameter declaration: heavyweight types by const-ref, scalars by value. */
 function paramDecl(name: string, type: IRType, deps: ServiceClientEmitDeps): string {
     const ty = irTypeToCpp(type, deps.cppTypeByName, deps.enumTypeByName);
     return passByRef(type) ? `const ${ty}& ${name}` : `${ty} ${name}`;
-}
-
-function passByRef(type: IRType): boolean {
-    switch (type.kind) {
-        case "string": case "id": case "date": case "time": case "decimal":
-        case "bytes": case "json": case "array": case "embedded":
-            return true;
-        case "enum":
-            return type.name === undefined; // inline union → pmr string (by ref); named enum → by value
-        default:
-            return false; // number/integer/bigint/boolean/dateTime/reference (shared_ptr) → by value
-    }
 }
 
 // ─── includes ─────────────────────────────────────────────────────────────────

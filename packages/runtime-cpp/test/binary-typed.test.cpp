@@ -12,6 +12,9 @@
 //
 // Standalone — no codegen, no fixtures needed. Compiled and run by scripts/cpp-test.sh.
 
+// Lead with the umbrella so the kept codec headers compose in dependency order (the typed
+// binary codec is then a no-op re-include).
+#include <keyma/runtime.hpp>
 #include <keyma/binary-typed.hpp>
 
 #include <cassert>
@@ -390,32 +393,32 @@ template <> struct binary_traits<app::Relations> {
 
 namespace {
 
-const SchemaMeta& addr_schema() {
+const ClassMetadata& addr_schema() {
     static const FieldMeta fields[] = {
         FieldMeta{.name = "city", .type = TypeTag::String, .tag = 1},
         FieldMeta{.name = "zip", .type = TypeTag::BigInt, .tag = 2},
     };
-    static const SchemaMeta meta{.name = "addr", .source_name = "Addr", .fields = fields};
+    static const ClassMetadata meta{.name = "addr", .source_name = "Addr", .fields = fields};
     return meta;
 }
-const SchemaMeta& owner_schema() {
+const ClassMetadata& owner_schema() {
     static const FieldMeta fields[] = {
         FieldMeta{.name = "id", .type = TypeTag::Id, .tag = 1},
         FieldMeta{.name = "name", .type = TypeTag::String, .tag = 2},
     };
-    static const SchemaMeta meta{.name = "owner", .source_name = "Owner", .fields = fields};
+    static const ClassMetadata meta{.name = "owner", .source_name = "Owner", .fields = fields};
     return meta;
 }
-const SchemaMeta& cat_schema() {
+const ClassMetadata& cat_schema() {
     static const FieldMeta fields[] = {
         FieldMeta{.name = "id", .type = TypeTag::Integer, .tag = 1},
         FieldMeta{.name = "label", .type = TypeTag::String, .tag = 2},
     };
-    static const SchemaMeta meta{.name = "cat", .source_name = "Cat", .fields = fields};
+    static const ClassMetadata meta{.name = "cat", .source_name = "Cat", .fields = fields};
     return meta;
 }
 
-const SchemaMeta& scalars_schema() {
+const ClassMetadata& scalars_schema() {
     static const FieldMeta fields[] = {
         FieldMeta{.name = "id", .type = TypeTag::Id, .tag = 1},
         FieldMeta{.name = "big", .type = TypeTag::BigInt, .tag = 2},
@@ -429,11 +432,11 @@ const SchemaMeta& scalars_schema() {
         FieldMeta{.name = "data", .type = TypeTag::Bytes, .tag = 10},
         FieldMeta{.name = "color", .type = TypeTag::Enum, .tag = 11},
     };
-    static const SchemaMeta meta{.name = "scalars", .source_name = "Scalars", .fields = fields};
+    static const ClassMetadata meta{.name = "scalars", .source_name = "Scalars", .fields = fields};
     return meta;
 }
 
-const SchemaMeta& wrappers_schema() {
+const ClassMetadata& wrappers_schema() {
     static const FieldMeta fields[] = {
         FieldMeta{.name = "opt", .type = TypeTag::String, .required = false, .tag = 1},
         FieldMeta{.name = "nul", .type = TypeTag::String, .nullable = true, .tag = 2},
@@ -442,12 +445,12 @@ const SchemaMeta& wrappers_schema() {
         FieldMeta{.name = "nums", .type = TypeTag::Array, .element = TypeTag::Integer, .tag = 5},
         FieldMeta{.name = "js", .type = TypeTag::Json, .tag = 6},
     };
-    static const SchemaMeta meta{.name = "wrappers", .source_name = "Wrappers", .fields = fields};
+    static const ClassMetadata meta{.name = "wrappers", .source_name = "Wrappers", .fields = fields};
     return meta;
 }
 
-const SchemaMeta& relations_schema() {
-    static const std::pair<std::string_view, const SchemaMeta& (*)()> refs[] = {
+const ClassMetadata& relations_schema() {
+    static const std::pair<std::string_view, const ClassMetadata& (*)()> refs[] = {
         {"addr", &addr_schema}, {"owner", &owner_schema}, {"cat", &cat_schema},
     };
     static const FieldMeta fields[] = {
@@ -458,7 +461,7 @@ const SchemaMeta& relations_schema() {
         FieldMeta{.name = "addrs", .type = TypeTag::Array, .element = TypeTag::Embedded, .target = "addr", .tag = 5},
         FieldMeta{.name = "cats", .type = TypeTag::Array, .element = TypeTag::Reference, .target = "cat", .tag = 6, .id_type = TypeTag::Integer},
     };
-    static const SchemaMeta meta{.name = "relations", .source_name = "Relations", .fields = fields, .refs = refs};
+    static const ClassMetadata meta{.name = "relations", .source_name = "Relations", .fields = fields, .refs = refs};
     return meta;
 }
 

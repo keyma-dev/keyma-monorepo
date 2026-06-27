@@ -260,6 +260,7 @@ function emitBundle(
                 includePrivate: opts.includePrivate,
                 nsRoot: shared.nsRoot,
                 runtimeInclude: shared.runtimeInclude,
+                binary: shared.binary,
                 classModule: shared.classModule,
                 classNameByName: shared.classNameByName,
                 cppTypeByName: shared.cppTypeByName,
@@ -267,13 +268,16 @@ function emitBundle(
                 enumModuleByName: shared.enumModuleByName,
             }),
         });
-        // Typed call stubs (<nsRoot>::client::<Service>::<method> → keyma::CallLeaf<Ret>).
-        // Opt-in (not pulled in by index.hpp) since it depends on <keyma/client.hpp>.
+        // Per-service typed client (<nsRoot>::client::<Service>) bound to a keyma::transport,
+        // returning keyma::task<keyma::result<T, error>>. Opt-in (not pulled in by index.hpp)
+        // since calling a service inherently needs the runtime transport.
         files.push({
             path: path.posix.join(bundleDir, `${SERVICE_CLIENT_REF}.hpp`),
             content: emitServiceClientCpp(decls.services, {
                 includePrivate: opts.includePrivate,
                 nsRoot: shared.nsRoot,
+                runtimeInclude: shared.runtimeInclude,
+                binary: shared.binary,
                 classModule: shared.classModule,
                 classNameByName: shared.classNameByName,
                 cppTypeByName: shared.cppTypeByName,
