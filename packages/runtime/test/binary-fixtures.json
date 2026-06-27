@@ -3,8 +3,7 @@
   "version": "1",
   "fixtures": [
     {
-      "name": "scalars-server",
-      "target": "server",
+      "name": "scalars",
       "schema": {
         "name": "scalars",
         "sourceName": "Scalars",
@@ -141,7 +140,6 @@
     },
     {
       "name": "integer-widths",
-      "target": "server",
       "schema": {
         "name": "widths",
         "sourceName": "Widths",
@@ -222,7 +220,6 @@
     },
     {
       "name": "nullable-and-absent",
-      "target": "server",
       "schema": {
         "name": "optionals",
         "sourceName": "Optionals",
@@ -237,25 +234,19 @@
             "name": "present",
             "type": {
               "kind": "string"
-            },
-            "nullable": true,
-            "required": false
+            }
           },
           {
             "name": "explicitNull",
             "type": {
               "kind": "string"
-            },
-            "nullable": true,
-            "required": false
+            }
           },
           {
             "name": "absent",
             "type": {
               "kind": "string"
-            },
-            "nullable": true,
-            "required": false
+            }
           }
         ]
       },
@@ -268,7 +259,6 @@
     },
     {
       "name": "arrays",
-      "target": "server",
       "schema": {
         "name": "lists",
         "sourceName": "Lists",
@@ -334,7 +324,6 @@
     },
     {
       "name": "references",
-      "target": "server",
       "schema": {
         "name": "refs",
         "sourceName": "Refs",
@@ -343,7 +332,7 @@
             "name": "author",
             "type": {
               "kind": "reference",
-              "schema": "User",
+              "target": "User",
               "idType": {
                 "kind": "id"
               }
@@ -353,7 +342,7 @@
             "name": "owner",
             "type": {
               "kind": "reference",
-              "schema": "Account",
+              "target": "Account",
               "idType": {
                 "kind": "integer"
               }
@@ -363,7 +352,7 @@
             "name": "wrapped",
             "type": {
               "kind": "reference",
-              "schema": "User",
+              "target": "User",
               "idType": {
                 "kind": "string"
               }
@@ -382,7 +371,6 @@
     },
     {
       "name": "embedded",
-      "target": "server",
       "schema": {
         "name": "outer",
         "sourceName": "Outer",
@@ -397,7 +385,7 @@
             "name": "address",
             "type": {
               "kind": "embedded",
-              "schema": "Address"
+              "target": "Address"
             }
           }
         ]
@@ -432,8 +420,7 @@
       "hex": "0a026f31120f0a0631204d61696e12053030303030"
     },
     {
-      "name": "visibility-client",
-      "target": "client",
+      "name": "visibility-blind",
       "schema": {
         "name": "user",
         "sourceName": "User",
@@ -454,9 +441,7 @@
             "name": "secret",
             "type": {
               "kind": "string"
-            },
-            "visibility": "private",
-            "required": false
+            }
           }
         ]
       },
@@ -465,7 +450,7 @@
         "email": "a@b.com",
         "secret": "x"
       },
-      "hex": "0a02753112076140622e636f6d"
+      "hex": "0a02753112076140622e636f6d1a0178"
     }
   ]
 }

@@ -1,12 +1,10 @@
 {
     "name": "@keyma/runtime",
     "version": "0.0.1",
-    "description": "Keyma JS/TS runtime — validate/format/defaults, query builder, server, and adapter interfaces (consumed via @keyma/runtime/schema)",
+    "description": "Keyma JS/TS runtime — authored source-of-truth + test bed for the model codec and @Service RPC stack the compiler bakes into self-contained generated bundles (never imported by generated code)",
     "type": "module",
     "exports": {
-        ".": "./dist/src/index.js",
-        "./schema": "./dist/src/index.js",
-        "./schema/testing": "./dist/src/testing.js"
+        ".": "./dist/src/index.js"
     },
     "files": [
         "dist/src"

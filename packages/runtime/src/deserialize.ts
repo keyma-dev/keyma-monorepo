@@ -1,14 +1,19 @@
-import type { SchemaMetadata, FieldType, SchemaClass } from "./types.js";
+// JSON wire decoder — the inverse of `serialize`. Reverses the canonical conversions (epoch-ms
+// int → Date, base64 string → bytes) and hydrates embedded/instance/reference values into
+// generated class instances via the static `fromValue` factory. Target-free, like `serialize`.
+
+import type { ClassMeta, FieldType } from "./fields.js";
+import type { Refs } from "./serialize.js";
 import { base64ToBytes } from "./base64.js";
-import { allFields, allRefs } from "./fields.js";
+import { allFields, allRefs, targetOf } from "./fields.js";
 
 export function deserialize(
-    schema: SchemaMetadata,
+    meta: ClassMeta,
     value: Record<string, unknown>,
 ): Record<string, unknown> {
     const out: Record<string, unknown> = {};
-    const refs = allRefs(schema); // own + inherited targets (real inheritance)
-    for (const field of allFields(schema)) {
+    const refs = allRefs(meta); // own + inherited targets (real inheritance)
+    for (const field of allFields(meta)) {
         if (field.name in value) {
             out[field.name] = deserializeValue(value[field.name], field.type, refs);
         }
@@ -16,43 +21,36 @@ export function deserialize(
     return out;
 }
 
-function deserializeValue(
-    value: unknown,
-    type: FieldType,
-    refs: ReadonlyMap<string, SchemaClass> | undefined,
-): unknown {
+/** Deserialize a single typed value from its JSON wire form. Exported for the RPC marshaller. */
+export function deserializeValue(value: unknown, type: FieldType, refs: Refs): unknown {
     if (type.kind === "dateTime" && typeof value === "number") {
-        // epoch-ms int64 on the wire → Date.
         return new Date(value);
     }
     if (type.kind === "bytes" && typeof value === "string") {
-        // base64 string on the wire → Uint8Array.
         return base64ToBytes(value);
     }
 
-    if (type.kind === "embedded") {
+    if (type.kind === "embedded" || type.kind === "instance") {
         if (value === null || value === undefined) return value;
         if (typeof value !== "object" || Array.isArray(value)) return value;
-        const subClass = refs?.get(type.schema);
-        if (subClass !== undefined) {
-            const sub = deserialize(subClass.schema, value as Record<string, unknown>);
-            return new (subClass as new (v?: unknown) => unknown)(sub);
+        const sub = refs?.get(targetOf(type)!);
+        if (sub !== undefined) {
+            return sub.fromValue(deserialize(sub.metadata, value as Record<string, unknown>));
         }
         return value;
     }
 
     if (type.kind === "reference") {
         if (value === null || value === undefined) return undefined;
-        const subClass = refs?.get(type.schema);
-        if (subClass === undefined) return value;
-        if (typeof value === "string") {
-            // Bare ID — construct a stub instance with only id set
-            return new (subClass as new (v?: unknown) => unknown)({ id: value });
+        const sub = refs?.get(type.target);
+        if (sub === undefined) return value;
+        if (typeof value === "string" || typeof value === "number") {
+            // Bare id — hydrate a stub instance carrying only `id`.
+            return sub.fromValue({ id: value });
         }
         if (typeof value === "object" && !Array.isArray(value)) {
-            // Server-populated (dereferenced) — recursively deserialize then construct
-            const sub = deserialize(subClass.schema, value as Record<string, unknown>);
-            return new (subClass as new (v?: unknown) => unknown)(sub);
+            // Server-populated (dereferenced) — recursively deserialize then hydrate.
+            return sub.fromValue(deserialize(sub.metadata, value as Record<string, unknown>));
         }
         return value;
     }

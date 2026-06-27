@@ -1,72 +1,21 @@
-import type { KeymaLeafFailure } from "./protocol.js";
+// The single RPC error type. A generated client unwraps the slim `CallResult` envelope and
+// throws this on failure; the host catches it (or any thrown value) and folds it back into a
+// failure envelope. `code` is one of the framework codes below or a transport-owned code.
 
-export type ErrorSource = "runtime" | "plugin" | "adapter";
+/** Framework error codes. Transports may add their own (e.g. connection/timeout) codes. */
+export type KeymaErrorCode =
+    | "SERVICE_NOT_FOUND"
+    | "METHOD_NOT_FOUND"
+    | "METHOD_NOT_IMPLEMENTED"
+    | "HANDLER_ERROR"
+    | (string & {});
 
-export abstract class KeymaError extends Error {
-    abstract readonly code: string;
-    abstract readonly source: ErrorSource;
-    /** Package name of the originator, e.g. "@keyma/plugin-acl-js". Empty for runtime. */
-    abstract readonly origin: string;
-    /** Extra fields merged into the wire failure (e.g. {fields, errors}). */
-    toFailureExtras(): Record<string, unknown> {
-        return {};
-    }
-}
-
-export class KeymaRuntimeError extends KeymaError {
-    readonly source = "runtime" as const;
-    readonly origin = "";
+export class KeymaError extends Error {
     constructor(
-        public readonly code: string,
+        public readonly code: KeymaErrorCode,
         message: string,
     ) {
         super(message);
-        this.name = "KeymaRuntimeError";
+        this.name = "KeymaError";
     }
-}
-
-export class KeymaPluginError extends KeymaError {
-    readonly source = "plugin" as const;
-    private readonly extras: Record<string, unknown>;
-    constructor(
-        public readonly code: string,
-        message: string,
-        public readonly origin: string,
-        extras: Record<string, unknown> = {},
-    ) {
-        super(message);
-        this.name = "KeymaPluginError";
-        this.extras = extras;
-    }
-    override toFailureExtras(): Record<string, unknown> {
-        return this.extras;
-    }
-}
-
-export class KeymaAdapterError extends KeymaError {
-    readonly source = "adapter" as const;
-    private readonly extras: Record<string, unknown>;
-    constructor(
-        public readonly code: string,
-        message: string,
-        public readonly origin: string,
-        extras: Record<string, unknown> = {},
-    ) {
-        super(message);
-        this.name = "KeymaAdapterError";
-        this.extras = extras;
-    }
-    override toFailureExtras(): Record<string, unknown> {
-        return this.extras;
-    }
-}
-
-export function isPluginFailure(r: KeymaLeafFailure): boolean {
-    return r.source === "plugin";
-}
-export function isAdapterFailure(r: KeymaLeafFailure): boolean {
-    return r.source === "adapter";
-}
-export function isRuntimeFailure(r: KeymaLeafFailure): boolean {
-    return r.source === "runtime";
 }

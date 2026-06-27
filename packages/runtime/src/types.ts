@@ -160,30 +160,17 @@ export type RecordOf<C> = C extends new (value?: never) => infer T ? T : never;
 
 // ── Service metadata ────────────────────────────────────────────────────────
 //
-// Generated service classes carry their contract as a static `service` property
-// (the analog of a model's static `schema`). The server reads it off each
-// registered instance's constructor to discover callable methods; the client
-// reads it (plus `refs`) to marshal calls and hydrate results.
-
-export type ServiceParamMetadata = {
-    name: string;
-    /** Schema `name` when the param type is a schema reference — used for
-     *  argument validation on the server and (via `refs`) nothing on the client.
-     *  Absent for primitive params. */
-    schema?: string;
-};
+// A generated service class carries its slim contract as a static `service`. The host reads it
+// off each registered instance's constructor purely to RESOLVE and VISIBILITY-GATE a call (name
+// + per-method visibility) — it never inspects argument or return types. All marshalling lives
+// in the generated `dispatch` (server) and the generated client methods, so the metadata stays
+// minimal and type-agnostic.
 
 export type ServiceMethodMetadata = {
     name: string;
-    /** Omitted ≡ "public". Private methods are emitted only into server bundles
-     *  and are uncallable by non-system callers. */
+    /** Omitted ≡ "public". Private methods are emitted only into server bundles and are
+     *  uncallable by non-system callers (the host treats them as not found). */
     visibility?: "public" | "private";
-    params: ServiceParamMetadata[];
-    /** Schema `name` of the return value when it is a schema (drives client
-     *  hydration). Absent for primitive returns. */
-    returnSchema?: string;
-    /** Whether the return value is an array of `returnSchema` (element-wise hydration). */
-    returnArray?: boolean;
 };
 
 export type ServiceMetadata = {
@@ -191,9 +178,6 @@ export type ServiceMetadata = {
     /** Omitted ≡ "public". Private services are emitted only into server bundles. */
     visibility?: "public" | "private";
     methods: ServiceMethodMetadata[];
-    /** Schema name → generated model class, for hydrating schema-typed returns.
-     *  Present on client bundles. */
-    refs?: ReadonlyMap<string, SchemaClass>;
 };
 
 /** A generated service class carrying its contract as a static `service`. */
@@ -201,20 +185,22 @@ export interface ServiceClass {
     readonly service: ServiceMetadata;
 }
 
-/** A constructed service instance. Its class carries the contract as a `static
- *  service` (read off `instance.constructor` at registration). Typed loosely
- *  because TypeScript types an instance's `.constructor` as plain `Function`;
- *  the real contract guarantee comes from extending the generated abstract class. */
+/** A constructed service instance. Its class carries the contract as a `static service` (read
+ *  off `instance.constructor` at registration) and a generated `dispatch` method (decodes args,
+ *  calls the impl, encodes the result). Typed loosely because TypeScript types an instance's
+ *  `.constructor` as plain `Function`; the real guarantee comes from extending the generated
+ *  abstract service base. */
 export type ServiceInstance = object;
 
-/** What the application registers with `KeymaServer({ services })`: an instance
- *  or a zero-arg factory producing one. */
+/** What the application registers with `new ServiceHost({ services })`: an instance or a
+ *  zero-arg factory producing one. */
 export type ServiceProvider = ServiceInstance | (() => ServiceInstance);
 
 // ── Request context ─────────────────────────────────────────────────────────
 //
-// Ambient per-request context threaded through server operations, plugin hooks,
-// and service-method calls. Free-form; `identity` is the conventional auth slot.
+// Ambient per-request context, injected as the LAST argument into every service-method impl.
+// Free-form; `identity` is the conventional auth slot and `identity.isSystem` drives the
+// probe-resistant visibility gate (private services/methods are "not found" unless system).
 
 export type RequestContext = {
     identity?: {
@@ -225,3 +211,42 @@ export type RequestContext = {
     };
     [key: string]: unknown;
 };
+
+// ── RPC wire envelope + transport ────────────────────────────────────────────
+//
+// The single-call protocol. A generated client builds a `CallRequest` (encoding its args per the
+// transport's `encoding`), hands it to `Transport.invoke`, and unwraps the `CallResult`. Both
+// ends agree on the encoding statically — there is no negotiation.
+
+/** Wire encoding of a call's args/result payloads. Transport configuration, fixed at both ends. */
+export type WireEncoding = "json" | "binary";
+
+/** A single remote call. `args` is the encoded argument payload — a plain object in `json` mode,
+ *  or the positional binary blob (a `Uint8Array`) in `binary` mode. `service`/`method` are
+ *  always plaintext (the host resolves them as a string header). */
+export type CallRequest = {
+    service: string;
+    method: string;
+    args: unknown;
+};
+
+/** The slim result envelope. `data` is the encoded return payload (object or bytes). */
+export type CallResult =
+    | { ok: true; data: unknown }
+    | { ok: false; code: string; message: string };
+
+/** Reserved streaming capabilities. Streaming is NOT built this pass — the descriptor only keeps
+ *  the interface from a breaking reshape when it lands. */
+export type TransportCapabilities = {
+    serverStream?: boolean;
+    clientStream?: boolean;
+    bidi?: boolean;
+};
+
+/** The capability-flagged transport. Required unary `invoke`; `encoding` tells a bound client how
+ *  to marshal. A streaming seam (`capabilities`) is reserved but unused this pass. */
+export interface Transport {
+    readonly encoding: WireEncoding;
+    readonly capabilities?: TransportCapabilities;
+    invoke(request: CallRequest): Promise<CallResult>;
+}

@@ -8,6 +8,7 @@ import { identitySanitizer } from "./module-path.js";
 import { resolveJsTarget, type JsTargetConfig } from "./types.js";
 import { EmitterRegistry, type JsEmitterPack, type ServiceEmitDeps } from "./emitter-registry.js";
 import { emitServicesJs, emitServicesDts } from "./emit-service.js";
+import { EMITTED_RUNTIME_MODULES } from "./emitted-runtime-modules.js";
 
 /**
  * Build a JS backend from the given domain emitter packs. The generic bundle shell here is
@@ -126,6 +127,15 @@ function emitBundle(
         .filter((d): d is string => d !== undefined && d.length > 0);
     files.push({ path: path.posix.join(bundleDir, "types.js"), content: emitTypesJs() });
     files.push({ path: path.posix.join(bundleDir, "types.d.ts"), content: emitTypesDts(extraTypeDecls) });
+
+    // Bundle-local runtime BEHAVIOR — the model codec + the @Service RPC stack (host / client /
+    // transport / errors), baked verbatim from `@keyma/runtime`. Emitted as siblings to
+    // `types.js` so the generated class/service code imports the codec + RPC from here and
+    // depends on NO `@keyma/runtime` package (the self-containment guarantee).
+    for (const [name, mod] of Object.entries(EMITTED_RUNTIME_MODULES)) {
+        files.push({ path: path.posix.join(bundleDir, `${name}.js`), content: mod.js });
+        files.push({ path: path.posix.join(bundleDir, `${name}.d.ts`), content: mod.dts });
+    }
 
     const visibleClasses: IRClassDeclaration[] = opts.includePrivate
         ? ir.classes

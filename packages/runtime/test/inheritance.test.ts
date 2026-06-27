@@ -1,8 +1,7 @@
-// Real-inheritance runtime behavior: the schema metadata carries OWN fields only plus a `base`
-// pointer; the runtime assembles the full field/ref set by walking the chain (allFields/allRefs).
-// These tests lock in that serialize/deserialize/binary/validate/defaults all see inherited
-// fields, that private/ephemeral filtering still applies across the chain, that inherited
-// reference targets hydrate, and that a child field override wins over the inherited one.
+// Real-inheritance codec behavior: a class's metadata carries OWN fields only plus a `base`
+// pointer; the codec assembles the full field/ref set by walking the chain (allFields/allRefs).
+// These lock in that serialize/deserialize/binary all see inherited fields, that an inherited
+// reference target hydrates, and that a child field override wins over the inherited one.
 
 import { describe, it } from "node:test";
 import assert from "node:assert/strict";
@@ -11,182 +10,71 @@ import { allFields, allRefs } from "../src/fields.js";
 import { serialize } from "../src/serialize.js";
 import { deserialize } from "../src/deserialize.js";
 import { encodeBinary, decodeBinary } from "../src/binary.js";
-import { validate } from "../src/validate.js";
-import { applyDefaults } from "../src/defaults.js";
-import { brandSchema } from "../src/testing.js";
-import type { SchemaMetadata, SchemaClass, ValidatorFn } from "../src/types.js";
+import type { ClassMeta } from "../src/fields.js";
+import { defineClass } from "./helpers.js";
 
-const required: ValidatorFn = (value, field) =>
-    value !== undefined && value !== null && value !== "" ? null : { field, code: "required", message: `${field} is required` };
-
-// ── Department (inherited reference target) ──────────────────────────────────
-
-interface DepartmentRecord { id: string; name: string }
-const DEPARTMENT_SCHEMA: SchemaMetadata = {
-    name: "department",
-    sourceName: "Department",
+// Department — an inherited reference target.
+const department = defineClass({
+    name: "Department",
     fields: [
-        { name: "id", type: { kind: "id" }, tag: 1, readonly: true },
+        { name: "id", type: { kind: "id" }, tag: 1 },
         { name: "name", type: { kind: "string" }, tag: 2 },
     ],
-};
-class DepartmentCtor {
-    declare id: string;
-    declare name: string;
-    constructor(value?: Partial<DepartmentRecord>) { if (value) Object.assign(this, value); }
-}
-const Department: SchemaClass<DepartmentRecord> = brandSchema(
-    DepartmentCtor as new (v?: Partial<DepartmentRecord>) => DepartmentRecord, DEPARTMENT_SCHEMA,
-);
+});
 
-// ── Person (base) ────────────────────────────────────────────────────────────
-// id, name, an inherited private `ssn`, and a literal-default `active` flag.
-
-const PERSON_SCHEMA: SchemaMetadata = {
-    name: "person",
-    sourceName: "Person",
+// Person (root) → Employee (subclass): Employee adds `salary` and overrides `title`.
+const personMeta: ClassMeta = {
+    name: "Person",
     fields: [
-        { name: "id", type: { kind: "id" }, tag: 1, readonly: true, validators: [required] },
-        { name: "name", type: { kind: "string" }, tag: 2, validators: [required] },
-        { name: "ssn", type: { kind: "string" }, tag: 3, visibility: "private", required: false },
-        { name: "active", type: { kind: "boolean" }, tag: 4, required: false, default: { kind: "literal", value: true } },
+        { name: "id", type: { kind: "id" }, tag: 1 },
+        { name: "title", type: { kind: "string" }, tag: 2 },
+        { name: "dept", type: { kind: "reference", target: "Department", idType: { kind: "id" } }, tag: 3 },
     ],
-    // Parent expression-default initializer: stamp a `kind` discriminator when absent.
-    applyDefaults(data: Record<string, unknown>) {
-        if (data["kind"] === undefined) data["kind"] = "person";
-    },
+    refs: new Map([["Department", department]]),
 };
-class PersonCtor {
-    declare id: string;
-    declare name: string;
-    declare ssn?: string;
-    declare active?: boolean;
-    constructor(value?: Record<string, unknown>) { if (value) Object.assign(this, value); }
-}
-const Person: SchemaClass = brandSchema(PersonCtor, PERSON_SCHEMA);
-
-// ── Employee extends Person ──────────────────────────────────────────────────
-// Own fields: department (inherited-target reference), salary. Chain-unique tags continue
-// past the parent's max (4 → 5, 6).
-
-const EMPLOYEE_SCHEMA: SchemaMetadata = {
-    name: "employee",
-    sourceName: "Employee",
-    base: PERSON_SCHEMA,
+const employeeMeta: ClassMeta = {
+    name: "Employee",
+    base: personMeta,
     fields: [
-        { name: "department", type: { kind: "reference", schema: "department", idType: { kind: "id" } }, tag: 5, required: false },
-        { name: "salary", type: { kind: "integer" }, tag: 6, required: false },
+        // Override `title` (same name) — keeps the ancestor's position, supplies the new def.
+        { name: "title", type: { kind: "string" }, tag: 2 },
+        { name: "salary", type: { kind: "integer" }, tag: 4 },
     ],
-    refs: new Map<string, SchemaClass>([["department", Department]]),
 };
 
-describe("inheritance — allFields / allRefs walk the base chain", () => {
-    it("allFields returns own + inherited, parent-first, with chain-unique tags", () => {
-        const names = allFields(EMPLOYEE_SCHEMA).map((f) => f.name);
-        assert.deepEqual(names, ["id", "name", "ssn", "active", "department", "salary"]);
-        const tags = allFields(EMPLOYEE_SCHEMA).map((f) => f.tag);
-        assert.deepEqual(tags, [1, 2, 3, 4, 5, 6]);
+describe("inheritance — full field/ref assembly", () => {
+    it("allFields walks the base chain, root-first, an override keeping position", () => {
+        const names = allFields(employeeMeta).map((f) => f.name);
+        assert.deepEqual(names, ["id", "title", "dept", "salary"]);
     });
 
-    it("a root schema's allFields is just its own fields", () => {
-        assert.deepEqual(allFields(PERSON_SCHEMA).map((f) => f.name), ["id", "name", "ssn", "active"]);
-    });
-
-    it("allRefs resolves an inherited-target reference declared on the child", () => {
-        assert.equal(allRefs(EMPLOYEE_SCHEMA).get("department"), Department);
+    it("allRefs resolves an inherited reference target from the base", () => {
+        assert.equal(allRefs(employeeMeta).get("Department"), department);
     });
 });
 
-describe("inheritance — serialize / deserialize", () => {
-    const record = { id: "e1", name: "Ada", ssn: "secret", active: true, department: { id: "d1", name: "R&D" }, salary: 100 };
+describe("inheritance — codec sees inherited fields", () => {
+    const record = { id: "e1", title: "Engineer", dept: { id: "d1", name: "R&D" }, salary: 120000 };
 
-    it("client serialize keeps inherited public fields and strips the inherited private one", () => {
-        const out = serialize(EMPLOYEE_SCHEMA, record, { target: "client" });
+    it("serialize includes inherited + own fields (JSON passes a reference object through)", () => {
+        const out = serialize(employeeMeta, record);
         assert.equal(out["id"], "e1");
-        assert.equal(out["name"], "Ada");
-        assert.equal(out["salary"], 100);
-        assert.ok(!("ssn" in out), "inherited private field is stripped on the client target");
+        assert.equal(out["title"], "Engineer");
+        assert.equal(out["salary"], 120000);
+        assert.deepEqual(out["dept"], { id: "d1", name: "R&D" });
     });
 
-    it("server serialize keeps the inherited private field", () => {
-        const out = serialize(EMPLOYEE_SCHEMA, record, { target: "server" });
-        assert.equal(out["ssn"], "secret");
+    it("binary round-trips inherited + own fields and collapses the inherited reference to its id", () => {
+        const decoded = decodeBinary(employeeMeta, encodeBinary(employeeMeta, record));
+        assert.equal(decoded["id"], "e1");
+        assert.equal(decoded["title"], "Engineer");
+        assert.equal(decoded["salary"], 120000);
+        assert.equal(decoded["dept"], "d1");
     });
 
-    it("deserialize hydrates an inherited-target reference into its class instance", () => {
-        const hydrated = deserialize(EMPLOYEE_SCHEMA, { id: "e1", name: "Ada", department: "d1", salary: 100 });
-        assert.ok(hydrated["department"] instanceof DepartmentCtor, "bare id became a Department stub");
-        assert.equal((hydrated["department"] as DepartmentRecord).id, "d1");
-    });
-});
-
-describe("inheritance — binary round-trip", () => {
-    it("preserves inherited + own fields with chain-unique tags", () => {
-        const record = { id: "e1", name: "Ada", ssn: "secret", active: false, department: "d1", salary: 100 };
-        const bytes = encodeBinary(EMPLOYEE_SCHEMA, record, { target: "server" });
-        const back = decodeBinary(EMPLOYEE_SCHEMA, bytes);
-        assert.equal(back["id"], "e1");
-        assert.equal(back["name"], "Ada");
-        assert.equal(back["ssn"], "secret");
-        assert.equal(back["active"], false);
-        assert.equal(back["department"], "d1");
-        assert.equal(back["salary"], 100);
-    });
-
-    it("client binary target drops the inherited private field", () => {
-        const record = { id: "e1", name: "Ada", ssn: "secret" };
-        const back = decodeBinary(EMPLOYEE_SCHEMA, encodeBinary(EMPLOYEE_SCHEMA, record, { target: "client" }));
-        assert.ok(!("ssn" in back), "private inherited field never reaches the client wire");
-        assert.equal(back["name"], "Ada");
-    });
-});
-
-describe("inheritance — validate", () => {
-    it("reports inherited required fields that are absent", async () => {
-        const errors = await validate(EMPLOYEE_SCHEMA, { salary: 100 });
-        const fields = errors.map((e) => e.field).sort();
-        assert.deepEqual(fields, ["id", "name"], "missing inherited required id/name surface as errors");
-    });
-
-    it("passes when all inherited required fields are present", async () => {
-        const errors = await validate(EMPLOYEE_SCHEMA, { id: "e1", name: "Ada" });
-        assert.deepEqual(errors, []);
-    });
-});
-
-describe("inheritance — applyDefaults", () => {
-    it("applies the inherited literal default and the parent's expression-default initializer", () => {
-        const data: Record<string, unknown> = { id: "e1", name: "Ada" };
-        applyDefaults(EMPLOYEE_SCHEMA, data);
-        assert.equal(data["active"], true, "inherited literal default filled");
-        assert.equal(data["kind"], "person", "parent's applyDefaults ran via chain walk");
-    });
-
-    it("does not overwrite a provided inherited field", () => {
-        const data: Record<string, unknown> = { id: "e1", name: "Ada", active: false };
-        applyDefaults(EMPLOYEE_SCHEMA, data);
-        assert.equal(data["active"], false);
-    });
-});
-
-describe("inheritance — child field override wins", () => {
-    // A child redeclares an inherited field by the same name; allFields keeps the ancestor
-    // position but takes the child's definition.
-    const CHILD_OVERRIDE: SchemaMetadata = {
-        name: "manager",
-        sourceName: "Manager",
-        base: PERSON_SCHEMA,
-        fields: [
-            // Override `active`: same name, but now required (child narrows the parent field).
-            { name: "active", type: { kind: "boolean" }, tag: 4, validators: [required] },
-        ],
-    };
-
-    it("the override appears once, in the ancestor's position, with the child's definition", () => {
-        const fields = allFields(CHILD_OVERRIDE);
-        const names = fields.map((f) => f.name);
-        assert.deepEqual(names, ["id", "name", "ssn", "active"], "no duplicate; ancestor position kept");
-        const active = fields.find((f) => f.name === "active")!;
-        assert.ok((active.validators ?? []).length === 1, "child's overriding definition (with validator) wins");
+    it("deserialize hydrates an inherited reference target into a Department instance", () => {
+        const back = deserialize(employeeMeta, { id: "e1", title: "Engineer", dept: "d1", salary: 120000 });
+        assert.ok(back["dept"] instanceof (department as unknown as new () => object));
+        assert.equal((back["dept"] as Record<string, unknown>)["id"], "d1");
     });
 });

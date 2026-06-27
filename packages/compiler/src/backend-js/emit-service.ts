@@ -5,19 +5,33 @@ import { emitLiteral, mkRaw } from "./emit-literal.js";
 import { relModuleSpecifier } from "./module-path.js";
 import type { ServiceEmitDeps } from "./emitter-registry.js";
 
-// `@Service`/RPC is a base-language concern the compiler owns end-to-end: the bundle shell
-// calls these emitters directly on `ir.services` (gated by visibility like classes). No domain
-// pack participates — services emit identically for any (or no) registered domain.
+// `@Service`/RPC is a base-language concern the compiler owns end-to-end: the bundle shell calls
+// these emitters directly on `ir.services` (gated by visibility like classes). No domain pack
+// participates — services emit identically for any (or no) registered domain.
+//
+// The shape is generated marshalling over a `Transport`, importing ONLY from the bundle-local
+// baked RPC modules (./client.js, ./rpc.js, ./errors.js) — never from `@keyma/runtime`:
+//   * Client bundle — a concrete `class UserService extends ServiceClient`; each method body is a
+//     single `_call(...)` that encodes args, invokes the transport, unwraps the envelope, and
+//     hydrates the return.
+//   * Server bundle — an abstract base the app extends, carrying a generated `dispatch(method,
+//     payload, ctx, encoding)` (decode args → call impl → encode result) and `static service`.
 
 /** Bundle-relative module ref of the services file (sits at the bundle root). */
 export const SERVICES_REF = "services";
 
 export type ServiceEmitFiles = { servicesJs: string; servicesDts: string };
 
+// Baked RPC modules the generated services import from (siblings to `services.js`).
+const CLIENT_REF = "client";
+const RPC_REF = "rpc";
+const ERRORS_REF = "errors";
+const TYPES_REF = "types";
+
 // ── shared helpers ───────────────────────────────────────────────────────────
 
-/** Core (array-unwrapped) target `name` of a type — the class a reference/embedded
- *  points at, or the class an `instance` is a value of. */
+/** Core (array-unwrapped) target `name` of a type — the class a reference/embedded points at,
+ *  or the class an `instance` is a value of. */
 function refTargetName(t: IRType): string | undefined {
     const inner = t.kind === "array" ? t.of : t;
     if (inner.kind === "reference" || inner.kind === "embedded") return inner.target;
@@ -25,9 +39,9 @@ function refTargetName(t: IRType): string | undefined {
     return undefined;
 }
 
-/** `name`s of every class referenced by a method list's params/returns
- *  (needed for `.d.ts` type imports). */
-function refTargetNamesOf(methods: readonly IRServiceMethod[]): Set<string> {
+/** `name`s of every class referenced by a method list's params AND returns — needed both as
+ *  live classes (the `refs` Map that drives class-arg/return marshalling) and as `.d.ts` types. */
+function classTargetNamesOf(methods: readonly IRServiceMethod[]): Set<string> {
     const out = new Set<string>();
     for (const m of methods) {
         for (const p of m.params) {
@@ -42,20 +56,8 @@ function refTargetNamesOf(methods: readonly IRServiceMethod[]): Set<string> {
     return out;
 }
 
-/** `name`s of classes referenced by RETURN types only — the client needs these
- *  as live classes (`refs` Map) to hydrate results. Inputs are plain objects. */
-function returnTargetNamesOf(methods: readonly IRServiceMethod[]): Set<string> {
-    const out = new Set<string>();
-    for (const m of methods) {
-        if (m.returnType === undefined) continue;
-        const s = refTargetName(m.returnType);
-        if (s !== undefined) out.add(s);
-    }
-    return out;
-}
-
-/** Build the `import` lines bringing referenced model classes into the services
- *  file. Targets are identities (`name`); resolve each to its class symbol/module. */
+/** Build `import` lines bringing referenced model classes into the services file. Targets are
+ *  identities (`name`); resolve each to its class symbol/module. */
 function buildModelImports(
     targetNames: ReadonlySet<string>,
     deps: ServiceEmitDeps,
@@ -77,85 +79,125 @@ function buildModelImports(
         .map(([spec, bindings]) => `${kw} { ${[...bindings].sort().join(", ")} } from "${spec}";`);
 }
 
-// ── services.js ──────────────────────────────────────────────────────────────
-
-/** Per-method runtime metadata object (ready for `emitLiteral`). */
-function methodMetadata(m: IRServiceMethod): Record<string, unknown> {
-    const out: Record<string, unknown> = { name: m.name };
-    if (m.visibility === "private") out["visibility"] = "private";
-    out["params"] = m.params.map((p) => {
-        // Only direct (non-array) class params are validated server-side against a
-        // single record — record the target class's runtime `name`. A bare-class param
-        // is an `instance` of the class (its `name`); reference/embedded carry `target`.
-        if (p.type.kind === "reference" || p.type.kind === "embedded") {
-            return { name: p.name, ref: p.type.target };
-        }
-        if (p.type.kind === "instance") {
-            return { name: p.name, ref: p.type.name };
-        }
-        return { name: p.name };
-    });
-    if (m.returnType !== undefined) {
-        const name = refTargetName(m.returnType);
-        if (name !== undefined) {
-            out["returnRef"] = name;
-            if (m.returnType.kind === "array") out["returnArray"] = true;
-        }
-    }
-    return out;
+/** Per-service `refs` const name + its `new Map([...])` initializer (model `name` → class). */
+function refsConstName(svc: IRService): string {
+    return `${svc.sourceName}__refs`;
+}
+function emitRefsConst(svc: IRService, targetNames: ReadonlySet<string>, deps: ServiceEmitDeps): string {
+    const entries = [...targetNames]
+        .map((name) => ({ name, symbol: deps.embeddedTypeNames.get(name) }))
+        .filter((e): e is { name: string; symbol: string } => e.symbol !== undefined)
+        .map((e) => `[${JSON.stringify(e.name)}, ${e.symbol}]`)
+        .join(", ");
+    return `const ${refsConstName(svc)} = new Map([${entries}]);`;
 }
 
-function emitServiceClassJs(svc: IRService, deps: ServiceEmitDeps): string {
-    const methods = filterVisible(svc.methods, deps.includePrivate);
-    const meta: Record<string, unknown> = { name: svc.name, sourceName: svc.sourceName };
+/** A method's param/return value type as a codec literal (the IRType is structurally the codec
+ *  FieldType — `reference`/`embedded` use `target`, `instance` uses `name`). */
+function typeLiteral(type: IRType): string {
+    return emitLiteral(type as unknown as Record<string, unknown>);
+}
+
+// ── services.js ──────────────────────────────────────────────────────────────
+
+/** The slim `static service` metadata literal (name + per-method name/visibility for host
+ *  resolution + gating). The host never inspects arg/return types. */
+function serviceMetadataLiteral(svc: IRService, methods: readonly IRServiceMethod[]): string {
+    const meta: Record<string, unknown> = { name: svc.name };
     if (svc.visibility === "private") meta["visibility"] = "private";
-    meta["methods"] = methods.map((m) => methodMetadata(m));
+    meta["methods"] = methods.map((m) => {
+        const mm: Record<string, unknown> = { name: m.name };
+        if (m.visibility === "private") mm["visibility"] = "private";
+        return mm;
+    });
+    return emitLiteral(meta);
+}
 
-    // Client bundles carry a live `refs` Map (target `name` → model class) for return hydration.
-    if (!deps.includePrivate) {
-        const names = returnTargetNamesOf(methods);
-        if (names.size > 0) {
-            const entries = [...names]
-                .map((name) => {
-                    const cls = deps.embeddedTypeNames.get(name) ?? name;
-                    return `[${JSON.stringify(name)}, ${cls}]`;
-                })
-                .join(", ");
-            meta["refs"] = mkRaw(`new Map([${entries}])`);
-        }
+/** Client bundle: a concrete `class <Svc> extends ServiceClient`. Each method marshals via the
+ *  inherited `_call(service, method, args, returnType, refs)`. */
+function emitServiceClientJs(svc: IRService, deps: ServiceEmitDeps): string {
+    const methods = filterVisible(svc.methods, deps.includePrivate);
+    const refs = refsConstName(svc);
+    const lines: string[] = [];
+    lines.push(emitRefsConst(svc, classTargetNamesOf(methods), deps));
+    lines.push("");
+    lines.push(`export class ${svc.sourceName} extends ServiceClient {`);
+    for (const m of methods) {
+        const params = m.params.map((p) => p.name).join(", ");
+        const args = m.params
+            .map((p) => `{ name: ${JSON.stringify(p.name)}, type: ${typeLiteral(p.type)}, value: ${p.name} }`)
+            .join(", ");
+        const ret = m.returnType !== undefined ? typeLiteral(m.returnType) : "undefined";
+        lines.push(`    ${m.name}(${params}) {`);
+        lines.push(`        return this._call(${JSON.stringify(svc.name)}, ${JSON.stringify(m.name)}, [${args}], ${ret}, ${refs});`);
+        lines.push(`    }`);
     }
+    lines.push(`}`);
+    lines.push("");
+    return lines.join("\n");
+}
 
-    return [
-        `export class ${svc.sourceName} {}`,
-        `${svc.sourceName}.service = Object.freeze(${emitLiteral(meta)});`,
-        "",
-    ].join("\n");
+/** Server bundle: an abstract base (the app extends it) carrying the generated `dispatch` switch
+ *  + `static service`. The app's overrides supply the method bodies. */
+function emitServiceServerJs(svc: IRService, deps: ServiceEmitDeps): string {
+    const methods = filterVisible(svc.methods, deps.includePrivate);
+    const refs = refsConstName(svc);
+    const lines: string[] = [];
+    lines.push(emitRefsConst(svc, classTargetNamesOf(methods), deps));
+    lines.push("");
+    lines.push(`export class ${svc.sourceName} {`);
+    lines.push(`    async dispatch(method, payload, ctx, encoding) {`);
+    lines.push(`        switch (method) {`);
+    for (const m of methods) {
+        const paramSpecs = m.params
+            .map((p) => `{ name: ${JSON.stringify(p.name)}, type: ${typeLiteral(p.type)} }`)
+            .join(", ");
+        const ret = m.returnType !== undefined ? typeLiteral(m.returnType) : "undefined";
+        const callArgs = [...m.params.map((_, i) => `args[${i}]`), "ctx"].join(", ");
+        lines.push(`            case ${JSON.stringify(m.name)}: {`);
+        lines.push(`                if (typeof this.${m.name} !== "function") throw new KeymaError("METHOD_NOT_IMPLEMENTED", ${JSON.stringify(`Service "${svc.name}" does not implement "${m.name}"`)});`);
+        lines.push(`                const args = decodeArgs(encoding, payload, [${paramSpecs}], ${refs});`);
+        lines.push(`                return encodeResult(encoding, await this.${m.name}(${callArgs}), ${ret}, ${refs});`);
+        lines.push(`            }`);
+    }
+    lines.push(`            default:`);
+    lines.push(`                throw new KeymaError("METHOD_NOT_FOUND", \`Unknown method "\${method}" on service ${JSON.stringify(svc.name)}\`);`);
+    lines.push(`        }`);
+    lines.push(`    }`);
+    lines.push(`}`);
+    lines.push(`${svc.sourceName}.service = Object.freeze(${serviceMetadataLiteral(svc, methods)});`);
+    lines.push("");
+    return lines.join("\n");
 }
 
 export function emitServicesJs(services: readonly IRService[], deps: ServiceEmitDeps): string {
     const shown = filterVisible(services, deps.includePrivate);
-    // Value imports are only needed for the client `refs` Map (return classes).
-    const refSources = deps.includePrivate
-        ? new Set<string>()
-        : new Set(shown.flatMap((s) => [...returnTargetNamesOf(filterVisible(s.methods, deps.includePrivate))]));
-    const imports = buildModelImports(refSources, deps, false);
+    const allMethods = shown.flatMap((s) => filterVisible(s.methods, deps.includePrivate));
+    const modelImports = buildModelImports(classTargetNamesOf(allMethods), deps, false);
 
-    const blocks = shown.map((s) => emitServiceClassJs(s, deps));
-    return [...imports, ...(imports.length > 0 ? [""] : []), blocks.join("\n")].join("\n");
+    const runtimeImports = deps.includePrivate
+        ? [
+              `import { decodeArgs, encodeResult } from "${relModuleSpecifier(SERVICES_REF, RPC_REF)}";`,
+              `import { KeymaError } from "${relModuleSpecifier(SERVICES_REF, ERRORS_REF)}";`,
+          ]
+        : [`import { ServiceClient } from "${relModuleSpecifier(SERVICES_REF, CLIENT_REF)}";`];
+
+    const blocks = shown.map((s) => (deps.includePrivate ? emitServiceServerJs(s, deps) : emitServiceClientJs(s, deps)));
+    return [...runtimeImports, ...modelImports, "", blocks.join("\n")].join("\n");
 }
 
 // ── services.d.ts ────────────────────────────────────────────────────────────
 
-/** A method's `.d.ts` return type. Always `Promise<T>` — remote calls are async,
- *  so every emitted signature forces an async implementation/usage. */
+/** A method's `.d.ts` return type. Always `Promise<T>` — remote calls are async, so every emitted
+ *  signature forces an async implementation/usage. */
 function methodReturnTs(m: IRServiceMethod, deps: ServiceEmitDeps): string {
     const ret = m.returnType ? irTypeToTs(m.returnType, deps.embeddedTypeNames) : "void";
     return `Promise<${ret}>`;
 }
 
-/** Server/library bundle: an abstract base class the application extends. Methods
- *  carry the injected `ctx` and async returns, so `override` impls are checked. */
-function emitServiceClassDts(svc: IRService, deps: ServiceEmitDeps): string {
+/** Server/library bundle: an abstract base the application extends. Data methods carry the
+ *  injected `ctx` last; the generated `dispatch` is concrete. */
+function emitServiceServerDts(svc: IRService, deps: ServiceEmitDeps): string {
     const lines: string[] = [];
     lines.push(`export declare abstract class ${svc.sourceName} {`);
     lines.push(`    static readonly service: ServiceMetadata;`);
@@ -164,58 +206,40 @@ function emitServiceClassDts(svc: IRService, deps: ServiceEmitDeps): string {
         params.push("ctx: RequestContext");
         lines.push(`    abstract ${m.name}(${params.join(", ")}): ${methodReturnTs(m, deps)};`);
     }
+    lines.push(`    dispatch(method: string, payload: unknown, ctx: RequestContext, encoding: WireEncoding): Promise<unknown>;`);
     lines.push(`}`);
     return lines.join("\n");
 }
 
-/**
- * Client bundle: a branded abstract class. The abstract async method signatures
- * (data params only — `ctx` is server-injected) make the callable surface visible
- * and checkable in editors; the `ServiceBrand` carries the contract that drives
- * `Keyma.call(...)` argument/return inference. The runtime value is the emitted
- * `class` carrying `static service`.
- */
+/** Client bundle: a concrete class bound to a `Transport` via `ServiceClient`. Data methods take
+ *  the declared params only (`ctx` is server-injected) and return `Promise<T>`. */
 function emitServiceClientDts(svc: IRService, deps: ServiceEmitDeps): string {
-    const methods = filterVisible(svc.methods, deps.includePrivate);
-    const declName = `_${svc.sourceName}`;
     const lines: string[] = [];
-
-    lines.push(`declare abstract class ${declName} {`);
-    lines.push(`    static readonly service: ServiceMetadata;`);
-    for (const m of methods) {
+    lines.push(`export declare class ${svc.sourceName} extends ServiceClient {`);
+    for (const m of filterVisible(svc.methods, deps.includePrivate)) {
         const params = m.params.map((p) => `${p.name}: ${irTypeToTs(p.type, deps.embeddedTypeNames)}`).join(", ");
-        lines.push(`    abstract ${m.name}(${params}): ${methodReturnTs(m, deps)};`);
+        lines.push(`    ${m.name}(${params}): ${methodReturnTs(m, deps)};`);
     }
     lines.push(`}`);
-
-    const brand = methods.map((m) => {
-        const args = m.params.map((p) => `${p.name}: ${irTypeToTs(p.type, deps.embeddedTypeNames)}`).join("; ");
-        const argsObj = args.length > 0 ? `{ ${args} }` : "{}";
-        const ret = m.returnType ? irTypeToTs(m.returnType, deps.embeddedTypeNames) : "void";
-        return `    ${m.name}: { args: ${argsObj}; ret: ${ret} };`;
-    });
-    lines.push(`export declare const ${svc.sourceName}: typeof ${declName} & { readonly __service?: {`);
-    lines.push(...brand);
-    lines.push(`} };`);
     return lines.join("\n");
 }
 
 export function emitServicesDts(services: readonly IRService[], deps: ServiceEmitDeps): string {
     const shown = filterVisible(services, deps.includePrivate);
     const allMethods = shown.flatMap((s) => filterVisible(s.methods, deps.includePrivate));
-    const modelImports = buildModelImports(refTargetNamesOf(allMethods), deps, true);
+    const modelImports = buildModelImports(classTargetNamesOf(allMethods), deps, true);
 
     const lines: string[] = [];
     if (deps.includePrivate) {
-        lines.push(`import type { ServiceMetadata, RequestContext } from "./types.js";`);
+        lines.push(`import type { ServiceMetadata, RequestContext, WireEncoding } from "${relModuleSpecifier(SERVICES_REF, TYPES_REF)}";`);
         lines.push(...modelImports);
         lines.push("");
         for (const svc of shown) {
-            lines.push(emitServiceClassDts(svc, deps));
+            lines.push(emitServiceServerDts(svc, deps));
             lines.push("");
         }
     } else {
-        lines.push(`import type { ServiceMetadata } from "./types.js";`);
+        lines.push(`import { ServiceClient } from "${relModuleSpecifier(SERVICES_REF, CLIENT_REF)}";`);
         lines.push(...modelImports);
         lines.push("");
         for (const svc of shown) {

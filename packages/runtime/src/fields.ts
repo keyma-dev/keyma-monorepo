@@ -1,26 +1,79 @@
-import type { SchemaMetadata, FieldMetadata, SchemaClass } from "./types.js";
-
-// The full field set of a schema, own + inherited (real inheritance). `SchemaMetadata.fields`
-// holds OWN fields only; inherited fields live on the `base` chain. This assembles the complete
-// set base-first (root → … → leaf), a child field overriding an inherited one of the same name
-// while keeping the ancestor's position — identical to the order the old field-flattening pass
-// produced, so JSON key order, binary field order, and snapshots stay byte-stable. It also
-// mirrors the compiler's `inheritedFields` (and the C++ runtime's `all_fields`), which is what
-// `value_traits`/`binary_traits` enumerate, so the cross-runtime wire contract is preserved.
+// Codec-facing metadata shape + field-chain helpers.
 //
-// Results are memoized: schema metadata objects are frozen singletons created once at module
-// load, so the full set never changes for a given schema.
-const cache = new WeakMap<SchemaMetadata, readonly FieldMetadata[]>();
+// IMPORTANT — the codec operates on the EMITTED data-model shape, not the legacy
+// `SchemaMetadata`/`SchemaClass` declarations in `types.ts` (those survive only as the
+// schema-domain generator's slicing source). A generated bundle's `<Class>.metadata` is a
+// `ClassMetadata` whose reference/embedded field types carry `target` (not `schema`), whose
+// brand exposes the metadata under `.metadata` (not `.schema`), and whose instances hydrate via
+// the static `fromValue` factory (not `new Class(value)`). The structural types below mirror
+// that emitted shape exactly, so the authored-here codec is baked verbatim and runs unchanged
+// against generated classes.
 
-export function allFields(schema: SchemaMetadata): readonly FieldMetadata[] {
-    if (schema.base === undefined) return schema.fields;
-    const memo = cache.get(schema);
+/** A value type — the codec subset of the core IRType. `reference`/`embedded` carry the
+ *  target class's canonical `name` under `target`; `instance` (param/return positions only,
+ *  never a stored field) carries it under `name`. */
+export type FieldType =
+    | { kind: "string" }
+    | { kind: "number"; bits?: 32 | 64 }
+    | { kind: "integer"; bits?: 8 | 16 | 32 | 64; unsigned?: boolean }
+    | { kind: "bigint" }
+    | { kind: "boolean" }
+    | { kind: "decimal" }
+    | { kind: "bytes" }
+    | { kind: "json" }
+    | { kind: "date" }
+    | { kind: "dateTime" }
+    | { kind: "time" }
+    | { kind: "id" }
+    | { kind: "enum"; values: string[] }
+    | { kind: "array"; of: FieldType; elementNullable?: boolean }
+    | { kind: "reference"; target: string; idType?: FieldType }
+    | { kind: "embedded"; target: string }
+    | { kind: "instance"; name: string };
+
+export type FieldMeta = {
+    name: string;
+    type: FieldType;
+    /** Stable wire tag for binary serialization. Absent ⇒ the 1-based declaration index. */
+    tag?: number;
+};
+
+/** The structural subset of a generated `<Class>.metadata` the codec reads. */
+export type ClassMeta = {
+    name: string;
+    /** OWN fields only (real inheritance) — inherited fields live on `base`. */
+    fields: FieldMeta[];
+    /** Parent class's metadata when this class extends another; absent for a root. */
+    base?: ClassMeta;
+    /** Reference/embedded/instance target `name` → generated class. */
+    refs?: ReadonlyMap<string, ClassRef>;
+};
+
+/** The structural subset of a generated model class the codec needs: its `metadata` brand and
+ *  the static `fromValue` hydration factory. */
+export interface ClassRef {
+    readonly metadata: ClassMeta;
+    fromValue(value: unknown): unknown;
+}
+
+// The full field set of a class, own + inherited (real inheritance). `ClassMeta.fields` holds
+// OWN fields only; inherited fields live on the `base` chain. Assembled base-first (root → … →
+// leaf), a child field overriding an inherited one of the same name while keeping the ancestor's
+// position — identical to the order the compiler's `inheritedFields` (and the C++ `all_fields`)
+// produce, so JSON key order and binary field order stay byte-stable across runtimes.
+//
+// Memoized: metadata objects are frozen singletons created once at module load.
+const cache = new WeakMap<ClassMeta, readonly FieldMeta[]>();
+
+export function allFields(meta: ClassMeta): readonly FieldMeta[] {
+    if (meta.base === undefined) return meta.fields;
+    const memo = cache.get(meta);
     if (memo !== undefined) return memo;
 
     // Walk the base chain leaf-first (cycle-guarded by canonical `name`).
-    const chain: SchemaMetadata[] = [];
+    const chain: ClassMeta[] = [];
     const seen = new Set<string>();
-    let cur: SchemaMetadata | undefined = schema;
+    let cur: ClassMeta | undefined = meta;
     while (cur !== undefined && !seen.has(cur.name)) {
         seen.add(cur.name);
         chain.push(cur);
@@ -29,38 +82,42 @@ export function allFields(schema: SchemaMetadata): readonly FieldMetadata[] {
 
     // Emit root-first; a Map keyed by field name gives each field the ancestor-position of its
     // first declaration while a child override supplies the winning definition.
-    const byName = new Map<string, FieldMetadata>();
+    const byName = new Map<string, FieldMeta>();
     for (let i = chain.length - 1; i >= 0; i--) {
         for (const f of chain[i]!.fields) byName.set(f.name, f);
     }
-    const result: readonly FieldMetadata[] = [...byName.values()];
-    cache.set(schema, result);
+    const result: readonly FieldMeta[] = [...byName.values()];
+    cache.set(meta, result);
     return result;
 }
 
-// `SchemaMetadata.refs` (embedded/reference target `name` → class) holds OWN fields' targets
-// only (real inheritance). An inherited embedded/reference field's target lives in an ancestor's
-// `refs`, so resolve a target name by walking the base chain leaf-first (a child entry shadows an
-// ancestor's of the same name). Mirrors the C++ runtime's `resolve_ref`. Returns undefined when
-// no schema in the chain declares the name (or the schema has no inheritance and no match).
-const refsCache = new WeakMap<SchemaMetadata, ReadonlyMap<string, SchemaClass>>();
+// `ClassMeta.refs` holds OWN fields' targets only (real inheritance). An inherited
+// embedded/reference/instance field's target lives in an ancestor's `refs`, so resolve a target
+// name by walking the base chain leaf-first (a child entry shadows an ancestor's of the same
+// name). Returns undefined when no class in the chain declares the name.
+const refsCache = new WeakMap<ClassMeta, ReadonlyMap<string, ClassRef>>();
 
-export function allRefs(schema: SchemaMetadata): ReadonlyMap<string, SchemaClass> {
-    if (schema.base === undefined) return schema.refs ?? EMPTY_REFS;
-    const memo = refsCache.get(schema);
+export function allRefs(meta: ClassMeta): ReadonlyMap<string, ClassRef> {
+    if (meta.base === undefined) return meta.refs ?? EMPTY_REFS;
+    const memo = refsCache.get(meta);
     if (memo !== undefined) return memo;
 
-    // Walk leaf → root, collecting each schema's own refs; a leaf entry must win, so only set a
-    // key the first time it is seen (leaf-first order means the leaf is seen first).
-    const merged = new Map<string, SchemaClass>();
+    const merged = new Map<string, ClassRef>();
     const seen = new Set<string>();
-    for (let s: SchemaMetadata | undefined = schema; s !== undefined && !seen.has(s.name); s = s.base) {
-        seen.add(s.name);
-        if (s.refs === undefined) continue;
-        for (const [k, v] of s.refs) if (!merged.has(k)) merged.set(k, v);
+    for (let m: ClassMeta | undefined = meta; m !== undefined && !seen.has(m.name); m = m.base) {
+        seen.add(m.name);
+        if (m.refs === undefined) continue;
+        for (const [k, v] of m.refs) if (!merged.has(k)) merged.set(k, v);
     }
-    refsCache.set(schema, merged);
+    refsCache.set(meta, merged);
     return merged;
 }
 
-const EMPTY_REFS: ReadonlyMap<string, SchemaClass> = new Map();
+const EMPTY_REFS: ReadonlyMap<string, ClassRef> = new Map();
+
+/** Resolve the target class `name` of a reference/embedded/instance type (undefined otherwise). */
+export function targetOf(type: FieldType): string | undefined {
+    if (type.kind === "reference" || type.kind === "embedded") return type.target;
+    if (type.kind === "instance") return type.name;
+    return undefined;
+}

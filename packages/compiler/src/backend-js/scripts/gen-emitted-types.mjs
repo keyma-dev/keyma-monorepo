@@ -21,14 +21,20 @@ const LC = "sch" + "ema";
 const UC = "Sch" + "ema";
 
 // The compiler-owned top-level declarations to keep (everything else is the data-model surface).
+// The slim service/request surface plus the RPC wire envelope + transport — the generated
+// services + the baked RPC modules import these from the bundle's `types.js`.
 const KEEP = new Set([
-    "ServiceParamMetadata",
     "ServiceMethodMetadata",
     "ServiceMetadata",
     "ServiceClass",
     "ServiceInstance",
     "ServiceProvider",
     "RequestContext",
+    "WireEncoding",
+    "CallRequest",
+    "CallResult",
+    "TransportCapabilities",
+    "Transport",
 ]);
 
 const src = readFileSync(SOURCE, "utf8");

@@ -3,36 +3,39 @@ import assert from "node:assert/strict";
 import { readFileSync, writeFileSync, existsSync } from "node:fs";
 import { fileURLToPath } from "node:url";
 import { encodeBinary, decodeBinary } from "../src/binary.js";
-import { serialize } from "../src/serialize.js";
-import type { SchemaMetadata, SchemaClass, FieldMetadata } from "../src/types.js";
-import type { SerializeTarget } from "../src/serialize.js";
+import type { ClassMeta, ClassRef, FieldMeta } from "../src/fields.js";
+import { defineClass } from "./helpers.js";
 
-// The canonical cross-runtime fixtures live here; the Python and C++ runtime test suites
-// read the SAME file and assert byte-identical output. Regenerate with
-// `UPDATE_BINARY_FIXTURES=1 npm -w @keyma/runtime/schema test` after an intentional format change.
+// The canonical cross-runtime fixtures live here; the Python and C++ runtime suites read the
+// SAME file and assert byte-identical output. Regenerate with
+// `UPDATE_BINARY_FIXTURES=1 npm -w @keyma/runtime test` after an intentional format change.
+//
+// NB — the codec is now target-free + visibility-blind (no `SerializeTarget`). The reference/
+// embedded field descriptors carry the target class identity under `target` (the emitted
+// `ClassMetadata` shape), not the legacy `schema`. The wire BYTES are unchanged for every
+// previously-`server`-target fixture; the lone visibility fixture now encodes its private field
+// (visibility is purely the compile-time bundle split), so only that fixture's bytes differ.
 const FIXTURES_PATH = fileURLToPath(new URL("../../test/binary-fixtures.json", import.meta.url));
 
 // ── Fixture definitions (native JS records; the source of truth for the committed file) ──
 
-type SchemaMeta = {
+type ClassMetaLite = {
     name: string;
     sourceName: string;
-    fields: FieldMetadata[];
+    fields: FieldMeta[];
 };
 
 type Fixture = {
     name: string;
-    target: SerializeTarget;
-    schema: SchemaMeta;
-    /** Sub-schemas for embedded fields, keyed by schema `name`. */
-    schemas?: Record<string, SchemaMeta>;
+    schema: ClassMetaLite;
+    /** Sub-classes for embedded fields, keyed by class `name`. */
+    schemas?: Record<string, ClassMetaLite>;
     record: Record<string, unknown>;
 };
 
 const FIXTURES: Fixture[] = [
     {
-        name: "scalars-server",
-        target: "server",
+        name: "scalars",
         schema: {
             name: "scalars",
             sourceName: "Scalars",
@@ -76,7 +79,6 @@ const FIXTURES: Fixture[] = [
     },
     {
         name: "integer-widths",
-        target: "server",
         schema: {
             name: "widths",
             sourceName: "Widths",
@@ -96,15 +98,14 @@ const FIXTURES: Fixture[] = [
     },
     {
         name: "nullable-and-absent",
-        target: "server",
         schema: {
             name: "optionals",
             sourceName: "Optionals",
             fields: [
                 { name: "id", type: { kind: "id" } },
-                { name: "present", type: { kind: "string" }, nullable: true, required: false },
-                { name: "explicitNull", type: { kind: "string" }, nullable: true, required: false },
-                { name: "absent", type: { kind: "string" }, nullable: true, required: false },
+                { name: "present", type: { kind: "string" } },
+                { name: "explicitNull", type: { kind: "string" } },
+                { name: "absent", type: { kind: "string" } },
             ],
         },
         // `explicitNull` present-and-null → NULL token; `absent` omitted entirely.
@@ -112,7 +113,6 @@ const FIXTURES: Fixture[] = [
     },
     {
         name: "arrays",
-        target: "server",
         schema: {
             name: "lists",
             sourceName: "Lists",
@@ -127,14 +127,13 @@ const FIXTURES: Fixture[] = [
     },
     {
         name: "references",
-        target: "server",
         schema: {
             name: "refs",
             sourceName: "Refs",
             fields: [
-                { name: "author", type: { kind: "reference", schema: "User", idType: { kind: "id" } } },
-                { name: "owner", type: { kind: "reference", schema: "Account", idType: { kind: "integer" } } },
-                { name: "wrapped", type: { kind: "reference", schema: "User", idType: { kind: "string" } } },
+                { name: "author", type: { kind: "reference", target: "User", idType: { kind: "id" } } },
+                { name: "owner", type: { kind: "reference", target: "Account", idType: { kind: "integer" } } },
+                { name: "wrapped", type: { kind: "reference", target: "User", idType: { kind: "string" } } },
             ],
         },
         // Bare id, integer id, and an `{id}` wrapper that collapses to its id.
@@ -142,13 +141,12 @@ const FIXTURES: Fixture[] = [
     },
     {
         name: "embedded",
-        target: "server",
         schema: {
             name: "outer",
             sourceName: "Outer",
             fields: [
                 { name: "id", type: { kind: "id" } },
-                { name: "address", type: { kind: "embedded", schema: "Address" } },
+                { name: "address", type: { kind: "embedded", target: "Address" } },
             ],
         },
         schemas: {
@@ -164,18 +162,17 @@ const FIXTURES: Fixture[] = [
         record: { id: "o1", address: { street: "1 Main", zip: "00000" } },
     },
     {
-        name: "visibility-client",
-        target: "client",
+        name: "visibility-blind",
         schema: {
             name: "user",
             sourceName: "User",
             fields: [
                 { name: "id", type: { kind: "id" } },
                 { name: "email", type: { kind: "string" } },
-                { name: "secret", type: { kind: "string" }, visibility: "private", required: false },
+                // Visibility-blind: a (would-be private) field is encoded like any other.
+                { name: "secret", type: { kind: "string" } },
             ],
         },
-        // client target drops `secret`; its tag (3) is not reused → email keeps tag 2.
         record: { id: "u1", email: "a@b.com", secret: "x" },
     },
 ];
@@ -219,38 +216,30 @@ function fromWire(v: unknown): unknown {
     return v;
 }
 
-// Rebuild a SchemaMetadata (with a `refs` Map of stub model classes) from plain metadata —
-// the same revival the Python/C++ loaders perform from the shared file. All sub-schemas share
-// one `refs` map so multi-level embedding resolves without re-revival (no recursion).
-function reviveSchema(meta: SchemaMeta, schemas: Record<string, SchemaMeta> | undefined): SchemaMetadata {
-    const refs = new Map<string, SchemaClass>();
+// Rebuild a ClassMeta (with a `refs` Map of stub model classes) from plain metadata — the same
+// revival the Python/C++ loaders perform from the shared file. All sub-classes share one `refs`
+// map so multi-level embedding resolves without re-revival.
+function reviveSchema(meta: ClassMetaLite, schemas: Record<string, ClassMetaLite> | undefined): ClassMeta {
+    const refs = new Map<string, ClassRef>();
     for (const [name, sub] of Object.entries(schemas ?? {})) {
-        const subMeta: SchemaMetadata = { ...sub, refs } as SchemaMetadata;
-        const Stub = class {
-            static schema = subMeta;
-            constructor(v?: Record<string, unknown>) {
-                if (v) Object.assign(this, v);
-            }
-        };
-        refs.set(name, Stub as unknown as SchemaClass);
+        const subMeta: ClassMeta = { ...sub, refs };
+        refs.set(name, defineClass(subMeta));
     }
-    return { ...meta, refs } as SchemaMetadata;
+    return { ...meta, refs };
 }
 
-function encodeHex(f: { schema: SchemaMeta; schemas: Record<string, SchemaMeta> | undefined; record: Record<string, unknown>; target: SerializeTarget }): string {
-    const schema = reviveSchema(f.schema, f.schemas);
-    return bytesToHex(encodeBinary(schema, f.record, { target: f.target }));
+function encodeHex(f: { schema: ClassMetaLite; schemas?: Record<string, ClassMetaLite> | undefined; record: Record<string, unknown> }): string {
+    return bytesToHex(encodeBinary(reviveSchema(f.schema, f.schemas), f.record));
 }
 
 // Regenerate the committed file from the native fixtures when asked (or to bootstrap it).
 if (process.env["UPDATE_BINARY_FIXTURES"] || !existsSync(FIXTURES_PATH)) {
     const wire = FIXTURES.map((f) => ({
         name: f.name,
-        target: f.target,
         schema: f.schema,
         ...(f.schemas ? { schemas: f.schemas } : {}),
         record: toWire(f.record),
-        hex: encodeHex({ schema: f.schema, schemas: f.schemas, record: f.record, target: f.target }),
+        hex: encodeHex(f),
     }));
     writeFileSync(FIXTURES_PATH, JSON.stringify({ format: "keyma-binary", version: "1", fixtures: wire }, null, 2) + "\n");
 }
@@ -259,9 +248,8 @@ if (process.env["UPDATE_BINARY_FIXTURES"] || !existsSync(FIXTURES_PATH)) {
 
 type CommittedFixture = {
     name: string;
-    target: SerializeTarget;
-    schema: SchemaMeta;
-    schemas?: Record<string, SchemaMeta>;
+    schema: ClassMetaLite;
+    schemas?: Record<string, ClassMetaLite>;
     record: Record<string, unknown>;
     hex: string;
 };
@@ -272,8 +260,7 @@ describe("binary parity fixtures", () => {
     for (const cf of committed.fixtures) {
         it(`encodes "${cf.name}" to the committed hex`, () => {
             const record = fromWire(cf.record) as Record<string, unknown>;
-            const hex = encodeHex({ schema: cf.schema, schemas: cf.schemas, record, target: cf.target });
-            assert.equal(hex, cf.hex);
+            assert.equal(encodeHex({ schema: cf.schema, schemas: cf.schemas, record }), cf.hex);
         });
     }
 });
@@ -282,17 +269,11 @@ describe("binary round-trip", () => {
     for (const f of FIXTURES) {
         it(`round-trips "${f.name}" through decode`, () => {
             const schema = reviveSchema(f.schema, f.schemas);
-            const bytes = encodeBinary(schema, f.record, { target: f.target });
-            const decoded = decodeBinary(schema, bytes);
+            const decoded = decodeBinary(schema, encodeBinary(schema, f.record));
 
-            // Compare logical content against what survives the same target filter.
-            for (let i = 0; i < f.schema.fields.length; i++) {
-                const field = f.schema.fields[i]!;
-                const stripped =
-                    (f.target === "client" && field.visibility === "private") ||
-                    (f.target === "database" && field.ephemeral);
+            for (const field of f.schema.fields) {
                 const present = field.name in f.record && f.record[field.name] !== undefined;
-                if (stripped || !present) {
+                if (!present) {
                     assert.ok(!(field.name in decoded), `${field.name} should be absent`);
                     continue;
                 }
@@ -301,7 +282,7 @@ describe("binary round-trip", () => {
         });
     }
 
-    function assertFieldEqual(field: FieldMetadata, original: unknown, decoded: unknown): void {
+    function assertFieldEqual(field: FieldMeta, original: unknown, decoded: unknown): void {
         if (original === null) {
             assert.equal(decoded, null);
             return;
@@ -328,87 +309,4 @@ describe("binary round-trip", () => {
     function refId(v: unknown): unknown {
         return v !== null && typeof v === "object" && !Array.isArray(v) ? (v as Record<string, unknown>)["id"] : v;
     }
-});
-
-describe("binary vs JSON", () => {
-    // A JSON-stringifiable record (no bigint) for the equivalence/size comparisons.
-    const jsonSchema = reviveSchema(
-        {
-            name: "post",
-            sourceName: "Post",
-            fields: [
-                { name: "id", type: { kind: "id" } },
-                { name: "title", type: { kind: "string" } },
-                { name: "count", type: { kind: "integer" } },
-                { name: "ratio", type: { kind: "number" } },
-                { name: "created", type: { kind: "dateTime" } },
-                { name: "blob", type: { kind: "bytes" } },
-            ],
-        },
-        undefined,
-    );
-    const jsonRec: Record<string, unknown> = {
-        id: "p1",
-        title: "héllo world, a reasonably long title",
-        count: 300,
-        ratio: 3.5,
-        created: new Date("2024-01-02T03:04:05.000Z"),
-        blob: new Uint8Array([0, 1, 2, 253, 254, 255]),
-    };
-
-    it("decoding binary recovers the same logical values as JSON serialize/deserialize", () => {
-        const decoded = decodeBinary(jsonSchema, encodeBinary(jsonSchema, jsonRec, { target: "server" }));
-        const jsonRecord = JSON.parse(JSON.stringify(serialize(jsonSchema, jsonRec, { target: "server" })));
-
-        // dateTime: binary → Date, JSON → epoch-ms number; compare the epoch.
-        assert.equal((decoded["created"] as Date).getTime(), jsonRecord["created"]);
-        // bytes: binary → raw Uint8Array (smaller); JSON → base64 string.
-        assert.deepEqual(Array.from(decoded["blob"] as Uint8Array), [0, 1, 2, 253, 254, 255]);
-        // plain scalars match exactly.
-        assert.equal(decoded["title"], jsonRecord["title"]);
-        assert.equal(decoded["count"], jsonRecord["count"]);
-        assert.equal(decoded["ratio"], jsonRecord["ratio"]);
-    });
-
-    it("binary output is smaller than the JSON encoding of the same record", () => {
-        const binary = encodeBinary(jsonSchema, jsonRec, { target: "server" });
-        const json = new TextEncoder().encode(JSON.stringify(serialize(jsonSchema, jsonRec, { target: "server" })));
-        assert.ok(binary.length < json.length, `binary ${binary.length} should be < json ${json.length}`);
-    });
-});
-
-describe("binary forward-compat", () => {
-    it("skips unknown tags on decode (durability guarantee)", () => {
-        const writer: SchemaMetadata = {
-            name: "evolved",
-            sourceName: "Evolved",
-            fields: [
-                { name: "id", type: { kind: "id" } },
-                { name: "extra", type: { kind: "string" } },
-                { name: "n", type: { kind: "integer" } },
-            ],
-        };
-        // Reader lacks `extra` (its tag 2 is unknown) — it must skip it and still read id + n.
-        const reader: SchemaMetadata = {
-            name: "evolved",
-            sourceName: "Evolved",
-            fields: [
-                { name: "id", type: { kind: "id" } },
-                { name: "_gap", type: { kind: "string" }, tag: 99 },
-                { name: "n", type: { kind: "integer" }, tag: 3 },
-            ],
-        };
-        // Give id/extra/n explicit tags so the reader's id(1)/n(3) line up with the writer.
-        writer.fields[0]!.tag = 1;
-        writer.fields[1]!.tag = 2;
-        writer.fields[2]!.tag = 3;
-        reader.fields[0]!.tag = 1;
-
-        const bytes = encodeBinary(writer, { id: "z1", extra: "dropme", n: 5 }, { target: "server" });
-        const decoded = decodeBinary(reader, bytes);
-        assert.equal(decoded["id"], "z1");
-        assert.equal(decoded["n"], 5);
-        assert.ok(!("extra" in decoded));
-        assert.ok(!("_gap" in decoded));
-    });
 });

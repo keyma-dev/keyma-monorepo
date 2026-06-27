@@ -1,13 +1,17 @@
 // Binary wire codec — an alternative encoder of the same per-field data as `serialize`,
-// parallel to JSON (see ../binary-format.md). `encodeBinary` mirrors `serialize.ts`'s
-// per-field traversal (same type switch, same canonical conversions) but emits tag-keyed
-// TLV tokens instead of building a name-keyed record; `bytes` stay raw (not base64).
-// `decodeBinary` is the inverse, hydrating like `deserialize` (Date / Uint8Array /
-// constructed sub-records). Field identity on the wire is `field.tag ?? declarationIndex+1`.
+// parallel to JSON (see ../binary-format.md). `encodeBinary` mirrors `serialize.ts`'s per-field
+// traversal (same type switch, same canonical conversions) but emits tag-keyed TLV tokens
+// instead of building a name-keyed record; `bytes` stay raw (not base64). `decodeBinary` is the
+// inverse, hydrating like `deserialize` (Date / Uint8Array / constructed sub-records). Field
+// identity on the wire is `field.tag ?? declarationIndex+1`.
+//
+// Target-free and visibility-blind (no `SerializeTarget`): every present field is encoded. The
+// per-field payload codec (`encodePayload`/`decodeValue`/`wiretypeOf`) plus the low-level reader
+// helpers are exported so the RPC marshaller can encode positional call args/returns through the
+// SAME byte-emitting primitives — the cross-language wire stays byte-identical by construction.
 
-import type { SchemaMetadata, FieldType, FieldMetadata, SchemaClass } from "./types.js";
-import type { SerializeTarget } from "./serialize.js";
-import { allFields, allRefs } from "./fields.js";
+import type { ClassMeta, FieldType, FieldMeta, ClassRef } from "./fields.js";
+import { allFields, allRefs, targetOf } from "./fields.js";
 import {
     writeVarint,
     readVarint,
@@ -20,41 +24,30 @@ import {
 } from "./varint.js";
 
 // Wire types (the low 3 bits of each field key = tag * 8 + wiretype).
-const WIRE_VARINT = 0;
-const WIRE_FIXED64 = 1;
-const WIRE_LENGTH = 2;
-const WIRE_NULL = 3;
-const WIRE_FIXED32 = 4;
+export const WIRE_VARINT = 0;
+export const WIRE_FIXED64 = 1;
+export const WIRE_LENGTH = 2;
+export const WIRE_NULL = 3;
+export const WIRE_FIXED32 = 4;
 
 const utf8Encoder = new TextEncoder();
 const utf8Decoder = new TextDecoder();
 
-type Refs = ReadonlyMap<string, SchemaClass> | undefined;
+type Refs = ReadonlyMap<string, ClassRef> | undefined;
 
 // ── Encoding ────────────────────────────────────────────────────────────────
 
-export function encodeBinary(
-    schema: SchemaMetadata,
-    value: Record<string, unknown>,
-    opts: { target: SerializeTarget },
-): Uint8Array {
+export function encodeBinary(meta: ClassMeta, value: Record<string, unknown>): Uint8Array {
     const out: number[] = [];
-    encodeRecord(out, schema, value, opts);
+    encodeRecord(out, meta, value);
     return Uint8Array.from(out);
 }
 
-function encodeRecord(
-    out: number[],
-    schema: SchemaMetadata,
-    value: Record<string, unknown>,
-    opts: { target: SerializeTarget },
-): void {
-    const fields = allFields(schema); // own + inherited, base-first (real inheritance)
-    const refs = allRefs(schema);
+export function encodeRecord(out: number[], meta: ClassMeta, value: Record<string, unknown>): void {
+    const fields = allFields(meta); // own + inherited, base-first (real inheritance)
+    const refs = allRefs(meta);
     for (let i = 0; i < fields.length; i++) {
         const field = fields[i]!;
-        if (opts.target === "client" && field.visibility === "private") continue;
-        if (opts.target === "database" && field.ephemeral) continue;
         if (!(field.name in value)) continue;
         const fv = value[field.name];
         if (fv === undefined) continue; // mirrors JSON.stringify dropping `undefined`
@@ -64,7 +57,7 @@ function encodeRecord(
             continue;
         }
         writeKey(out, tag, wiretypeOf(field.type));
-        encodePayload(out, field.type, fv, refs, opts);
+        encodePayload(out, field.type, fv, refs);
     }
 }
 
@@ -72,7 +65,9 @@ function writeKey(out: number[], tag: number, wiretype: number): void {
     writeVarint(out, tag * 8 + wiretype);
 }
 
-function wiretypeOf(type: FieldType): number {
+/** The wiretype a value of `type` uses — drives both the field-key tail bits and (for RPC) the
+ *  static decode dispatch of a keyless positional value. */
+export function wiretypeOf(type: FieldType): number {
     switch (type.kind) {
         case "boolean":
         case "integer":
@@ -84,12 +79,14 @@ function wiretypeOf(type: FieldType): number {
         case "reference":
             return type.idType?.kind === "integer" ? WIRE_VARINT : WIRE_LENGTH;
         default:
-            // string, id, enum, date, time, decimal, bytes, embedded, array, json
+            // string, id, enum, date, time, decimal, bytes, embedded, instance, array, json
             return WIRE_LENGTH;
     }
 }
 
-function encodePayload(out: number[], type: FieldType, value: unknown, refs: Refs, opts: { target: SerializeTarget }): void {
+/** Encode the payload of a single value (no key/tag). The byte-identical core for both record
+ *  fields and RPC positional args; the wiretype is implied by `type` (see `wiretypeOf`). */
+export function encodePayload(out: number[], type: FieldType, value: unknown, refs: Refs): void {
     switch (type.kind) {
         case "boolean":
             writeVarint(out, value ? 1 : 0);
@@ -120,11 +117,12 @@ function encodePayload(out: number[], type: FieldType, value: unknown, refs: Ref
         case "bytes":
             writeLengthBytes(out, value instanceof Uint8Array ? value : new Uint8Array(0));
             return;
-        case "embedded": {
-            const sub = refs?.get(type.schema);
+        case "embedded":
+        case "instance": {
+            const sub = refs?.get(targetOf(type)!);
             const body: number[] = [];
             if (sub !== undefined && isRecord(value)) {
-                encodeRecord(body, sub.schema, value, opts);
+                encodeRecord(body, sub.metadata, value);
             }
             writeLengthBody(out, body);
             return;
@@ -142,7 +140,7 @@ function encodePayload(out: number[], type: FieldType, value: unknown, refs: Ref
             const arr = Array.isArray(value) ? value : [];
             const body: number[] = [];
             writeVarint(body, arr.length);
-            for (const el of arr) encodeElement(body, type.of, el, refs, opts);
+            for (const el of arr) encodeElement(body, type.of, el, refs);
             writeLengthBody(out, body);
             return;
         }
@@ -158,16 +156,16 @@ function encodePayload(out: number[], type: FieldType, value: unknown, refs: Ref
 }
 
 // An array element token: a standalone 1-byte wiretype then payload (no tag).
-function encodeElement(out: number[], type: FieldType, value: unknown, refs: Refs, opts: { target: SerializeTarget }): void {
+function encodeElement(out: number[], type: FieldType, value: unknown, refs: Refs): void {
     if (value === null || value === undefined) {
         out.push(WIRE_NULL);
         return;
     }
     out.push(wiretypeOf(type));
-    encodePayload(out, type, value, refs, opts);
+    encodePayload(out, type, value, refs);
 }
 
-function writeLengthBytes(out: number[], bytes: Uint8Array): void {
+export function writeLengthBytes(out: number[], bytes: Uint8Array): void {
     writeVarint(out, bytes.length);
     for (let i = 0; i < bytes.length; i++) out.push(bytes[i]!);
 }
@@ -257,15 +255,15 @@ function isRecord(value: unknown): value is Record<string, unknown> {
 
 // ── Decoding ────────────────────────────────────────────────────────────────
 
-type Reader = { buf: Uint8Array; pos: number; end: number };
+export type Reader = { buf: Uint8Array; pos: number; end: number };
 
-export function decodeBinary(schema: SchemaMetadata, bytes: Uint8Array): Record<string, unknown> {
-    return decodeRecord(schema, { buf: bytes, pos: 0, end: bytes.length });
+export function decodeBinary(meta: ClassMeta, bytes: Uint8Array): Record<string, unknown> {
+    return decodeRecord(meta, { buf: bytes, pos: 0, end: bytes.length });
 }
 
-function decodeRecord(schema: SchemaMetadata, r: Reader): Record<string, unknown> {
-    const byTag = fieldsByTag(schema);
-    const refs = allRefs(schema); // own + inherited targets (real inheritance)
+export function decodeRecord(meta: ClassMeta, r: Reader): Record<string, unknown> {
+    const byTag = fieldsByTag(meta);
+    const refs = allRefs(meta); // own + inherited targets (real inheritance)
     const out: Record<string, unknown> = {};
     while (r.pos < r.end) {
         const key = readVarintBig(r);
@@ -285,13 +283,15 @@ function decodeRecord(schema: SchemaMetadata, r: Reader): Record<string, unknown
     return out;
 }
 
-function fieldsByTag(schema: SchemaMetadata): Map<number, FieldMetadata> {
-    const m = new Map<number, FieldMetadata>();
-    allFields(schema).forEach((f, i) => m.set(f.tag ?? i + 1, f)); // own + inherited (real inheritance)
+function fieldsByTag(meta: ClassMeta): Map<number, FieldMeta> {
+    const m = new Map<number, FieldMeta>();
+    allFields(meta).forEach((f, i) => m.set(f.tag ?? i + 1, f)); // own + inherited (real inheritance)
     return m;
 }
 
-function decodeValue(r: Reader, type: FieldType, wiretype: number, refs: Refs): unknown {
+/** Decode the payload of a single value given its wiretype (no key). The byte-identical core for
+ *  both record fields and RPC positional args. */
+export function decodeValue(r: Reader, type: FieldType, wiretype: number, refs: Refs): unknown {
     switch (type.kind) {
         case "boolean":
             return readVarintBig(r) !== 0n;
@@ -315,12 +315,13 @@ function decodeValue(r: Reader, type: FieldType, wiretype: number, refs: Refs): 
             return utf8Decoder.decode(readLengthBytes(r));
         case "bytes":
             return new Uint8Array(readLengthBytes(r));
-        case "embedded": {
+        case "embedded":
+        case "instance": {
             const inner = readLengthWindow(r);
-            const sub = refs?.get(type.schema);
+            const sub = refs?.get(targetOf(type)!);
             if (sub === undefined) return decodeUnknownRecord(inner);
-            const rec = decodeRecord(sub.schema, inner);
-            return construct(sub, rec);
+            const rec = decodeRecord(sub.metadata, inner);
+            return sub.fromValue(rec);
         }
         case "reference": {
             if (type.idType?.kind === "integer") {
@@ -414,7 +415,7 @@ function skipValue(r: Reader, wiretype: number): void {
     }
 }
 
-function readVarintBig(r: Reader): bigint {
+export function readVarintBig(r: Reader): bigint {
     const [val, next] = readVarint(r.buf, r.pos);
     r.pos = next;
     return val;
@@ -432,13 +433,8 @@ function readLengthWindow(r: Reader): Reader {
     return { buf: r.buf, pos: start, end: start + len };
 }
 
-function construct(cls: SchemaClass, rec: Record<string, unknown>): unknown {
-    return new (cls as unknown as new (value?: unknown) => unknown)(rec);
-}
-
-// Decode a sub-record whose schema (ref) is unavailable: keep going so the outer record
-// stays parseable, but values cannot be typed — return the raw key→null shells is wrong, so
-// return an empty object (the window has already been consumed by the caller).
+// Decode a sub-record whose class (ref) is unavailable: the window has already been consumed by
+// the caller, so return an empty object to keep the outer record parseable.
 function decodeUnknownRecord(_inner: Reader): Record<string, unknown> {
     return {};
 }

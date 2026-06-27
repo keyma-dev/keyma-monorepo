@@ -1,23 +1,30 @@
-import type { Transport } from "./protocol.js";
-import type { KeymaServer } from "./server.js";
-import type { RequestContext } from "./plugin.js";
+// Base class for a generated per-service client. A generated client class (`UserService`) extends
+// this, is constructed with a `Transport`, and exposes one async method per service method whose
+// body is a single `_call(...)`: build the encoded `CallRequest`, invoke the transport, unwrap
+// the envelope (throwing `KeymaError` on failure), and hydrate the return value.
 
-// In-process transport that hands the request directly to a KeymaServer.
-// Useful for tests and for embedding the server in the same runtime as the
-// client (e.g. SSR). Network transports are user-supplied.
-//
-// An optional contextFactory is invoked per request and forwarded to
-// server.handle() — use this to supply per-request identity (e.g. derived from
-// AsyncLocalStorage in a server framework).
-export function createDirectTransport(
-    server: KeymaServer,
-    contextFactory?: () => RequestContext | Promise<RequestContext>,
-): Transport {
-    if (contextFactory === undefined) {
-        return (request) => server.handle(request);
+import type { ClassRef, FieldType } from "./fields.js";
+import type { Transport } from "./types.js";
+import { KeymaError } from "./errors.js";
+import { encodeArgs, decodeResult, type ArgSpec } from "./rpc.js";
+
+export class ServiceClient {
+    constructor(protected readonly transport: Transport) {}
+
+    /** Marshal a call, invoke the transport, and unwrap/hydrate the result. `args` carry their
+     *  declared name + value type (for positional/named encoding); `returnType` drives result
+     *  hydration (absent ⇒ void); `refs` resolves class-typed args/returns. */
+    protected async _call(
+        service: string,
+        method: string,
+        args: readonly ArgSpec[],
+        returnType: FieldType | undefined,
+        refs: ReadonlyMap<string, ClassRef> | undefined,
+    ): Promise<unknown> {
+        const encoding = this.transport.encoding;
+        const payload = encodeArgs(encoding, args, refs);
+        const result = await this.transport.invoke({ service, method, args: payload });
+        if (!result.ok) throw new KeymaError(result.code, result.message);
+        return decodeResult(encoding, result.data, returnType, refs);
     }
-    return async (request) => {
-        const context = await contextFactory();
-        return server.handle(request, context);
-    };
 }
