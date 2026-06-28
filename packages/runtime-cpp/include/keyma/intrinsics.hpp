@@ -26,6 +26,7 @@
 #include <vector>
 
 #include <keyma/value.hpp>
+#include <keyma/metadata.hpp>  // keyma::Field<T> (for the coalesce overload below)
 
 namespace keyma {
 
@@ -493,6 +494,12 @@ inline Value to_value(const Value& v, alloc_t a = {}) { return Value(v, a); }
 // Nullish coalescing (the `??` operator in authored bodies).
 template <class T, class U> T coalesce(const std::optional<T>& o, U&& def) { return o.has_value() ? *o : T(std::forward<U>(def)); }
 inline Value coalesce(Value v, Value def) { return v.is_null() ? std::move(def) : std::move(v); }
+// Two-axis `keyma::Field<T>` (presence × nullability): fill the default only when the field is
+// ABSENT (a present-null Field keeps its null). For a synthesized `applyDefaults()` on a Field.
+template <class T, class U> Field<T> coalesce(Field<T> f, U&& def) {
+    if (f.is_absent()) return Field<T>{true, std::optional<T>(T(std::forward<U>(def)))};
+    return f;
+}
 
 // Approximate JS `typeof` for a Value (the frontend usually folds typeof into type-is).
 inline std::string_view js_typeof(const Value& v) {

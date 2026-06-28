@@ -47,3 +47,10 @@ def validate(schema: Metadata, value: Dict[str, Any]) -> List[ValidationError]:
             if result is not None:
                 errors.append(result)
     return errors
+
+
+def _keyma_collect(*es: object) -> list:
+    """Collect the non-null candidate errors into a list — the baked collector a synthesized
+    method-driven ``validate()`` lowers ``error.collect(...)`` to (the Python leg of the typed
+    validator hot path; C++ uses ``keyma::collect_errors``). Nullish candidates are dropped."""
+    return [e for e in es if e is not None]

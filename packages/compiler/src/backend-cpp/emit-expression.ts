@@ -1,5 +1,6 @@
 import type { IRExpression, IRType } from "@keyma/core/ir";
 import { intrinsicByOp } from "@keyma/core/ir";
+import { recordLayout, defaultRuntimeSymbols } from "../driver/runtime-symbols.js";
 // Block-body arrows re-emit statements; stmtToCpp/plainReturn live in emit-validators, which
 // imports exprToCpp from here. The cycle is safe — both directions are used only at emit time
 // (inside functions), never during module initialization.
@@ -11,8 +12,11 @@ import { stmtToCpp, plainReturn } from "./emit-validators.js";
  * getter lowers to a call, `this->x()`). The defaults emitter passes a record-oriented
  * accessor instead. `isRefField` marks reference-typed fields, whose members are
  * reached through a `std::shared_ptr` (so `author.id` lowers to `this->author->id`).
+ * `allocVar` names the in-scope `keyma::alloc_t` a synthesized method/lambda binds (e.g.
+ * `__a`), threaded to the typed `record` aggregate init and the `error.collect` intrinsic
+ * so they construct on the right allocator; absent ⇒ a default-constructed allocator (`{}`).
  */
-export type ExprOpts = { fieldExpr: (name: string) => string; isRefField?: (name: string) => boolean };
+export type ExprOpts = { fieldExpr: (name: string) => string; isRefField?: (name: string) => boolean; allocVar?: string };
 
 const TYPED: ExprOpts = { fieldExpr: (n) => `this->${n}` };
 
@@ -70,6 +74,9 @@ export function exprToCpp(expr: IRExpression, opts: ExprOpts = TYPED): string {
 
         case "array":
             return arrayToCpp(expr.elements, opts);
+
+        case "record":
+            return recordToCpp(expr, opts);
 
         case "regexp":
             return `keyma::make_regex(${cppStr(expr.pattern)}, ${cppStr(expr.flags)})`;
@@ -198,9 +205,13 @@ function intrinsicToCpp(expr: Extract<IRExpression, { kind: "intrinsic" }>, opts
         case "instance-of":
             return `keyma::instance_of(${recv}, ${cppStr(literalText(expr.args[0]))})`;
         default: {
-            // Domain-contributed op with a registry-provided native snippet (decision 11).
+            // Domain-contributed op with a registry-provided native snippet (decision 11). The C++
+            // backend threads `allocVar` (e.g. `error.collect` allocates its error vector on it).
             const custom = intrinsicByOp(expr.op)?.emit?.cpp;
-            if (custom !== undefined) return custom(expr.receiver !== null ? recv : null, args);
+            if (custom !== undefined) {
+                const emitterOpts = opts.allocVar !== undefined ? { allocVar: opts.allocVar } : undefined;
+                return custom(expr.receiver !== null ? recv : null, args, emitterOpts);
+            }
             // Every built-in registry op is handled above; an unknown op surfaces as an
             // undeclared call naming the op, failing the build loudly.
             return `keyma::unsupported_intrinsic_${expr.op.replace(/[^A-Za-z0-9_]/g, "_")}()`;
@@ -246,6 +257,42 @@ function arrayToCpp(elements: ReadonlyArray<IRExpression>, opts: ExprOpts): stri
         .map((el) => `__o.push(keyma::to_value(${exprToCpp(el, opts)}, __a));`)
         .join(" ");
     return `[&](keyma::alloc_t __a) { auto __o = keyma::Value::array(__a); ${pushes} return __o; }({})`;
+}
+
+/**
+ * A typed `record` node as a C++ aggregate, driven by the compiler's record-layout table
+ * (`recordLayout`). The aggregate type symbol resolves via the runtime symbol table (falling back
+ * to the canonical name); `pmrString` fields are wrapped on the method/lambda allocator
+ * (`opts.allocVar`, default `{}`). Designated style (`.field = …`) emits in struct-DECLARATION
+ * order (looked up by key) so the init is well-formed regardless of authored property order;
+ * positional style emits `{…}` in layout order. With no registered layout, falls back to a
+ * positional aggregate in authored order (no string wrapping).
+ */
+function recordToCpp(rec: Extract<IRExpression, { kind: "record" }>, opts: ExprOpts): string {
+    const typeSym = defaultRuntimeSymbols.resolve("cpp", rec.type.name) ?? rec.type.name;
+    const allocVar = opts.allocVar ?? "{}";
+    const layout = recordLayout(rec.type.name);
+    const ctor = (val: IRExpression, kind: "pmrString" | "passthrough"): string => {
+        const v = exprToCpp(val, opts);
+        return kind === "pmrString" ? `std::pmr::string(${v}, ${allocVar})` : v;
+    };
+    if (layout === undefined) {
+        const args = rec.properties.map((p) => exprToCpp(p.value, opts)).join(", ");
+        return `${typeSym}{${args}}`;
+    }
+    const byKey = new Map(rec.properties.map((p) => [p.key, p.value] as const));
+    if (layout.style === "designated") {
+        const inits = layout.fields
+            .filter((f) => byKey.has(f.key))
+            .map((f) => `.${f.key} = ${ctor(byKey.get(f.key)!, f.ctor)}`)
+            .join(", ");
+        return `${typeSym}{${inits}}`;
+    }
+    const args = layout.fields
+        .filter((f) => byKey.has(f.key))
+        .map((f) => ctor(byKey.get(f.key)!, f.ctor))
+        .join(", ");
+    return `${typeSym}{${args}}`;
 }
 
 /** A C++ string literal for a JS string (JSON's escaping is valid for C++). */

@@ -196,6 +196,8 @@ export function checkType(type: unknown, path: string): IRValidationError[] {
             }
             return errors;
         }
+        case "optional":
+            return checkType(type["of"], `${path}.of`);
         case "reference": {
             if (!isStr(type["target"]) || type["target"] === "") {
                 return [e(`${path}.target`, "must be a non-empty string")];
@@ -331,6 +333,25 @@ export function checkExpression(expr: unknown, path: string): IRValidationError[
         case "array": {
             if (!isArr(expr["elements"])) return [e(`${path}.elements`, "must be an array")];
             return expr["elements"].flatMap((el, i) => checkExpression(el, `${path}.elements[${i}]`));
+        }
+        case "record": {
+            const errors: IRValidationError[] = [];
+            const t = expr["type"];
+            if (!isObj(t) || (t["kind"] !== "external" && t["kind"] !== "instance")) {
+                errors.push(e(`${path}.type.kind`, 'must be "external" or "instance"'));
+            } else if (!isStr(t["name"]) || t["name"] === "") {
+                errors.push(e(`${path}.type.name`, "must be a non-empty string"));
+            }
+            if (!isArr(expr["properties"])) {
+                errors.push(e(`${path}.properties`, "must be an array"));
+            } else {
+                expr["properties"].forEach((prop, i) => {
+                    if (!isObj(prop)) { errors.push(e(`${path}.properties[${i}]`, "must be an object")); return; }
+                    if (!isStr(prop["key"]) || prop["key"] === "") errors.push(e(`${path}.properties[${i}].key`, "must be a non-empty string"));
+                    errors.push(...checkExpression(prop["value"], `${path}.properties[${i}].value`));
+                });
+            }
+            return errors;
         }
         case "regexp": {
             const errors: IRValidationError[] = [];

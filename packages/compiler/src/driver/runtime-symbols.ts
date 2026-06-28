@@ -61,3 +61,56 @@ export class RuntimeSymbolRegistry {
  * it begins lowering `external` types). A host registers domain runtime types onto it.
  */
 export const defaultRuntimeSymbols = new RuntimeSymbolRegistry();
+
+// ─── Record-layout table (typed `record` IR-node C++ aggregate init) ──────────────────────────
+
+/** How a record property's value is constructed in the C++ typed aggregate:
+ *  - `pmrString`: wrap on the in-scope allocator — `std::pmr::string(<v>, <allocVar>)`.
+ *  - `passthrough`: emit the value verbatim (CTAD/conversion handles it). */
+export type RecordFieldCtor = "pmrString" | "passthrough";
+
+/**
+ * The C++ aggregate-init layout for a typed `{ kind: "record" }` node keyed by its canonical
+ * (`external`/`instance`) type name. `fields` are in struct-DECLARATION order (so designated init
+ * is well-formed — C++ requires designated initializers in declaration order); `style` selects
+ * designated (`.field = …`) vs positional (`{…}`) initialization. Runtime-type knowledge the
+ * compiler legitimately owns (it emits the runtime that defines these aggregates).
+ */
+export type RecordLayout = {
+    fields: { key: string; ctor: RecordFieldCtor }[];
+    style: "designated" | "positional";
+};
+
+/**
+ * A mutable registry mapping a record type's canonical name to its C++ aggregate layout. Mirrors
+ * {@link RuntimeSymbolRegistry}; a host (the CLI) registers a domain's record layouts onto the
+ * module-level {@link defaultRecordLayouts}, which the C++ `record` emitter consults.
+ */
+export class RecordLayoutRegistry {
+    private readonly byName = new Map<string, RecordLayout>();
+
+    /** Register (or override) the layout for one canonical record type name. */
+    register(name: string, layout: RecordLayout): void {
+        this.byName.set(name, layout);
+    }
+
+    /** Register many canonical-name → layout entries, in iteration order. */
+    registerAll(entries: Iterable<readonly [string, RecordLayout]>): void {
+        for (const [name, layout] of entries) this.register(name, layout);
+    }
+
+    /** Resolve the layout for a canonical record type name, or `undefined` when unregistered. */
+    get(name: string): RecordLayout | undefined {
+        return this.byName.get(name);
+    }
+}
+
+/** The default record-layout table backing the C++ `record` emitter. Seeded empty; a host
+ *  registers a domain's record layouts onto it (the schema domain registers `ValidationError`
+ *  and `ValidatorCtx`). */
+export const defaultRecordLayouts = new RecordLayoutRegistry();
+
+/** Resolve a record type's C++ aggregate layout. Delegates to {@link defaultRecordLayouts}. */
+export function recordLayout(name: string): RecordLayout | undefined {
+    return defaultRecordLayouts.get(name);
+}

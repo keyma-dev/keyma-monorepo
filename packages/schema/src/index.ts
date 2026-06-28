@@ -4,6 +4,9 @@ import { schemaIRValidator } from "./ir/index.js";
 import { schemaJsEmitterPack } from "./backend-js/index.js";
 import { schemaPythonEmitterPack } from "./backend-python/index.js";
 import { schemaCppEmitterPack } from "./backend-cpp/index.js";
+import { errorCollectIntrinsic, schemaRuntimeSymbols, schemaRecordLayouts } from "./runtime-contract.js";
+
+export { errorCollectIntrinsic, schemaRuntimeSymbols, schemaRecordLayouts } from "./runtime-contract.js";
 
 /**
  * The schema domain, wired across all four extension seams of a domain-neutral
@@ -24,4 +27,9 @@ export const keymaDomain: KeymaDomain = {
         python: schemaPythonEmitterPack,
         cpp: schemaCppEmitterPack,
     },
+    // The typed-validator hot path contract (the `record`/`optional`/`error.collect` affordances).
+    // Inert until synthesis (Stage B) emits these nodes; registered now so the wiring is in place.
+    intrinsics: [errorCollectIntrinsic],
+    runtimeSymbols: schemaRuntimeSymbols,
+    recordLayouts: schemaRecordLayouts,
 };

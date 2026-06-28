@@ -47,6 +47,8 @@ export function irTypeToCpp(
             const el = irTypeToCpp(type.of, cppTypeByName, enumTypeByName);
             return type.elementNullable ? `std::pmr::vector<std::optional<${el}>>` : `std::pmr::vector<${el}>`;
         }
+        case "optional":
+            return `std::optional<${irTypeToCpp(type.of, cppTypeByName, enumTypeByName)}>`;
         case "reference":
             // A reference is a shared, allocator-aware handle to the target model
             // (id-stub at minimum). The null pointer models absence/null.

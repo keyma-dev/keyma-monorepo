@@ -64,7 +64,12 @@ export type IRType =
      *  `call`/`identifier` expression nodes). The compiler is a mechanical substitutor;
      *  the domain frontend records the bindings. An unbound `typeVar` reaching a backend
      *  is a `validateIR` failure. */
-    | { kind: "typeVar"; name: string };
+    | { kind: "typeVar"; name: string }
+    /** An optional (maybe-absent) value — `T | null` (JS) / `Optional[T]` (Python) /
+     *  `std::optional<T>` (C++). Used to declare a validator's inner-arrow return as "a
+     *  ValidationError or none". Distinct from the field-level presence/nullability axes
+     *  (`required`/`nullable`); this is a structural type used in signatures only. */
+    | { kind: "optional"; of: IRType };
 
 /**
  * An arrow-function parameter. The bare-string form (just the name) is the common
@@ -108,6 +113,15 @@ export type IRExpression =
      * accepted for this cold introspective data; the validator hot path stays typed.
      */
     | { kind: "array"; elements: IRExpression[] }
+    /**
+     * A TYPED object literal carrying a concrete `external`/`instance` type. The typed
+     * companion to the (Value/dict-erased) `object` literal: JS/Python emit a plain
+     * object/dict (the type is erased), while C++ emits a typed aggregate
+     * (`keyma::ValidationError{…}` / `keyma::ValidatorCtx{…}`) driven by the compiler's
+     * record-layout table. Lets the validator hot path build typed error/context structs
+     * without `keyma::Value` erasure. `properties` mirror `object` (insertion order).
+     */
+    | { kind: "record"; type: { kind: "external"; name: string } | { kind: "instance"; name: string }; properties: Array<{ key: string; value: IRExpression }> }
     | { kind: "regexp"; pattern: string; flags: string }
     /**
      * An arrow function. Exactly ONE of `body` (a concise expression arrow — the common

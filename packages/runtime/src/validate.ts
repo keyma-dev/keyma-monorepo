@@ -42,3 +42,12 @@ export function validate(
     }
     return errors;
 }
+
+/**
+ * Collect the non-null candidate errors into a `ValidationError[]` — the baked collector a
+ * synthesized method-driven `validate()` lowers `error.collect(...)` to (the JS leg of the typed
+ * validator hot path; the C++ leg is `keyma::collect_errors`). Each candidate is a per-field
+ * validator result (`ValidationError | null | undefined`); nullish ones are dropped.
+ */
+export const __keyma_collect = (...es: (ValidationError | null | undefined)[]): ValidationError[] =>
+    es.filter((e): e is ValidationError => e != null);

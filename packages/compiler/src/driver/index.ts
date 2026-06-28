@@ -16,7 +16,10 @@ export { scanIntrinsicCompatibility } from "./intrinsic-scan.js";
 export {
     RuntimeSymbolRegistry,
     defaultRuntimeSymbols,
+    RecordLayoutRegistry,
+    defaultRecordLayouts,
+    recordLayout,
 } from "./runtime-symbols.js";
-export type { RuntimeSymbols, RuntimeSymbolLang } from "./runtime-symbols.js";
+export type { RuntimeSymbols, RuntimeSymbolLang, RecordLayout, RecordFieldCtor } from "./runtime-symbols.js";
 export type { KeymaDomain, KeymaDomainEmitterPacks } from "./domain.js";
 export type { IntrinsicDef } from "@keyma/core/ir";

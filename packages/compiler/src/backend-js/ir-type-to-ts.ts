@@ -36,6 +36,9 @@ export function irTypeToTs(
             return type.elementNullable ? `(${irTypeToTs(type.of, embeddedNames)} | null)[]` : el;
         }
 
+        case "optional":
+            return `${irTypeToTs(type.of, embeddedNames)} | null`;
+
         case "reference":
             return embeddedNames?.get(type.target) ?? type.target;
 
@@ -52,8 +55,14 @@ export function irTypeToTs(
         case "external":
             return defaultRuntimeSymbols.resolve("js", type.name) ?? type.name;
 
+        // A function-as-value type → a TS arrow type `(p0: T0, …) => R` (absent `returns` ⇒ `void`).
+        case "function": {
+            const params = type.params.map((p) => `${p.name}: ${irTypeToTs(p.type, embeddedNames)}`).join(", ");
+            const ret = type.returns !== undefined ? irTypeToTs(type.returns, embeddedNames) : "void";
+            return `(${params}) => ${ret}`;
+        }
+
         default:
-            // `function` (param/return-position vocabulary) gains `.d.ts` emission in a later slice.
             throw new Error(`irTypeToTs: unsupported IR type kind "${(type as { kind: string }).kind}"`);
     }
 }

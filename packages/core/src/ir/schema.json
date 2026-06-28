@@ -209,6 +209,12 @@
         },
         {
           "type": "object",
+          "required": ["kind", "of"],
+          "additionalProperties": false,
+          "properties": { "kind": { "const": "optional" }, "of": { "$ref": "#/$defs/IRType" } }
+        },
+        {
+          "type": "object",
           "required": ["kind", "target"],
           "additionalProperties": false,
           "properties": { "kind": { "const": "reference" }, "target": { "type": "string", "minLength": 1 }, "idType": { "$ref": "#/$defs/IRType" } }

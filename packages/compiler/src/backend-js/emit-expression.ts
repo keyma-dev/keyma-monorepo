@@ -63,6 +63,14 @@ export function exprToJs(expr: IRExpression, opts: ExprEmitOptions = {}): string
             case "array":
                 return `[${e.elements.map(emit).join(", ")}]`;
 
+            case "record": {
+                // A typed record erases to a plain object in JS (the `type` is ignored).
+                const props = e.properties
+                    .map((p) => `${JSON.stringify(p.key)}: ${emit(p.value)}`)
+                    .join(", ");
+                return `{ ${props} }`;
+            }
+
             case "regexp":
                 return `/${e.pattern}/${e.flags}`;
 

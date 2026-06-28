@@ -334,7 +334,7 @@ function compileProgram(program: ts.Program, config: FrontendConfig): CompileRes
     }
 
     const ir: KeymaIR = {
-        irVersion: config.irVersion ?? (binaryTags ? "11.1.0" : "11.0.0"),
+        irVersion: config.irVersion ?? (binaryTags ? "12.1.0" : "12.0.0"),
         compilerVersion: config.compilerVersion ?? "0.1.0",
         ...(config.baseDir !== undefined ? { sourceRoot: config.baseDir } : {}),
         classes,

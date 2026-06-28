@@ -34,6 +34,9 @@ export function irTypeToPython(
                 : `List[${el}]`; // Requires from typing import List
         }
 
+        case "optional":
+            return `Optional[${irTypeToPython(type.of, embeddedNames)}]`; // Requires from typing import Optional
+
         case "reference":
             return embeddedNames?.get(type.target) ?? type.target;
 

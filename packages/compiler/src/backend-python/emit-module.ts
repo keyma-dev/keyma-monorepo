@@ -1,5 +1,6 @@
-import type { IRClassDeclaration, IRMember, IRMethod, IRFunctionDeclaration } from "@keyma/core/ir";
+import type { IRClassDeclaration, IRMember, IRMethod, IRFunctionDeclaration, IRType } from "@keyma/core/ir";
 import { collectRefTargets, collectFunctionRefs, collectStatementIdentifiers, filterVisibleFields, filterVisibleMethods, methodBodyForBundle, type Bundle } from "@keyma/core/util";
+import { defaultRuntimeSymbols } from "../driver/runtime-symbols.js";
 import { renderStatements, factoryIdent } from "./emit-validators.js";
 import { intrinsicImports } from "./emit-expression.js";
 import { irTypeToPython } from "./ir-type-to-python.js";
@@ -248,9 +249,46 @@ function buildImports(moduleRef: string, content: ModuleContent, deps: ModuleEmi
         if (ref !== undefined) add(ref, factoryIdent(n));
     }
 
+    // Runtime-provided (`external`) types named in a visible method's signature or a static's type
+    // (e.g. a synthesized `validate() -> List[ValidationError]`). Registered names are imported from
+    // the bundle-local baked schema runtime module (`_keyma_schema`, the home of these runtime
+    // types). Inert until synthesis emits `external`-typed signatures (registry seeded empty ⇒ zero
+    // matches ⇒ byte-identical output today).
+    const externalNames = new Set<string>();
+    for (const cls of classes) {
+        for (const m of filterVisibleMethods(cls, deps.includePrivate)) {
+            if (m.returnType !== undefined) collectExternalTypeNames(m.returnType, externalNames);
+            for (const p of m.params) collectExternalTypeNames(p.type, externalNames);
+        }
+        for (const s of cls.statics ?? []) {
+            if (s.type !== undefined) collectExternalTypeNames(s.type, externalNames);
+        }
+    }
+    for (const name of externalNames) {
+        if (defaultRuntimeSymbols.has(name)) add(SCHEMA_RUNTIME_MODULE, defaultRuntimeSymbols.resolve("python", name) ?? name);
+    }
+
     return [...bySpec.entries()]
         .sort((a, b) => a[0].localeCompare(b[0]))
         .map(([spec, bindings]) => `${spec} ${[...bindings].sort().join(", ")}`);
+}
+
+/** Bundle-local baked schema-runtime module that homes the runtime-provided (`external`) types a
+ *  synthesized method signature names. (Matches the schema Python pack's `_keyma_schema.py` bake.) */
+const SCHEMA_RUNTIME_MODULE = "_keyma_schema";
+
+/** Collect every `external` runtime-type name reachable in a type (through array/optional element
+ *  types and function param/return types) into `out`. Mirrors the JS backend's collector. */
+function collectExternalTypeNames(type: IRType, out: Set<string>): void {
+    switch (type.kind) {
+        case "external": out.add(type.name); break;
+        case "array": collectExternalTypeNames(type.of, out); break;
+        case "optional": collectExternalTypeNames(type.of, out); break;
+        case "function":
+            type.params.forEach((p) => collectExternalTypeNames(p.type, out));
+            if (type.returns !== undefined) collectExternalTypeNames(type.returns, out);
+            break;
+    }
 }
 
 /** Embedded/reference targets of a member list as `{ name, className }` pairs for

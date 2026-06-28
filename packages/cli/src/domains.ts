@@ -1,5 +1,6 @@
 import { defaultIRValidators, defaultIntrinsics } from "@keyma/core/ir";
 import type { IRDocumentValidator } from "@keyma/core/ir";
+import { defaultRuntimeSymbols, defaultRecordLayouts } from "@keyma/compiler";
 import type { KeymaBackend, KeymaDomain } from "@keyma/compiler";
 import type { FrontendDomain } from "@keyma/compiler/frontend-ts";
 import { createJsBackend } from "@keyma/compiler/backend-js";
@@ -241,6 +242,15 @@ export async function prepareDomains(
         // id, so re-running (watch mode) is idempotent.
         if (domain.intrinsics !== undefined) {
             defaultIntrinsics.registerAll(domain.intrinsics);
+        }
+        // Merge the domain's runtime-provided type symbols + C++ record layouts into the compiler's
+        // shared registries the per-language type/record emitters consult. Keyed by canonical name,
+        // so re-running (watch mode) is idempotent.
+        if (domain.runtimeSymbols !== undefined) {
+            defaultRuntimeSymbols.registerAll(domain.runtimeSymbols);
+        }
+        if (domain.recordLayouts !== undefined) {
+            defaultRecordLayouts.registerAll(domain.recordLayouts);
         }
     }
 

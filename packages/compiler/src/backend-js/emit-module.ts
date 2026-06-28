@@ -1,10 +1,11 @@
 import type {
-    IRClassDeclaration, IRMember, IRFunctionDeclaration,
+    IRClassDeclaration, IRMember, IRFunctionDeclaration, IRType,
 } from "@keyma/core/ir";
 import {
     collectRefTargets, collectFunctionRefs, collectStatementIdentifiers,
     filterVisibleFields, filterVisibleMethods, methodBodyForBundle, staticValueForBundle,
 } from "@keyma/core/util";
+import { defaultRuntimeSymbols } from "../driver/runtime-symbols.js";
 import { stmtToJs, exprToJs } from "./emit-expression.js";
 import { irTypeToTs } from "./ir-type-to-ts.js";
 import type { BuildClassData, ClassDtsContext, ClassDtsShape, ClaimedFunctionRendering } from "./emitter-registry.js";
@@ -329,6 +330,24 @@ function buildImports(
                 for (const t of claimedByName.get(fn.name)?.dtsTypeImports ?? []) typeNames.add(t);
             }
         }
+        // Runtime-provided (`external`) types named in a visible method's signature or a static's
+        // type (e.g. a synthesized `validate(): ValidationError[]`). Resolve each registered name to
+        // its emitted symbol; the schema bake homes these runtime types in the bundle's `types.d.ts`
+        // (TYPES_REF). Inert until synthesis emits `external`-typed signatures (registry seeded empty
+        // ⇒ zero matches ⇒ byte-identical .d.ts today).
+        const externalNames = new Set<string>();
+        for (const cls of classes) {
+            for (const m of filterVisibleMethods(cls, deps.includePrivate)) {
+                if (m.returnType !== undefined) collectExternalTypeNames(m.returnType, externalNames);
+                for (const p of m.params) collectExternalTypeNames(p.type, externalNames);
+            }
+            for (const s of cls.statics ?? []) {
+                if (s.type !== undefined) collectExternalTypeNames(s.type, externalNames);
+            }
+        }
+        for (const name of externalNames) {
+            if (defaultRuntimeSymbols.has(name)) typeNames.add(defaultRuntimeSymbols.resolve("js", name) ?? name);
+        }
         if (typeNames.size > 0) add(relModuleSpecifier(moduleRef, TYPES_REF), [...typeNames].sort().join(", "));
     }
 
@@ -352,6 +371,20 @@ function buildImports(
             .map(([spec, set]) => `import { ${[...set].sort().join(", ")} } from "${spec}";`)
         : [];
     return [...parentLines, ...typeLines];
+}
+
+/** Collect every `external` runtime-type name reachable in a type (through array/optional element
+ *  types and function param/return types) into `out`. Drives the `.d.ts` runtime-type imports. */
+function collectExternalTypeNames(type: IRType, out: Set<string>): void {
+    switch (type.kind) {
+        case "external": out.add(type.name); break;
+        case "array": collectExternalTypeNames(type.of, out); break;
+        case "optional": collectExternalTypeNames(type.of, out); break;
+        case "function":
+            type.params.forEach((p) => collectExternalTypeNames(p.type, out));
+            if (type.returns !== undefined) collectExternalTypeNames(type.returns, out);
+            break;
+    }
 }
 
 /** Run the domain's claimed-function renderer over the claimed functions this module owns,

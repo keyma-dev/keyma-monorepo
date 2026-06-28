@@ -86,6 +86,14 @@ export function exprToPython(expr: IRExpression): string {
         case "array":
             return `[${expr.elements.map(exprToPython).join(", ")}]`;
 
+        case "record": {
+            // A typed record erases to a plain dict in Python (the `type` is ignored).
+            const props = expr.properties
+                .map((p) => `${JSON.stringify(p.key)}: ${exprToPython(p.value)}`)
+                .join(", ");
+            return `{ ${props} }`;
+        }
+
         case "regexp":
             return regexpLiteralToPython(expr.pattern, expr.flags); // Requires import re
 

@@ -24,6 +24,7 @@ export function collectIdentifiers(expr: IRExpression, out: Set<string>): void {
             break;
         case "object": expr.properties.forEach((p) => collectIdentifiers(p.value, out)); break;
         case "array": expr.elements.forEach((el) => collectIdentifiers(el, out)); break;
+        case "record": expr.properties.forEach((p) => collectIdentifiers(p.value, out)); break;
         case "arrow":
             if (expr.body) collectIdentifiers(expr.body, out);
             (expr.statements ?? []).forEach((s) => collectStatementIdentifiers(s, out));
@@ -94,6 +95,7 @@ export function collectIntrinsicOps(expr: IRExpression, out: Set<string>): void 
             break;
         case "object": expr.properties.forEach((p) => collectIntrinsicOps(p.value, out)); break;
         case "array": expr.elements.forEach((el) => collectIntrinsicOps(el, out)); break;
+        case "record": expr.properties.forEach((p) => collectIntrinsicOps(p.value, out)); break;
         case "arrow":
             if (expr.body) collectIntrinsicOps(expr.body, out);
             (expr.statements ?? []).forEach((s) => collectIntrinsicOpsInStatement(s, out));
@@ -139,6 +141,7 @@ export function collectTypeVarsInType(type: IRType, out: Set<string>): void {
     switch (type.kind) {
         case "typeVar": out.add(type.name); break;
         case "array": collectTypeVarsInType(type.of, out); break;
+        case "optional": collectTypeVarsInType(type.of, out); break;
         case "function":
             type.params.forEach((p) => collectTypeVarsInType(p.type, out));
             if (type.returns) collectTypeVarsInType(type.returns, out);
@@ -175,6 +178,7 @@ export function collectTypeVarsInExpression(expr: IRExpression, out: Set<string>
             break;
         case "object": expr.properties.forEach((p) => collectTypeVarsInExpression(p.value, out)); break;
         case "array": expr.elements.forEach((el) => collectTypeVarsInExpression(el, out)); break;
+        case "record": expr.properties.forEach((p) => collectTypeVarsInExpression(p.value, out)); break;
         case "arrow":
             expr.params.forEach((p) => { if (typeof p !== "string" && p.type) collectTypeVarsInType(p.type, out); });
             if (expr.returnType) collectTypeVarsInType(expr.returnType, out);

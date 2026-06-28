@@ -26,13 +26,21 @@ export type IntrinsicReceiver = "string" | "array" | "regexp" | "date" | "value"
 export type IntrinsicForm = "method" | "property";
 
 /**
+ * Backend-supplied emission context threaded to an {@link IntrinsicEmitter}. Optional and
+ * additive — a JS/Python backend passes nothing; the C++ backend passes `allocVar` (the in-scope
+ * variable naming the method/lambda `keyma::alloc_t`) so an op like `error.collect` can allocate
+ * on the right allocator. */
+export type IntrinsicEmitterOpts = { allocVar?: string };
+
+/**
  * A native-snippet emitter for a (usually domain-contributed) intrinsic op. It receives the
- * **already-emitted** receiver source (`null` for a free-standing op with no receiver) and the
- * **already-emitted** argument sources, and returns the target-language expression string. The
- * backend renders receiver/args with its own expression emitter, then hands the strings here, so
- * the emitter carries no IR knowledge — it is pure target syntax (decision 11, "native-snippet
- * only"). */
-export type IntrinsicEmitter = (receiver: string | null, args: readonly string[]) => string;
+ * **already-emitted** receiver source (`null` for a free-standing op with no receiver), the
+ * **already-emitted** argument sources, and an optional backend `opts` context (see
+ * {@link IntrinsicEmitterOpts}), and returns the target-language expression string. The backend
+ * renders receiver/args with its own expression emitter, then hands the strings here, so the
+ * emitter carries no IR knowledge — it is pure target syntax (decision 11, "native-snippet
+ * only"). `opts` is optional, so a two-arg emitter `(recv, args) => …` is still assignable. */
+export type IntrinsicEmitter = (receiver: string | null, args: readonly string[], opts?: IntrinsicEmitterOpts) => string;
 
 /**
  * Per-language native-snippet emitters for an intrinsic op. Each language is **optional**: a

@@ -3,6 +3,7 @@ import type { FrontendDomain } from "../frontend-ts/index.js";
 import type { JsEmitterPack } from "../backend-js/index.js";
 import type { PythonEmitterPack } from "../backend-python/index.js";
 import type { CppEmitterPack } from "../backend-cpp/index.js";
+import type { RuntimeSymbols, RecordLayout } from "./runtime-symbols.js";
 
 /**
  * A domain's backend emitter packs, keyed by target language. A domain may contribute to
@@ -47,6 +48,19 @@ export interface KeymaDomain {
      * uses is caught by the driver's pre-emit compatibility scan. Omit when the domain adds no
      * new primitives — the structural shapes (methods, function values, metadata) need none. */
     intrinsics?: IntrinsicDef[];
+    /**
+     * Runtime-provided types this domain contributes to the compiler's runtime symbol table, as
+     * `[canonicalName, perLanguageSymbols]` pairs (registered onto `defaultRuntimeSymbols` by the
+     * host). An `{ kind: "external", name }` IR type resolves its per-language emitted symbol here;
+     * an unregistered name falls back to the canonical name verbatim. Omit when the domain names no
+     * runtime-provided types. */
+    runtimeSymbols?: Array<readonly [string, RuntimeSymbols]>;
+    /**
+     * C++ aggregate layouts for the typed `{ kind: "record" }` IR node this domain emits, as
+     * `[canonicalName, layout]` pairs (registered onto `defaultRecordLayouts` by the host). Drives
+     * the C++ backend's typed-aggregate init (designated/positional, per-field pmr-string wrapping).
+     * Omit when the domain emits no typed records. */
+    recordLayouts?: Array<readonly [string, RecordLayout]>;
     /**
      * The target languages this domain supports (backend `target` ids — `"js"`/`"python"`/`"cpp"`).
      * When set, every configured build target must appear here or the build fails fast with a

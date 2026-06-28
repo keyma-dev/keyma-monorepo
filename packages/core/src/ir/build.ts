@@ -50,6 +50,11 @@ export function arrayType(of: IRType, elementNullable?: boolean): IRType {
     return elementNullable ? { kind: "array", of, elementNullable } : { kind: "array", of };
 }
 
+/** An optional (maybe-absent) type `of?` — `of | null` / `Optional[of]` / `std::optional<of>`. */
+export function optional(of: IRType): IRType {
+    return { kind: "optional", of };
+}
+
 /** A typed function/method parameter; set `optional` for a defaultable trailing param. */
 export function param(name: string, type: IRType, optional?: boolean): IRFunctionParam {
     return optional ? { name, type, optional } : { name, type };
@@ -92,6 +97,19 @@ export function obj(properties: Record<string, IRExpression>): IRExpression {
 /** An array literal, `[e0, e1, …]`, in element order. */
 export function arrayExpr(elements: IRExpression[]): IRExpression {
     return { kind: "array", elements };
+}
+
+/**
+ * A TYPED object literal, `Type{ key: value, … }`. Mirrors {@link obj} but carries a concrete
+ * `external`/`instance` `type` so the C++ backend can emit a typed aggregate; JS/Python ignore
+ * the type and emit a plain object/dict. Throws unless `type` is an `external`/`instance` node
+ * (valid-by-construction; `validateIR` is the backstop). Keys preserve insertion order.
+ */
+export function record(type: IRType, properties: Record<string, IRExpression>): IRExpression {
+    if (type.kind !== "external" && type.kind !== "instance") {
+        throw new Error(`record(): type must be "external" or "instance", got "${type.kind}"`);
+    }
+    return { kind: "record", type, properties: Object.entries(properties).map(([key, value]) => ({ key, value })) };
 }
 
 export function template(parts: IRExpression[]): IRExpression {

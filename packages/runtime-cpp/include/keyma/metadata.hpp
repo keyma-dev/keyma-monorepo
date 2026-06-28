@@ -40,6 +40,29 @@ using ValidatorFn = move_only_function<
     std::expected<void, ValidationError>(const Value&, std::string_view, const Context&) const>;
 using FormatterFn = move_only_function<Value(const Value&, const Context&) const>;
 
+// ─── Typed validator hot path (method-driven synthesis) ──────────────────────
+//
+// The concrete-typed validator context: the enclosing instance, by const-ref. A synthesized
+// `validate()`/`format*()` builds `ValidatorCtx{(*this)}` (CTAD) so cross-field reads are typed
+// member accesses (`ctx.object.<field>`) and the allocator is reachable as
+// `ctx.object.get_allocator()`. Generic over the model type so no per-schema context type is
+// emitted; distinct from the legacy Value-based `Context` (which the A-oracle drivers still use).
+template <class T>
+struct ValidatorCtx {
+    const T& object;
+};
+
+// Collect the non-null candidate errors (each a `std::optional<ValidationError>`) into a vector
+// built on `a` — the typed-vector companion to the JS/Python baked `__keyma_collect`/`_keyma_collect`
+// (the `error.collect` intrinsic lowers to this in C++). A null candidate is skipped; a present one
+// is moved in. (`alloc_t` is spelled out here — it is aliased later, in intrinsics.hpp.)
+template <class... Opts>
+std::pmr::vector<ValidationError> collect_errors(std::pmr::polymorphic_allocator<std::byte> a, Opts&&... opts) {
+    std::pmr::vector<ValidationError> out(a);
+    ( (opts.has_value() ? (void)out.push_back(std::move(*opts)) : (void)0), ... );
+    return out;
+}
+
 // ─── Optional fields with two axes (presence × nullability) ───────────────────
 //
 // Emitted only for a field that is BOTH optional (may be absent) AND nullable

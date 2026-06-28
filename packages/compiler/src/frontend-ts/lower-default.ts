@@ -115,7 +115,7 @@ function literalMatchesType(value: unknown, type: IRType): boolean {
             return Array.isArray(value);
         case "bytes": case "reference": case "embedded":
             return value === null; // only null is a sensible literal default here
-        case "instance": case "function": case "external": case "typeVar":
+        case "instance": case "function": case "external": case "typeVar": case "optional":
             return false; // never a stored field type — no literal default applies
     }
 }
