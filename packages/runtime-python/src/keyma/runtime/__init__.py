@@ -23,12 +23,6 @@ from .deserialize import deserialize, deserialize_value
 from .binary import encode_binary, decode_binary, encode_arg, decode_arg, reader
 from .fields import all_fields, all_refs
 
-# ── Validation / formatting / defaults drivers ─────────────────────────────────
-from .schema_fields import all_schema_fields
-from .validate import validate, ValidationError
-from .format import format
-from .defaults import apply_defaults
-
 # ── Errors ─────────────────────────────────────────────────────────────────────
 from .errors import (
     KeymaError,
@@ -77,12 +71,6 @@ __all__ = [
     "reader",
     "all_fields",
     "all_refs",
-    # validation / formatting / defaults
-    "all_schema_fields",
-    "validate",
-    "ValidationError",
-    "format",
-    "apply_defaults",
     # errors
     "KeymaError",
     "SERVICE_NOT_FOUND",
