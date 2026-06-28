@@ -1,31 +1,29 @@
-// Schema-domain synthesis: lower a class's validators/formatters/defaults/metadata into BASE
-// IR members the compiler emits blindly (the "eliminate domain backends" law — domains
-// synthesize base IR; the compiler has no concept of "validator"/"formatter"/"phase").
+// Schema-domain synthesis: lower a class's validators/formatters into BASE IR methods the
+// compiler emits blindly (the "eliminate domain backends" law — domains synthesize base IR; the
+// compiler has no concept of "validator"/"formatter"/"phase").
 //
 // Each class gains:
 //   - `validate(): ValidationError[]`     — runs every field's validators, collects errors.
 //   - `formatChange/Blur/Submit/Save()`   — applies that phase's formatters in place.
-//   - `applyDefaults()`                   — fills absent fields with their default.
-//   - a static `metadata`                 — pure-`json` introspection (no live functions).
 //
-// All four are INSTANCE methods over `this` (decision 4/7): the validator/formatter factory
+// Both are INSTANCE methods over `this` (decision 4/7): the validator/formatter factory
 // functions (`minLength`/`trim`) stay emitted as function-valued declarations and these methods
 // REFERENCE them, so tree-shaking falls out of the IR call graph. Inheritance is handled by
 // FLATTENING — `inheritedFields` yields own + inherited fields (values already live on `this`),
-// so no `super` call is needed. Private fields / indexes are kept off the client via the
-// `bodyAudience` / static-`audience` gate (the body/value differs by bundle; the signature does
-// not). `metadata` carries OWN fields only with `base` → `Parent.metadata` for chain-walking.
+// so no `super` call is needed. Private fields are kept off the client via the `bodyAudience`
+// gate (the body differs by bundle; the signature does not). Defaults apply at CONSTRUCTION
+// (compiler-owned base codegen), and `metadata` stays compiler-rendered by `buildClassData` — so
+// neither is synthesized here.
 import type {
-    IRClassDeclaration, IRMember, IRMethod, IRStaticMember, IRExpression, IRStatement,
+    IRClassDeclaration, IRMember, IRMethod, IRExpression, IRStatement,
     IRFunctionDeclaration, IRSourceLocation,
 } from "@keyma/core/ir";
 import {
-    arrayExpr, obj, literal, field, ident, member, call, intrinsic, record, constDecl, assign, ret, method, staticMember, external, arrayType,
+    arrayExpr, obj, literal, field, ident, call, intrinsic, record, constDecl, assign, ret, method, external, arrayType,
 } from "@keyma/core/ir";
 import { inheritedFields } from "@keyma/core/util";
 import {
-    fieldValidators, fieldFormatters, fieldEphemeral, fieldIndexes, fieldForm,
-    schemaIndexes, schemaEdge, schemaEphemeral,
+    fieldValidators, fieldFormatters,
     type IRValidator, type IRFormatterSpec, type IRFormatter,
 } from "../ir/extensions.js";
 
@@ -41,15 +39,14 @@ const SERVER_LIBRARY: ("server" | "library")[] = ["server", "library"];
 const FORM_PHASES: IRFormatter["phase"][] = ["change", "blur", "submit"];
 
 /**
- * Synthesize the schema-domain members for one class: the `validate`/`format*`/`applyDefaults`
- * methods (appended to `cls.methods`) and the `metadata` static (appended to `cls.statics`).
- * Returns the members to attach; the caller mutates the class (after name-normalization, so the
- * metadata `name`/`base` are final).
+ * Synthesize the schema-domain methods for one class: the `validate`/`format*` instance methods
+ * (appended to `cls.methods`). Returns the methods to attach; the caller mutates the class (after
+ * name-normalization, so any inheritance-flatten reads the final names).
  */
 export function synthesizeClassMembers(
     cls: IRClassDeclaration,
     deps: SynthesizeDeps,
-): { methods: IRMethod[]; statics: IRStaticMember[] } {
+): { methods: IRMethod[] } {
     const methods: IRMethod[] = [];
 
     const validate = synthesizeValidate(cls, deps);
@@ -59,8 +56,8 @@ export function synthesizeClassMembers(
 
     // Defaults now apply at CONSTRUCTION (`fromValue`/`_hydrate`/`value_traits::from_value` fill an
     // absent field with its default — compiler-owned base codegen, all 3 backends), so no
-    // `applyDefaults()` method is synthesized.
-    return { methods, statics: [synthesizeMetadata(cls)] };
+    // `applyDefaults()` method is synthesized. Metadata stays compiler-rendered by `buildClassData`.
+    return { methods };
 }
 
 // ─── validate() ────────────────────────────────────────────────────────────────
@@ -155,74 +152,6 @@ function synthesizeFormatters(cls: IRClassDeclaration, deps: SynthesizeDeps): IR
 
 function methodNameForPhase(phase: IRFormatter["phase"]): string {
     return "format" + phase.charAt(0).toUpperCase() + phase.slice(1);
-}
-
-// ─── metadata static ─────────────────────────────────────────────────────────────
-
-/**
- * Static `metadata` introspection blob (pure `json`; validators/formatters are NOT carried — the
- * logic lives in the synthesized methods). OWN fields only with `base` → `Parent.metadata` for
- * runtime chain-walking. The client value drops private fields + indexes via the static `audience`
- * gate (server/library see the full value).
- */
-function synthesizeMetadata(cls: IRClassDeclaration): IRStaticMember {
-    const full = classMetadata(cls, { includePrivate: true, includeIndexes: true });
-    const clientReduced = classMetadata(cls, { includePrivate: false, includeIndexes: false });
-
-    const hasPrivate = cls.fields.some((f) => f.visibility === "private");
-    const dropsIndexes = schemaIndexes(cls).length > 0 || cls.fields.some((f) => fieldIndexes(f).length > 0);
-
-    const base: IRStaticMember = staticMember({ name: "metadata", value: full });
-    if (hasPrivate || dropsIndexes) {
-        return staticMember({ name: "metadata", value: full, audience: { audiences: SERVER_LIBRARY, fallback: clientReduced } });
-    }
-    return base;
-}
-
-function classMetadata(cls: IRClassDeclaration, opts: { includePrivate: boolean; includeIndexes: boolean }): IRExpression {
-    const props: Record<string, IRExpression> = {
-        name: literal(cls.name),
-        sourceName: literal(cls.sourceName),
-        fields: arrayExpr(
-            cls.fields
-                .filter((f) => opts.includePrivate || f.visibility !== "private")
-                .map((f) => fieldMetadata(f, opts.includeIndexes)),
-        ),
-    };
-    // Live reference to the parent's metadata so the runtime walks the chain (real inheritance).
-    if (cls.extends !== undefined) props["base"] = member(ident(cls.extends), "metadata");
-    if (opts.includeIndexes) {
-        const indexes = schemaIndexes(cls);
-        if (indexes.length > 0) props["indexes"] = jsonExpr(indexes as unknown);
-    }
-    const edge = schemaEdge(cls);
-    if (edge !== undefined) props["edge"] = jsonExpr(edge as unknown);
-    if (cls.visibility === "private") props["visibility"] = literal("private");
-    if (schemaEphemeral(cls)) props["ephemeral"] = literal(true);
-    return obj(props);
-}
-
-function fieldMetadata(f: IRMember, includeIndexes: boolean): IRExpression {
-    const props: Record<string, IRExpression> = {
-        name: literal(f.name),
-        type: jsonExpr(f.type as unknown),
-    };
-    if (f.visibility === "private") props["visibility"] = literal("private");
-    if (f.readonly) props["readonly"] = literal(true);
-    if (!f.required) props["required"] = literal(false);
-    if (f.nullable) props["nullable"] = literal(true);
-    if (includeIndexes) {
-        const idx = fieldIndexes(f);
-        if (idx.length > 0) props["indexes"] = jsonExpr(idx as unknown);
-    }
-    if (fieldEphemeral(f)) props["ephemeral"] = literal(true);
-    // Only literal defaults ride in metadata (expression defaults are applied by `applyDefaults`).
-    if (f.default !== undefined && f.default.kind === "literal") props["default"] = jsonExpr(f.default as unknown);
-    const form = fieldForm(f);
-    if (form !== undefined) props["form"] = jsonExpr(form as unknown);
-    if (f.deprecated !== undefined) props["deprecated"] = jsonExpr(f.deprecated as unknown);
-    if (f.tag !== undefined) props["tag"] = literal(f.tag);
-    return obj(props);
 }
 
 // ─── Shared helpers ──────────────────────────────────────────────────────────────

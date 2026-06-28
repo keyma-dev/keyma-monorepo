@@ -36,7 +36,6 @@ const deps: ModuleEmitDeps = {
     functionModule: new Map(),
     embeddedTypeNames: new Map(),
     functionDecls: new Map(),
-    claimedFunctionNames: new Set(),
     buildClassData: () => ({}),
 };
 

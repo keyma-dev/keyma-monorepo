@@ -1,4 +1,4 @@
-import { path, reachableFunctions, collectFunctionRefs, filterVisibleFields, inheritedFields } from "@keyma/core/util";
+import { path, reachableFunctions, collectFunctionRefs, inheritedFields } from "@keyma/core/util";
 import type {
     KeymaIR, IRClassDeclaration, IREnumDeclaration, IRService, IRType,
     IRFunctionDeclaration, IRDiagnostic,
@@ -31,7 +31,7 @@ export function createCppBackend(packs: Iterable<CppEmitterPack>): KeymaBackend 
 type SharedDeps = Pick<
     ModuleEmitDeps,
     "nsRoot" | "classBySourceName" | "classModule" | "classNameByName" | "cppTypeByName" | "enumTypeByName" | "enumModuleByName"
-    | "idFieldByName" | "functionDecls" | "functionNames" | "functionModule" | "claimedFunctionNames"
+    | "idFieldByName" | "functionDecls" | "functionNames" | "functionModule"
     | "runtimeInclude" | "referenceTargetNames" | "binary"
 >;
 
@@ -99,12 +99,6 @@ export async function emitCpp(
     };
     for (const s of ir.classes) for (const f of s.fields) collectRefTargets(f.type);
 
-    // Functions a domain renders itself (with its own wrapper) rather than as plain functions.
-    const claimedFunctionNames = new Set<string>();
-    for (const p of packs) {
-        if (p.claimFunctions !== undefined) for (const n of p.claimFunctions(ir)) claimedFunctionNames.add(n);
-    }
-
     const shared: SharedDeps = {
         nsRoot,
         classBySourceName,
@@ -117,7 +111,6 @@ export async function emitCpp(
         functionDecls: new Map(decls.functions.map((d) => [d.name, d])),
         functionNames: new Set(decls.functions.map((d) => d.name)),
         functionModule,
-        claimedFunctionNames,
         runtimeInclude: cppTarget.runtimeInclude,
         referenceTargetNames,
         // Typed binary codec emission is driven by the project-level `binary` config (the
@@ -191,20 +184,14 @@ function emitBundle(
         : ir.classes.filter((s) => s.visibility === "public");
 
     // Per-bundle tree-shaking: keep only the functions reachable from this bundle's visible
-    // roots (class behaviors + defaults + the validator/formatter factories on visible fields,
-    // formatters gated to form phases for the client). Reachability is the client/server gate.
+    // roots (class behaviors + defaults, including the synthesized validate/format* method bodies
+    // that name the factory functions they call). Reachability is the client/server gate.
     const functionsByName = new Map(decls.functions.map((d) => [d.name, d]));
-    const allVisibleFields = visibleClasses.flatMap((s) => filterVisibleFields(s, opts.includePrivate));
     const seeds = collectFunctionRefs(visibleClasses, {
         includePrivate: opts.includePrivate,
         includeDefaults: opts.includeDefaults,
         functionNames: new Set(functionsByName.keys()),
     });
-    // The names a class's members reference (validators + formatters in the data-model domain),
-    // supplied by the primary domain pack — the compiler reads no domain slice itself.
-    if (pack?.referencedFunctionNames !== undefined) {
-        for (const n of pack.referencedFunctionNames(allVisibleFields, { bundle: opts.bundle })) seeds.add(n);
-    }
     const reachable = reachableFunctions(seeds, functionsByName);
     const reachableFns = decls.functions.filter((d) => reachable.has(d.name));
 
@@ -231,15 +218,10 @@ function emitBundle(
         throw new Error("no C++ emitter pack with a class metadata builder registered, but the IR has classes to emit");
     }
     if (moduleRefs.size > 0) {
-        const renderClaimedFunctions = pack?.renderClaimedFunctions !== undefined
-            ? (dcls: readonly IRFunctionDeclaration[]) => pack.renderClaimedFunctions!(dcls, ir)
-            : undefined;
         const deps: ModuleEmitDeps = {
             ...opts, ...shared,
             // Only invoked when classGroups is non-empty, which the guard above proves has a pack.
             buildClassData: pack?.buildClassData ?? (() => { throw new Error("buildClassData missing"); }),
-            ...(pack?.referencedFunctionNames !== undefined ? { referencedFunctionNames: pack.referencedFunctionNames } : {}),
-            ...(renderClaimedFunctions !== undefined ? { renderClaimedFunctions } : {}),
         };
         for (const ref of moduleRefs) {
             const content = emitModuleCpp(ref, classGroups.get(ref) ?? [], enumGroups.get(ref) ?? [], fnGroups.get(ref) ?? [], deps, diagnostics);

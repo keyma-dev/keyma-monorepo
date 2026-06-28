@@ -1,7 +1,7 @@
 import { describe, it } from "node:test";
 import assert from "node:assert/strict";
 import type { IRClassDeclaration, IRFunctionDeclaration, IRMethod, IRStatement, IRExpression } from "@keyma/core/ir";
-import { checkStatement, checkExpression, defaultIntrinsics } from "@keyma/core/ir";
+import { checkStatement, defaultIntrinsics } from "@keyma/core/ir";
 import { synthesizeClassMembers, type SynthesizeDeps } from "../../src/frontend-ts/synthesize.js";
 import { errorCollectIntrinsic } from "../../src/runtime-contract.js";
 
@@ -53,9 +53,6 @@ function byName(methods: IRMethod[], name: string): IRMethod | undefined {
 /** Every synthesized statement / expression must be valid-by-construction. */
 function assertStatementsValid(stmts: IRStatement[], where: string): void {
     stmts.forEach((s, i) => assert.deepEqual(checkStatement(s, `${where}[${i}]`), [], `${where}[${i}] invalid`));
-}
-function assertExprValid(e: IRExpression, where: string): void {
-    assert.deepEqual(checkExpression(e, where), [], `${where} invalid`);
 }
 
 describe("schema synthesis — validate()", () => {
@@ -151,48 +148,15 @@ describe("schema synthesis — applyDefaults()", () => {
     });
 });
 
-describe("schema synthesis — metadata static", () => {
-    const { statics } = synthesizeClassMembers(USER, DEPS);
-    const meta = statics.find((s) => s.name === "metadata");
-
-    it("emits a metadata static gated to drop private fields + indexes on the client", () => {
-        assert.ok(meta !== undefined, "metadata static missing");
-        assert.ok(meta!.audience !== undefined, "private field + indexes ⇒ client-reduced fallback");
-        assert.deepEqual(meta!.audience!.audiences, ["server", "library"]);
-    });
-
-    it("full value carries name/sourceName + all fields; client value drops the private field", () => {
-        const full = meta!.value as { properties: { key: string; value: IRExpression }[] };
-        const fields = full.properties.find((p) => p.key === "fields")!.value as { elements: IRExpression[] };
-        assert.equal(fields.elements.length, 4, "server metadata lists all 4 fields");
-        const client = meta!.audience!.fallback as { properties: { key: string; value: IRExpression }[] };
-        const clientFields = client.properties.find((p) => p.key === "fields")!.value as { elements: IRExpression[] };
-        assert.equal(clientFields.elements.length, 3, "client metadata omits the private field");
-        // Client metadata also drops indexes.
-        assert.equal(client.properties.some((p) => p.key === "indexes"), false, "client metadata omits indexes");
-    });
-
-    it("carries no live validators/formatters (pure json introspection)", () => {
-        assertExprValid(meta!.value, "metadata.value");
-        assertExprValid(meta!.audience!.fallback, "metadata.fallback");
-        // No nested `call`/`arrow` (live functions) anywhere in the metadata expression.
-        const json = JSON.stringify(meta!.value);
-        assert.equal(/"kind":"(call|arrow)"/.test(json), false, "metadata must be pure data, no live functions");
-    });
-});
-
 describe("schema synthesis — no-op classes", () => {
-    it("omits validate/format when a class has none, but always emits metadata", () => {
+    it("omits validate/format when a class has none", () => {
         const plain: IRClassDeclaration = {
             name: "tag", sourceName: "Tag", visibility: "public",
             fields: [{ name: "label", type: { kind: "string" }, visibility: "public", readonly: false, required: true, source: SRC }],
             source: SRC,
         };
-        const { methods, statics } = synthesizeClassMembers(plain, { functionDecls: new Map(), classesBySourceName: new Map([["Tag", plain]]) });
-        assert.equal(methods.length, 0, "no validators/formatters/defaults ⇒ no methods");
-        assert.equal(statics.length, 1);
-        assert.equal(statics[0]!.name, "metadata");
-        assert.equal(statics[0]!.audience, undefined, "no private fields/indexes ⇒ no client gating");
+        const { methods } = synthesizeClassMembers(plain, { functionDecls: new Map(), classesBySourceName: new Map([["Tag", plain]]) });
+        assert.equal(methods.length, 0, "no validators/formatters ⇒ no methods");
     });
 });
 
@@ -216,13 +180,5 @@ describe("schema synthesis — inheritance (flatten)", () => {
         assert.equal(checks.length, 2, "validates inherited name + own dept");
         const json = JSON.stringify(validate.statements);
         assert.equal(/"name":"super"|"kind":"super"/.test(json), false, "no super construct");
-    });
-
-    it("metadata carries OWN fields only with base → Parent.metadata", () => {
-        const { statics } = synthesizeClassMembers(EMPLOYEE, deps);
-        const full = statics[0]!.value as { properties: { key: string; value: IRExpression }[] };
-        const fields = full.properties.find((p) => p.key === "fields")!.value as { elements: IRExpression[] };
-        assert.equal(fields.elements.length, 1, "OWN fields only (dept)");
-        assert.deepEqual(full.properties.find((p) => p.key === "base")!.value, { kind: "member", object: { kind: "identifier", name: "Person" }, member: "metadata" });
     });
 });

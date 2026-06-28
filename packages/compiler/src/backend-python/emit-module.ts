@@ -11,8 +11,9 @@ import { pythonRelImport } from "./module-path.js";
 import { EMITTED_PY_RUNTIME_MODULE } from "./emitted-runtime.js";
 
 /** The declarations a single source module owns: the classes authored in the file plus
- *  the (reachable) functions homed in it — plain utility helpers and claimed domain
- *  factories alike. Either list may be empty (a function-only file still produces a module). */
+ *  the (reachable) functions homed in it — plain utility helpers and the factory functions the
+ *  synthesized methods call alike. Either list may be empty (a function-only file still produces
+ *  a module). */
 export type ModuleContent = {
     classes: readonly IRClassDeclaration[];
     functions: readonly IRFunctionDeclaration[];
@@ -33,29 +34,15 @@ export type ModuleEmitDeps = {
     /** Every project-local function declaration keyed by name (a domain pack reads a
      *  helper factory's params for factory-call arg ordering). */
     functionDecls: ReadonlyMap<string, IRFunctionDeclaration>;
-    /** Names of the functions rendered with the domain wrapper rather than as plain
-     *  functions. The matching renderings come from `renderClaimedFunctions`. */
-    claimedFunctionNames: ReadonlySet<string>;
     /** Domain-supplied builder of the per-class `.metadata` dict (from the emitter
      *  registry's primary pack). Keeps the generic module emitter domain-agnostic. */
     buildClassData: BuildClassData;
-    /** The union of function names a class's members reference (domain-supplied), used to wire
-     *  the module's cross-module imports. Absent when the domain references none. */
-    referencedFunctionNames?: (
-        members: readonly IRMember[],
-        ctx: { bundle: "client" | "server" | "library" },
-    ) => ReadonlySet<string>;
-    /** Render the claimed functions a module owns, with the domain wrapper, one rendered `def`
-     *  block per declaration. Present when `claimedFunctionNames` is non-empty. */
-    renderClaimedFunctions?: (decls: readonly IRFunctionDeclaration[]) => readonly string[];
 };
 
 /** Emit one source module `.py` with every declaration authored in a source file — classes
  *  plus the functions homed there (plain utilities and wrapped domain factories alike).
  *  A function-only file still produces a module. */
 export function emitModulePython(moduleRef: string, content: ModuleContent, deps: ModuleEmitDeps): string {
-    const claimedByName = renderClaimed(content, deps);
-
     // Emit the class + function bodies first so the header can pull in only the math/coercion-
     // intrinsic imports they actually reference (getter/method/default/factory bodies may use them).
     const body: string[] = [];
@@ -64,8 +51,7 @@ export function emitModulePython(moduleRef: string, content: ModuleContent, deps
         body.push("");
     }
     for (const fn of content.functions) {
-        const rendering = claimedByName.get(fn.name);
-        body.push(rendering !== undefined ? rendering : emitFunctionPy(fn));
+        body.push(emitFunctionPy(fn));
         body.push("");
     }
 
@@ -115,18 +101,6 @@ function emitFunctionPy(decl: IRFunctionDeclaration): string {
     if (decl.statements.length === 0) lines.push("    pass");
     else lines.push(renderStatements(decl.statements, "    "));
     return lines.join("\n");
-}
-
-/** Run the domain's claimed-function renderer over the claimed functions this module owns,
- *  returning a name→rendering map (empty when the module owns none). */
-function renderClaimed(content: ModuleContent, deps: ModuleEmitDeps): Map<string, string> {
-    const claimed = content.functions.filter((fn) => deps.claimedFunctionNames.has(fn.name));
-    if (claimed.length === 0) return new Map();
-    if (deps.renderClaimedFunctions === undefined) {
-        throw new Error("module owns claimed functions but no renderClaimedFunctions hook was provided");
-    }
-    const renderings = deps.renderClaimedFunctions(claimed);
-    return new Map(claimed.map((fn, i) => [fn.name, renderings[i]!]));
 }
 
 function emitClass(cls: IRClassDeclaration, deps: ModuleEmitDeps): string[] {
@@ -237,13 +211,11 @@ function buildImports(moduleRef: string, content: ModuleContent, deps: ModuleEmi
         if (ref !== undefined) add(ref, className);
     }
 
-    // Functions referenced from this module — by a domain's per-member metadata, by class
-    // behaviors/defaults, and by the bodies of the functions homed here — resolved to their
-    // source module through `functionModule`. Same-module refs are skipped by `add`.
+    // Functions referenced from this module — by class behaviors/defaults (including the
+    // synthesized validate/format* method bodies, which name the factory functions they call)
+    // and by the bodies of the functions homed here — resolved to their source module through
+    // `functionModule`. Same-module refs are skipped by `add`.
     const fnRefs = new Set<string>();
-    if (deps.referencedFunctionNames !== undefined) {
-        for (const n of deps.referencedFunctionNames(allFields, { bundle: deps.bundle })) fnRefs.add(n);
-    }
     for (const n of collectFunctionRefs(classes, {
         includePrivate: deps.includePrivate,
         includeDefaults: deps.includeDefaults,

@@ -1,4 +1,4 @@
-import { path, moduleRefOf, reachableFunctions, collectFunctionRefs, filterVisibleFields } from "@keyma/core/util";
+import { path, moduleRefOf, reachableFunctions, collectFunctionRefs } from "@keyma/core/util";
 import type { KeymaIR, IRClassDeclaration, IRFunctionDeclaration } from "@keyma/core/ir";
 import type { KeymaBackend, KeymaTargetConfig, ResolvedConfig, EmitFile, EmitResult } from "../driver/index.js";
 import { emitModuleJs, emitModuleDts, type ModuleEmitDeps, type ModuleContent } from "./emit-module.js";
@@ -27,7 +27,7 @@ export function createJsBackend(packs: Iterable<JsEmitterPack>): KeymaBackend {
 
 type SharedDeps = Pick<
     ModuleEmitDeps,
-    "classModule" | "functionModule" | "embeddedTypeNames" | "functionDecls" | "claimedFunctionNames"
+    "classModule" | "functionModule" | "embeddedTypeNames" | "functionDecls"
 >;
 
 type Decls = {
@@ -63,12 +63,6 @@ export async function emitJs(
         decls.functions.map((d) => [d.name, moduleRefOf(d.source.file, ir.sourceRoot, identitySanitizer)])
     );
 
-    // Functions a domain renders itself (with its own wrapper) rather than as plain functions.
-    const claimedFunctionNames = new Set<string>();
-    for (const p of packs) {
-        if (p.claimFunctions !== undefined) for (const n of p.claimFunctions(ir)) claimedFunctionNames.add(n);
-    }
-
     const shared: SharedDeps = {
         classModule,
         functionModule,
@@ -76,7 +70,6 @@ export async function emitJs(
         // class symbol (`sourceName`) for `.d.ts` types and `refs` values.
         embeddedTypeNames: new Map(ir.classes.map((s) => [s.name, s.sourceName])),
         functionDecls: new Map(decls.functions.map((d) => [d.name, d])),
-        claimedFunctionNames,
     };
 
     if (jsTarget.emitClient) {
@@ -142,19 +135,16 @@ function emitBundle(
         : ir.classes.filter((s) => s.visibility === "public");
 
     // Per-bundle tree-shaking: keep only the functions reachable from this bundle's visible
-    // roots (public/private class behaviors + defaults + the per-member functions a domain
-    // attaches to visible members). Reachability is the client/server security gate — a helper
-    // reachable only from a private class's server method never lands in the client bundle.
+    // roots (public/private class behaviors + defaults, including the synthesized
+    // validate/format* method bodies that name the factory functions they call). Reachability is
+    // the client/server security gate — a helper reachable only from a private class's server
+    // method never lands in the client bundle.
     const functionsByName = new Map(decls.functions.map((d) => [d.name, d]));
-    const allVisibleFields = visibleClasses.flatMap((s) => filterVisibleFields(s, opts.includePrivate));
     const seeds = collectFunctionRefs(visibleClasses, {
         includePrivate: opts.includePrivate,
         includeDefaults: opts.includeDefaults,
         functionNames: new Set(functionsByName.keys()),
     });
-    if (pack?.referencedFunctionNames !== undefined) {
-        for (const n of pack.referencedFunctionNames(allVisibleFields, { bundle })) seeds.add(n);
-    }
     const reachable = reachableFunctions(seeds, functionsByName);
     const reachableFns = decls.functions.filter((d) => reachable.has(d.name));
 
@@ -175,15 +165,10 @@ function emitBundle(
         throw new Error("no JS emitter pack with a class-metadata builder registered, but the IR has classes to emit");
     }
     if (moduleContent.size > 0) {
-        const renderClaimedFunctions = pack?.renderClaimedFunctions !== undefined
-            ? (dcls: readonly IRFunctionDeclaration[]) => pack.renderClaimedFunctions!(dcls, ir)
-            : undefined;
         const deps: ModuleEmitDeps = {
             ...opts, ...shared,
             buildClassData: pack?.buildClassData ?? (() => ({})),
             ...(pack?.shapeClassDts !== undefined ? { shapeClassDts: pack.shapeClassDts } : {}),
-            ...(pack?.referencedFunctionNames !== undefined ? { referencedFunctionNames: pack.referencedFunctionNames } : {}),
-            ...(renderClaimedFunctions !== undefined ? { renderClaimedFunctions } : {}),
         };
         for (const [ref, content] of moduleContent) {
             const c: ModuleContent = content;

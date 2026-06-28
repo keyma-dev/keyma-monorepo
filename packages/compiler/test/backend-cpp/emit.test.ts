@@ -42,7 +42,6 @@ function makeDeps(classes: readonly IRClassDeclaration[]): ModuleEmitDeps {
         functionDecls: new Map(),
         functionNames: new Set(),
         functionModule: new Map(),
-        claimedFunctionNames: new Set(),
         runtimeInclude: "<keyma/runtime.hpp>",
         buildClassData: (cls) => ({
             name: cls.name,

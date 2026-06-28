@@ -8,15 +8,16 @@ import {
 import { defaultRuntimeSymbols } from "../driver/runtime-symbols.js";
 import { stmtToJs, exprToJs } from "./emit-expression.js";
 import { irTypeToTs } from "./ir-type-to-ts.js";
-import type { BuildClassData, ClassDtsContext, ClassDtsShape, ClaimedFunctionRendering } from "./emitter-registry.js";
+import type { BuildClassData, ClassDtsContext, ClassDtsShape } from "./emitter-registry.js";
 import { emitLiteral } from "./emit-literal.js";
 import { factoryIdent } from "./emit-validators.js";
 import { relModuleSpecifier } from "./module-path.js";
 import { TYPES_REF } from "./emit-types.js";
 
 /** The declarations a single source module owns: the classes authored in the file plus the
- *  (reachable) functions homed in it — plain utility helpers and claimed factory functions
- *  alike. Either list may be empty (a function-only file still produces a module). */
+ *  (reachable) functions homed in it — plain utility helpers and the factory functions the
+ *  synthesized methods call alike. Either list may be empty (a function-only file still
+ *  produces a module). */
 export type ModuleContent = {
     classes: readonly IRClassDeclaration[];
     functions: readonly IRFunctionDeclaration[];
@@ -40,23 +41,10 @@ export type ModuleEmitDeps = {
     /** Every project-local function declaration keyed by name (a domain pack reads a
      *  factory function's params for factory-call arg ordering). */
     functionDecls: ReadonlyMap<string, IRFunctionDeclaration>;
-    /** Names of the functions rendered with the domain wrapper rather than as plain
-     *  functions. The matching renderings come from `renderClaimedFunctions`. */
-    claimedFunctionNames: ReadonlySet<string>;
     /** Domain-supplied builder of the per-class `.metadata` object (from the emitter
      *  registry's primary pack). Threaded here so the generic module emitter stays
      *  domain-agnostic. */
     buildClassData: BuildClassData;
-    /** The function names a class's members reference (validator/formatter attachments, …),
-     *  read by the domain from its own member extension slice. Absent for domains that attach
-     *  no per-member functions. */
-    referencedFunctionNames?: (
-        members: readonly IRMember[],
-        ctx: { bundle: "client" | "server" | "library" },
-    ) => ReadonlySet<string>;
-    /** Render the claimed functions a module owns, with the domain wrapper. Present whenever
-     *  `claimedFunctionNames` is non-empty. */
-    renderClaimedFunctions?: (decls: readonly IRFunctionDeclaration[]) => readonly ClaimedFunctionRendering[];
     /** Domain hook to override a class's `.d.ts` declaration. From the primary pack; absent for
      *  plain class sets / core-only builds, in which case every class emits the default
      *  `export declare class`. */
@@ -68,14 +56,10 @@ export type ModuleEmitDeps = {
 /** Emit one source module `.js` with every declaration authored in a source file —
  *  classes plus the functions homed there (plain utilities and wrapped factories). */
 export function emitModuleJs(moduleRef: string, content: ModuleContent, deps: ModuleEmitDeps): string {
-    const claimedByName = renderClaimed(content, deps);
     const importLines = buildImports(moduleRef, content, deps, false);
     const bodies: string[] = [];
     for (const cls of orderClassesByInheritance(content.classes)) bodies.push(emitClassJs(cls, deps));
-    for (const fn of content.functions) {
-        const rendering = claimedByName.get(fn.name);
-        bodies.push(rendering !== undefined ? rendering.js : emitFunctionJs(fn));
-    }
+    for (const fn of content.functions) bodies.push(emitFunctionJs(fn));
     return [...importLines, ...(importLines.length > 0 ? [""] : []), bodies.join("\n")].join("\n");
 }
 
@@ -170,16 +154,12 @@ function emitFunctionJs(decl: IRFunctionDeclaration): string {
 
 /** Emit one source module `.d.ts` declaring every declaration authored in a source file. */
 export function emitModuleDts(moduleRef: string, content: ModuleContent, deps: ModuleEmitDeps): string {
-    const claimedByName = renderClaimed(content, deps);
     const lines: string[] = [];
-    lines.push(...buildImports(moduleRef, content, deps, true, claimedByName));
+    lines.push(...buildImports(moduleRef, content, deps, true));
     if (lines.length > 0) lines.push("");
 
     for (const cls of orderClassesByInheritance(content.classes)) lines.push(emitClassDts(cls, deps));
-    for (const fn of content.functions) {
-        const rendering = claimedByName.get(fn.name);
-        lines.push(rendering !== undefined ? rendering.dts : emitFunctionDts(fn, deps.embeddedTypeNames));
-    }
+    for (const fn of content.functions) lines.push(emitFunctionDts(fn, deps.embeddedTypeNames));
 
     return lines.join("\n");
 }
@@ -260,17 +240,16 @@ function emitFunctionDts(decl: IRFunctionDeclaration, embeddedNames: ReadonlyMap
 
 /**
  * Build the import lines a module needs: cross-module class/embedded class refs, the
- * per-member functions its members reference, the utility functions its bodies (class
- * behaviors, defaults, and the functions homed here) reference, and — in the `.d.ts` — the
- * `ClassMetadata` type plus any wrapper types the claimed functions declare. Same-module
- * refs are skipped (the binding is declared in this very file).
+ * utility functions its bodies (class behaviors, defaults, and the functions homed here)
+ * reference, and — in the `.d.ts` — the `ClassMetadata` type plus the runtime (`external`)
+ * types named in a visible method/static signature. Same-module refs are skipped (the
+ * binding is declared in this very file).
  */
 function buildImports(
     moduleRef: string,
     content: ModuleContent,
     deps: ModuleEmitDeps,
     typeOnly: boolean,
-    claimedByName?: ReadonlyMap<string, ClaimedFunctionRendering>,
 ): string[] {
     const bySpec = new Map<string, Set<string>>();
     const add = (spec: string, binding: string): void => {
@@ -312,13 +291,11 @@ function buildImports(
     }
 
     if (!typeOnly) {
-        // Functions referenced from this module — by class behaviors/defaults, by the per-member
-        // functions a domain attaches, and by the bodies of the functions homed here.
+        // Functions referenced from this module — by class behaviors/defaults (including the
+        // synthesized validate/format* method bodies, which name the factory functions they
+        // call) and by the bodies of the functions homed here.
         const fnRefs = new Set<string>();
         for (const n of collectFunctionRefs(classes, { includePrivate: deps.includePrivate, includeDefaults: deps.includeDefaults, functionNames: new Set(deps.functionModule.keys()) })) fnRefs.add(n);
-        if (deps.referencedFunctionNames !== undefined) {
-            for (const n of deps.referencedFunctionNames(allFields, { bundle: deps.bundle })) fnRefs.add(n);
-        }
         for (const fn of content.functions) {
             const ids = new Set<string>();
             for (const stmt of fn.statements) collectStatementIdentifiers(stmt, ids);
@@ -330,15 +307,10 @@ function buildImports(
             add(relModuleSpecifier(moduleRef, targetRef), factoryIdent(n));
         }
     } else {
-        // The `.d.ts` imports `ClassMetadata` (when classes are present) and any wrapper
-        // types the claimed functions declare (e.g. `ValidatorFn` from the types module).
+        // The `.d.ts` imports `ClassMetadata` (when classes are present) plus the runtime
+        // (`external`) types named in a visible method/static signature (below).
         const typeNames = new Set<string>();
         if (classes.length > 0) typeNames.add("ClassMetadata");
-        if (claimedByName !== undefined) {
-            for (const fn of content.functions) {
-                for (const t of claimedByName.get(fn.name)?.dtsTypeImports ?? []) typeNames.add(t);
-            }
-        }
         // Runtime-provided (`external`) types named in a visible method's signature or a static's
         // type (e.g. a synthesized `validate(): ValidationError[]`). Resolve each registered name to
         // its emitted symbol; the schema bake homes these runtime types in the bundle's `types.d.ts`
@@ -394,18 +366,6 @@ function collectExternalTypeNames(type: IRType, out: Set<string>): void {
             if (type.returns !== undefined) collectExternalTypeNames(type.returns, out);
             break;
     }
-}
-
-/** Run the domain's claimed-function renderer over the claimed functions this module owns,
- *  returning a name→rendering map (empty when the module owns none). */
-function renderClaimed(content: ModuleContent, deps: ModuleEmitDeps): Map<string, ClaimedFunctionRendering> {
-    const claimed = content.functions.filter((fn) => deps.claimedFunctionNames.has(fn.name));
-    if (claimed.length === 0) return new Map();
-    if (deps.renderClaimedFunctions === undefined) {
-        throw new Error("module owns claimed functions but no renderClaimedFunctions hook was provided");
-    }
-    const renderings = deps.renderClaimedFunctions(claimed);
-    return new Map(claimed.map((fn, i) => [fn.name, renderings[i]!]));
 }
 
 /**

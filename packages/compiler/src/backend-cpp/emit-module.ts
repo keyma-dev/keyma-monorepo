@@ -15,8 +15,8 @@ import { includePath, namespaceOf, cppSanitizer } from "./module-path.js";
 export type ModuleEmitDeps = {
     includePrivate: boolean;
     includeDefaults: boolean;
-    /** Which bundle is being emitted; threaded into the domain's `buildClassData` /
-     *  `referencedFunctionNames` so it can derive its own per-bundle gating. */
+    /** Which bundle is being emitted; threaded into the domain's `buildClassData` and the
+     *  method-body audience pick so they can derive their own per-bundle gating. */
     bundle: "client" | "server" | "library";
     /** Emit the typed binary codec (keyma::binary_traits<T>) alongside value_traits. Driven
      *  by the project's `binary` config; off ⇒ JSON-only output is byte-for-byte unchanged. */
@@ -46,18 +46,6 @@ export type ModuleEmitDeps = {
     /** Function name → bundle-relative module ref of its declaring file (e.g. "src/validators",
      *  "vendor"). Cross-module function refs resolve through here, like reference targets. */
     functionModule: ReadonlyMap<string, string>;
-    /** Names of the functions rendered with the domain wrapper (validators/formatters) rather
-     *  than as plain functions. The matching renderings come from `renderClaimedFunctions`. */
-    claimedFunctionNames: ReadonlySet<string>;
-    /** Render the claimed (validator/formatter) functions a module owns, with the domain
-     *  wrapper. Present whenever `claimedFunctionNames` is non-empty. */
-    renderClaimedFunctions?: (decls: readonly IRFunctionDeclaration[]) => readonly string[];
-    /** The function names a class's members reference (validators + formatters in the data-model
-     *  domain) — supplied by the primary domain pack so the include wiring needs no domain slice. */
-    referencedFunctionNames?: (
-        members: readonly IRMember[],
-        ctx: { bundle: "client" | "server" | "library" },
-    ) => ReadonlySet<string>;
     /** Complete `#include` token (with delimiters) for the runtime header. */
     runtimeInclude: string;
     /** Domain-supplied builder (from the registered primary pack) of the per-class
@@ -103,9 +91,6 @@ export function emitModuleCpp(
     const useLines = usingDirectives.map((u) => `using namespace ${u};`);
 
     const lines: string[] = ["#pragma once", `#include ${deps.runtimeInclude}`];
-    // A claimed formatter's runtime guard throws std::runtime_error, so a module that owns any
-    // domain-wrapped factory pulls in <stdexcept> (the old shared formatters.hpp did the same).
-    if (functions.some((d) => deps.claimedFunctionNames.has(d.name))) lines.push(`#include <stdexcept>`);
     // The typed binary codec lives in a separate runtime header (keeps the binary-only
     // primitives out of the baked runtime.hpp); pulled in only when binary is enabled.
     if (deps.binary && classes.length > 0) lines.push(`#include <keyma/binary-typed.hpp>`);
@@ -147,19 +132,15 @@ export function emitModuleCpp(
         }
     }
 
-    // ── Functions homed in this module: plain utilities + the domain-wrapped validator/
-    // formatter factories. Emitted before the structs so same-module behaviors can call them;
-    // a function-only source file (e.g. validators.ts) produces just this block. ──
+    // ── Functions homed in this module: plain utilities + the validator/formatter factories the
+    // synthesized methods call (all emitted as plain functions via emitFunctionCpp). Emitted
+    // before the structs so same-module behaviors can call them; a function-only source file
+    // (e.g. validators.ts) produces just this block. ──
     if (functions.length > 0) {
-        const utility = functions.filter((d) => !deps.claimedFunctionNames.has(d.name));
-        const claimed = functions.filter((d) => deps.claimedFunctionNames.has(d.name));
-        const claimedRenderings = claimed.length > 0 && deps.renderClaimedFunctions !== undefined
-            ? deps.renderClaimedFunctions(claimed) : [];
         lines.push("", `namespace ${ns} {`);
         if (useLines.length > 0) { lines.push(...useLines); }
         lines.push("");
-        for (const decl of utility) { lines.push(...emitFunctionCpp(decl, diagnostics)); lines.push(""); }
-        for (const r of claimedRenderings) { lines.push(r, ""); }
+        for (const decl of functions) { lines.push(...emitFunctionCpp(decl, diagnostics)); lines.push(""); }
         lines.push(`}  // namespace ${ns}`, "");
     }
 
@@ -869,7 +850,6 @@ function classRefs(fields: IRMember[], deps: ModuleEmitDeps): { name: string; cp
  *  targets are deliberately excluded here — see referenceIncludes. */
 function buildIncludes(moduleRef: string, classes: readonly IRClassDeclaration[], functions: readonly IRFunctionDeclaration[], deps: ModuleEmitDeps): string[] {
     const refs = new Set<string>();
-    const ownFields = classes.flatMap((s) => filterVisibleFields(s, deps.includePrivate));
     // The value/binary traits enumerate the full set, so embedded/enum target headers are needed
     // for inherited fields too (a base member's complete type).
     const allFields = classes.flatMap((s) => fullFields(s, deps));
@@ -893,12 +873,10 @@ function buildIncludes(moduleRef: string, classes: readonly IRClassDeclaration[]
         if (ref !== undefined && ref !== moduleRef) refs.add(includePath(ref));
     }
 
-    // Every referenced function's source module: factory refs from field metadata (OWN fields —
-    // the `metadata()` data is own-only), utility refs from class behaviors/defaults, and the
-    // helpers the functions homed here call in turn. The domain supplies the member→function
-    // references (validators/formatters) through `referencedFunctionNames`.
+    // Every referenced function's source module: utility refs from class behaviors/defaults
+    // (including the synthesized validate/format* method bodies, which name the factory functions
+    // they call), and the helpers the functions homed here call in turn.
     const fnRefs = new Set<string>([
-        ...(deps.referencedFunctionNames?.(ownFields, { bundle: deps.bundle }) ?? []),
         ...collectFunctionRefs(classes, deps),
     ]);
     for (const fn of functions) {

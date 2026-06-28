@@ -2,7 +2,6 @@ import type {
     KeymaIR,
     IRClassDeclaration,
     IRType,
-    IRMember,
     IRFunctionDeclaration,
 } from "@keyma/core/ir";
 import type { EmitFile } from "../driver/index.js";
@@ -150,32 +149,6 @@ export type CppEmitterPack = {
      *  Provided by the primary domain pack; a domain that only contributes bundle files
      *  (e.g. UI) omits it. */
     buildClassData?: BuildClassData;
-    /**
-     * The names of the functions a class's members reference (validators + formatters in the
-     * data-model domain), so the generic backend can wire each model header's `#include` of the
-     * factory's SOURCE module and seed per-bundle tree-shaking — without reading any domain slice
-     * itself. Formatters are gated to form phases when `bundle === "client"`. The primary domain
-     * pack implements it by reading its own extension slice; omit when a domain references none.
-     */
-    referencedFunctionNames?(
-        members: readonly IRMember[],
-        ctx: { bundle: "client" | "server" | "library" },
-    ): ReadonlySet<string>;
-    /**
-     * Names of `functionDeclarations` this domain renders itself (with its own wrapper) via
-     * `renderClaimedFunctions`, so the generic backend does not emit them as plain functions.
-     * The primary domain claims its validator/formatter factories (re-emitted with the runtime
-     * `ValidatorFn`/`FormatterFn` guard wrapper). Omit when the domain claims none.
-     */
-    claimFunctions?: (ir: KeymaIR) => ReadonlySet<string>;
-    /**
-     * Render the claimed functions a single source module owns, with the domain wrapper, for
-     * splicing into that module's namespace. The generic module emitter passes the module's
-     * claimed subset (in order) and `ir` (to classify each as a validator vs formatter). Returns
-     * one `inline keyma::ValidatorFn`/`FormatterFn` definition per input declaration, in order.
-     * Required when `claimFunctions` returns names.
-     */
-    renderClaimedFunctions?: (decls: readonly IRFunctionDeclaration[], ir: KeymaIR) => readonly string[];
     /**
      * Contribute extra files to each bundle, derived from the domain's own IR slice
      * (e.g. `ir.extensions['ui']`). Runs for **every** registered pack (not just the primary),

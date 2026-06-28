@@ -1,7 +1,6 @@
 import type {
     KeymaIR,
     IRClassDeclaration,
-    IRMember,
     IRFunctionDeclaration,
 } from "@keyma/core/ir";
 import type { EmitFile } from "../driver/index.js";
@@ -81,22 +80,6 @@ export type ServiceEmitDeps = {
 };
 
 /**
- * One claimed function rendered within its source module. Since the function collapse these are
- * ordinary `IRFunctionDeclaration`s, but a domain may re-emit them with a runtime guard wrapper
- * rather than as plain functions. The generic module emitter places the rendering inside the
- * declaration's source module and resolves the cross-module utility-function imports its body
- * needs; the domain only supplies the bodies + the bundle `types`-module names the `.d.ts` uses.
- */
-export type ClaimedFunctionRendering = {
-    /** The `.js` definition, e.g. `export const minLength = (min) => (raw, field) => { … };`. */
-    js: string;
-    /** The `.d.ts` declaration, e.g. `export declare const minLength: (...args: unknown[]) => ValidatorFn;`. */
-    dts: string;
-    /** Type names this `.d.ts` declaration imports from the bundle `types` module (e.g. `ValidatorFn`). */
-    dtsTypeImports: readonly string[];
-};
-
-/**
  * A domain's JS emission contributions. The generic backend keeps the bundle shell (file
  * layout, visibility gating, class / literal emission, and the built-in services file) and
  * dispatches to the registered pack for the domain-semantic `<Class>.metadata` object. The
@@ -119,38 +102,11 @@ export type JsEmitterPack = {
      */
     shapeClassDts?: (cls: IRClassDeclaration, ctx: ClassDtsContext) => ClassDtsShape | undefined;
     /**
-     * The function names a class's members reference (the domain reads its own member
-     * extension slice — e.g. validator/formatter attachments). The generic backend seeds
-     * tree-shaking and wires import statements from this set. Formatters et al. may be gated
-     * to the client form phases when `ctx.bundle === "client"`. Omit when the domain attaches
-     * no per-member functions.
-     */
-    referencedFunctionNames?: (
-        members: readonly IRMember[],
-        ctx: { bundle: "client" | "server" | "library" },
-    ) => ReadonlySet<string>;
-    /**
      * The domain's runtime type-declaration block, appended to each bundle's `types.d.ts`.
      * Lets a domain ship its own metadata `.d.ts` surface (e.g. `ClassMetadata`) alongside the
      * compiler-owned service/request types. Omit when the domain inlines no type surface.
      */
     runtimeTypeDecls?: () => string;
-    /**
-     * Names of `functionDeclarations` this domain renders itself (with its own wrapper) via
-     * `renderClaimedFunctions`, so the generic backend does not emit them as plain functions.
-     * A domain may claim its factory functions (re-emitted with a runtime guard wrapper). Omit
-     * when the domain claims none.
-     */
-    claimFunctions?: (ir: KeymaIR) => ReadonlySet<string>;
-    /**
-     * Render the claimed functions a single source module owns, with the domain wrapper. The
-     * generic module emitter passes the subset of a module's reachable functions whose names are
-     * in `claimFunctions`, in module order, and splices each rendering into that module (resolving
-     * the cross-module imports the body needs). Required when `claimFunctions` returns names.
-     * `decls` is the module's claimed subset; `ir` is the full document (to classify each
-     * rendering). Returns one rendering per input declaration, in order.
-     */
-    renderClaimedFunctions?: (decls: readonly IRFunctionDeclaration[], ir: KeymaIR) => readonly ClaimedFunctionRendering[];
     /**
      * Contribute extra files to each bundle, derived from the domain's own IR slice
      * (e.g. `ir.extensions['ui']`). Unlike `buildClassData` (which only the first/primary

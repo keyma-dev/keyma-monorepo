@@ -1,4 +1,4 @@
-import type { KeymaIR, IRClassDeclaration, IRFunctionDeclaration, IRMember } from "@keyma/core/ir";
+import type { KeymaIR, IRClassDeclaration, IRFunctionDeclaration } from "@keyma/core/ir";
 import type { EmitFile } from "../driver/index.js";
 
 /**
@@ -39,30 +39,6 @@ export type PythonEmitterPack = {
     /** Build the per-class `.metadata` dict. Provided by the data-model domain (the
      *  primary pack); a domain that only contributes bundle files (e.g. UI) omits it. */
     buildClassData?: BuildClassData;
-    /**
-     * The union of function names the given members reference (a domain's per-member helper
-     * functions). The generic backend wires their imports and seeds tree-shaking through this
-     * hook without knowing the domain's member-extension shape; `bundle` lets the pack apply its
-     * own per-bundle gating. Omit when a domain's members reference no functions.
-     */
-    referencedFunctionNames?(
-        members: readonly IRMember[],
-        ctx: { bundle: "client" | "server" | "library" },
-    ): ReadonlySet<string>;
-    /**
-     * Names of `functionDeclarations` this domain renders itself (with its own wrapper) via
-     * `renderClaimedFunctions`, so the generic backend emits them through that hook rather than
-     * as plain `def`s. The data-model domain claims its per-member helper factories (re-emitted
-     * as runtime wrappers co-located in their source module). Omit when none.
-     */
-    claimFunctions?: (ir: KeymaIR) => ReadonlySet<string>;
-    /**
-     * Render the claimed functions a source module owns, with the domain wrapper, one rendered
-     * `def` block per declaration (same order as `decls`). Spliced into the module's body by the
-     * generic emitter. Present whenever `claimFunctions` is. The full IR is passed so the domain
-     * can distinguish its factory kinds.
-     */
-    renderClaimedFunctions?: (decls: readonly IRFunctionDeclaration[], ir: KeymaIR) => readonly string[];
     /**
      * Contribute extra files to each bundle, derived from the domain's own IR slice
      * (e.g. `ir.extensions['ui']`). Runs for **every** registered pack (not just the primary),
