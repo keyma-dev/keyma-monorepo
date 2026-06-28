@@ -18,6 +18,16 @@ export class User {
     get fullName() {
         return `${this.firstName} ${this.lastName}`;
     }
+
+    validate() {
+        const ctx = { "object": this };
+        return [required()(this.id, "id", ctx), minLength(2)(this.firstName, "firstName", ctx)].filter((__e) => __e != null);
+    }
+
+    formatChange() {
+        const ctx = { "object": this };
+        this.firstName = trim()(this.firstName, ctx);
+    }
 }
 
 User.metadata = Object.freeze({

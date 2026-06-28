@@ -787,20 +787,18 @@ describe("emitJs — validators in their source module", () => {
         files = result.files;
     });
 
-    it("emits the factory into its source module with a direct-ref export (no registry)", () => {
+    it("emits the factory as a plain function in its source module (no registry, no wrapper)", () => {
         const content = fileContent(files, "dist/js/server/src/schema.js");
-        assert.ok(content.includes(`export const required =`), "missing required factory export");
+        assert.ok(content.includes(`export function required(`), "missing plain required factory export");
         assert.ok(!content.includes("createValidatorRegistry"), "should not emit a registry");
     });
 
-    it("the injected type-guard returns a ValidationError object, not a string", () => {
+    it("emits the factory WITHOUT an injected type-guard (typed-only, decision 6)", () => {
         const content = fileContent(files, "dist/js/server/src/schema.js");
-        // `required` declares no field param, so the field falls back to `undefined`.
-        assert.ok(
-            content.includes(`return { field: undefined, code: "type_error", message: "expected string" }`),
-            "type-guard must return a ValidationError object",
-        );
-        assert.ok(!content.includes(`return "expected string"`), "must not return a bare string");
+        // The validator→function collapse drops the per-factory runtime type-guard: the synthesized
+        // typed methods (and construction) own type-correctness, so the factory body is the user's
+        // logic only, with NO injected `type_error` branch.
+        assert.ok(!content.includes(`"type_error"`), "no injected type-guard / type_error branch");
     });
 
     it("does not emit a registry.js or a shared validators.js bundle", () => {
@@ -831,9 +829,9 @@ describe("emitJs — formatters in their source module", () => {
         files = result.files;
     });
 
-    it("emits the factory into its source module with a direct-ref export (no registry)", () => {
+    it("emits the factory as a plain function in its source module (no registry, no wrapper)", () => {
         const content = fileContent(files, "dist/js/server/src/schema.js");
-        assert.ok(content.includes(`export const trim =`), "missing trim factory export");
+        assert.ok(content.includes(`export function trim(`), "missing plain trim factory export");
         assert.ok(!content.includes("createFormatterRegistry"), "should not emit a formatter registry");
     });
 

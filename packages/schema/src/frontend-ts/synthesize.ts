@@ -20,7 +20,7 @@ import type {
     IRFunctionDeclaration, IRSourceLocation,
 } from "@keyma/core/ir";
 import {
-    arrayExpr, obj, literal, field, ident, member, call, intrinsic, binary, constDecl, assign, ret, method, staticMember, external, arrayType,
+    arrayExpr, obj, literal, field, ident, member, call, intrinsic, record, constDecl, assign, ret, method, staticMember, external, arrayType,
 } from "@keyma/core/ir";
 import { inheritedFields } from "@keyma/core/util";
 import {
@@ -57,19 +57,21 @@ export function synthesizeClassMembers(
 
     for (const fmt of synthesizeFormatters(cls, deps)) methods.push(fmt);
 
-    const applyDefaults = synthesizeApplyDefaults(cls);
-    if (applyDefaults !== null) methods.push(applyDefaults);
-
+    // Defaults now apply at CONSTRUCTION (`fromValue`/`_hydrate`/`value_traits::from_value` fill an
+    // absent field with its default — compiler-owned base codegen, all 3 backends), so no
+    // `applyDefaults()` method is synthesized.
     return { methods, statics: [synthesizeMetadata(cls)] };
 }
 
 // ─── validate() ────────────────────────────────────────────────────────────────
 
 /**
- * `validate(): ValidationError[]` — builds the validator context `{ object: <self> }`, runs each
- * field's validators (`factory(args)(this.field, "field", ctx)`), and returns the non-null errors.
- * Null when the class (own + inherited) has no validators. Private-field checks are gated to
- * server/library via `bodyAudience`; the client body validates only public fields.
+ * `validate(): ValidationError[]` — builds the typed validator context
+ * `ctx = ValidatorCtx{ object: self }`, runs each field's validators as a uniform 3-arg call
+ * `factory(args)(this.field, "field", ctx)`, and collects the non-null errors via the
+ * `error.collect` intrinsic. Null when the class (own + inherited) has no validators. Private-field
+ * checks are gated to server/library via `bodyAudience`; the client body validates only public
+ * fields. (Required-presence is a CONSTRUCTION concern, decision 6 — `validate()` is validators-only.)
  */
 function synthesizeValidate(cls: IRClassDeclaration, deps: SynthesizeDeps): IRMethod | null {
     const fields = inheritedFields(cls, deps.classesBySourceName);
@@ -81,13 +83,13 @@ function synthesizeValidate(cls: IRClassDeclaration, deps: SynthesizeDeps): IRMe
 
     const bodyFor = (fs: IRMember[]): IRStatement[] => {
         const checks = checksFor(fs);
-        if (checks.length === 0) return [ret(arrayExpr([]))];
+        // error.collect(c0, c1, …) — the variadic "keep the non-null candidates" intrinsic, emitting
+        // `__keyma_collect`/`_keyma_collect` (JS/Python) and `keyma::collect_errors` (C++). No ctx
+        // when there are no checks (nothing references it).
+        if (checks.length === 0) return [ret(intrinsic("error.collect", null, []))];
         return [
-            constDecl("ctx", ctxObject()),
-            // [c0, c1, …].filter((e) => e != null)
-            ret(intrinsic("array.filter", arrayExpr(checks), [
-                { kind: "arrow", params: ["e"], body: binary("!=", ident("e"), literal(null)) },
-            ])),
+            constDecl("ctx", ctxRecord()),
+            ret(intrinsic("error.collect", null, checks)),
         ];
     };
 
@@ -125,7 +127,7 @@ function synthesizeFormatters(cls: IRClassDeclaration, deps: SynthesizeDeps): IR
                 fieldFormatters(f).filter((fmt) => fmt.phase === phase).map((fmt) => formatterApply(f, fmt.spec, deps)),
             );
             if (applies.length === 0) return [];
-            return [constDecl("ctx", ctxObject()), ...applies];
+            return [constDecl("ctx", ctxRecord()), ...applies];
         };
 
         if (phase === "save") {
@@ -153,36 +155,6 @@ function synthesizeFormatters(cls: IRClassDeclaration, deps: SynthesizeDeps): IR
 
 function methodNameForPhase(phase: IRFormatter["phase"]): string {
     return "format" + phase.charAt(0).toUpperCase() + phase.slice(1);
-}
-
-// ─── applyDefaults() ─────────────────────────────────────────────────────────────
-
-/**
- * `applyDefaults()` — fills each absent field with its default via nullish-coalesce
- * (`this.field = this.field ?? <default>`), covering both literal and expression defaults
- * (portable `??` emits idiomatically in all three backends). Null when no field has a default.
- * Private-field defaults are gated to server/library.
- */
-function synthesizeApplyDefaults(cls: IRClassDeclaration): IRMethod | null {
-    // Defaults apply to a class's OWN fields only (a subclass re-running a parent's defaults would
-    // double-apply); inherited defaults are applied by the parent's own `applyDefaults`.
-    const fields = cls.fields;
-    if (!fields.some((f) => f.default !== undefined)) return null;
-
-    const bodyFor = (fs: IRMember[]): IRStatement[] =>
-        fs.filter((f) => f.default !== undefined).map((f) => {
-            const d = f.default!;
-            const value = d.kind === "literal" ? jsonExpr(d.value) : d.expression;
-            return assign(field(f.name), binary("??", field(f.name), value));
-        });
-
-    return gatedMethod({
-        name: "applyDefaults",
-        kind: "method",
-        allFields: fields,
-        bodyFor,
-        source: cls.source,
-    });
 }
 
 // ─── metadata static ─────────────────────────────────────────────────────────────
@@ -255,9 +227,12 @@ function fieldMetadata(f: IRMember, includeIndexes: boolean): IRExpression {
 
 // ─── Shared helpers ──────────────────────────────────────────────────────────────
 
-/** `{ object: <self> }` — the validator/formatter context carrying the whole record. */
-function ctxObject(): IRExpression {
-    return obj({ object: intrinsic("self", null, []) });
+/** `ValidatorCtx{ object: <self> }` — the typed validator/formatter context carrying the whole
+ *  record. The typed `record` node lowers to a plain object/dict in JS/Python and the typed
+ *  `keyma::ValidatorCtx{(*this)}` aggregate in C++ (so cross-field reads `ctx.object.<field>` are
+ *  member accesses and the allocator is reachable as `ctx.object.get_allocator()`). */
+function ctxRecord(): IRExpression {
+    return record(external("ValidatorCtx"), { object: intrinsic("self", null, []) });
 }
 
 /**
@@ -299,29 +274,17 @@ function factoryCall(name: string, params: Record<string, unknown> | undefined, 
     return call(ident(name), ordered.map((a) => (a === undefined ? literal(null) : jsonExpr(a))));
 }
 
-/** A validator invocation: `factory(args)(this.field, "field", ctx)`, truncated to the factory's
- *  inner-arrow arity (value[, fieldKey[, context]]). */
+/** A validator invocation: always the uniform 3-arg `factory(args)(this.field, "field", ctx)`. The
+ *  factory lowering pads every validator inner arrow to `(value, field, ctx)`, so the full arity is
+ *  always passable in every backend (no truncation). */
 function validatorCall(f: IRMember, v: IRValidator, deps: SynthesizeDeps): IRExpression {
-    const args = [field(f.name), literal(f.name), ident("ctx")].slice(0, innerArity(deps.functionDecls.get(v.name)));
-    return call(factoryCall(v.name, v.params, deps), args);
+    return call(factoryCall(v.name, v.params, deps), [field(f.name), literal(f.name), ident("ctx")]);
 }
 
-/** A formatter application target value: `factory(args)(this.field, ctx)`, truncated to the
- *  factory's inner-arrow arity (value[, context]). */
+/** A formatter application: always the uniform 2-arg `this.field = factory(args)(this.field, ctx)`.
+ *  The factory lowering pads every formatter inner arrow to `(value, ctx)`. */
 function formatterApply(f: IRMember, spec: IRFormatterSpec, deps: SynthesizeDeps): IRStatement {
-    const arity = innerArity(deps.functionDecls.get(spec.name));
-    const args = [field(f.name), ident("ctx")].slice(0, arity);
-    return assign(field(f.name), call(factoryCall(spec.name, spec.params, deps), args));
-}
-
-/** The arity of a factory's inner arrow (the function it returns) — 1..3 for validators,
- *  1..2 for formatters. Defaults to 1 (value-only) for a malformed/absent declaration. */
-function innerArity(decl: IRFunctionDeclaration | undefined): number {
-    const r = decl?.statements[0];
-    if (r !== undefined && r.kind === "return" && r.value !== null && r.value.kind === "arrow") {
-        return r.value.params.length;
-    }
-    return 1;
+    return assign(field(f.name), call(factoryCall(spec.name, spec.params, deps), [field(f.name), ident("ctx")]));
 }
 
 /** Lower a plain JSON value (used for metadata data + bound factory args) to an IR expression. */

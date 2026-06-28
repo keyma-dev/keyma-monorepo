@@ -16,6 +16,7 @@ import {
     createValidatorFormatterCollector, isFactoryReturnType, type ValidatorFormatterCollector,
 } from "./discover-validators.js";
 import { lowerValidatorFactory, lowerFormatterFactory, type LowerDeps } from "./lower-validator.js";
+import { synthesizeClassMembers } from "./synthesize.js";
 import { extractDecoratorOptions } from "@keyma/compiler/frontend-ts";
 import type {
     FrontendDomain, DomainBaseContext, DomainContext, HandlerContext, DomainDecorator,
@@ -56,6 +57,10 @@ type SchemaState = {
     endpoints: WeakMap<IRClassDeclaration, EndpointAccumulator>;
     /** Classes decorated `@Edge(...)`, with the directed flag — for edge derivation. */
     edgeClasses: WeakMap<IRClassDeclaration, { directed: boolean }>;
+    /** The lowered validator/formatter factory declarations, keyed by name — stashed in `check()`
+     *  so `afterNormalize` synthesis can pass them as the `functionDecls` dep (for factory-call arg
+     *  ordering + inner-arrow shape). */
+    factoryDecls: Map<string, IRFunctionDeclaration>;
 };
 
 type EndpointAccumulator = { fromFields: string[]; toFields: string[] };
@@ -86,6 +91,7 @@ export const schemaFrontendDomain: FrontendDomain = {
             }),
             endpoints: new WeakMap(),
             edgeClasses: new WeakMap(),
+            factoryDecls: new Map(),
         };
     },
 
@@ -278,6 +284,9 @@ export const schemaFrontendDomain: FrontendDomain = {
         };
         const validatorFns = state.vfCollector.drainValidators().map((c) => lowerValidatorFactory(c, diagnostics, lowerDeps));
         const formatterFns = state.vfCollector.drainFormatters().map((c) => lowerFormatterFactory(c, diagnostics, lowerDeps));
+        // Stash the lowered factories so `afterNormalize` synthesis can read each one's params (arg
+        // ordering) + inner-arrow shape when building the per-class `validate`/`format*` methods.
+        state.factoryDecls = new Map([...validatorFns, ...formatterFns].map((d) => [d.name, d]));
         return { functionDeclarations: [...validatorFns, ...formatterFns] };
     },
 
@@ -292,9 +301,13 @@ export const schemaFrontendDomain: FrontendDomain = {
         });
     },
 
-    /** Rewrite each edge's `from`/`to` (and its `label`) from the authored class `sourceName` to
-     *  the now-prefixed final `name`, using the compiler's `sourceName → finalName` map. */
-    afterNormalize(classes: readonly IRClassDeclaration[], nameMap: ReadonlyMap<string, string>): void {
+    /** Post-normalize: (1) rewrite each edge's `from`/`to`/`label` from the authored `sourceName`
+     *  to the now-prefixed final `name`; (2) SYNTHESIZE each class's schema-domain methods
+     *  (`validate`/`format*`) from base IR and append them to `cls.methods`, so the compiler emits
+     *  them blindly (the "eliminate domain backends" flip). Runs after name normalization (final
+     *  prefixed names) with the classes still mutable. METHODS ONLY — the `metadata` static stays
+     *  compiler-rendered by `buildClassData` (decision-8-amended). */
+    afterNormalize(classes: readonly IRClassDeclaration[], nameMap: ReadonlyMap<string, string>, ctx: DomainContext): void {
         for (const cls of classes) {
             const edge = schemaEdge(cls);
             if (edge === undefined) continue;
@@ -302,6 +315,16 @@ export const schemaFrontendDomain: FrontendDomain = {
             edge.to = nameMap.get(edge.to) ?? edge.to;
             // The traversal label is this edge schema's own (now prefixed) name.
             edge.label = cls.name;
+        }
+
+        const state = ctx.state as SchemaState;
+        const classesBySourceName = new Map(classes.map((c) => [c.sourceName, c]));
+        for (const cls of classes) {
+            const { methods } = synthesizeClassMembers(cls, {
+                functionDecls: state.factoryDecls,
+                classesBySourceName,
+            });
+            if (methods.length > 0) cls.methods = [...(cls.methods ?? []), ...methods];
         }
     },
 };

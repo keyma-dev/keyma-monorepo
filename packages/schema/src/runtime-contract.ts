@@ -20,9 +20,10 @@ import type { RuntimeSymbols, RecordLayout } from "@keyma/compiler";
 /**
  * `error.collect(e0, e1, …)` — collect the non-null candidates into the `ValidationError` list.
  * Free-standing (no receiver); `tsName: ""` keeps it out of source recognition (synthesis-emitted
- * only). The C++ emitter allocates its result vector on the method/lambda allocator threaded via
- * `opts.allocVar`; JS/Python use the bundle-local baked collectors (`__keyma_collect`/
- * `_keyma_collect`).
+ * only). JS/Python emit a fully SELF-CONTAINED inline filter (no cross-module import, so the
+ * compiler stays domain-blind — a synthesized `validate()` body imports only the factory functions
+ * it actually calls); C++ allocates its result vector on the method/lambda allocator threaded via
+ * `opts.allocVar` (`keyma::collect_errors`, always in scope through the runtime umbrella).
  */
 export const errorCollectIntrinsic: IntrinsicDef = {
     op: "error.collect",
@@ -33,8 +34,8 @@ export const errorCollectIntrinsic: IntrinsicDef = {
     maxArgs: 255,
     tier: "required",
     emit: {
-        js: (_recv, args) => `__keyma_collect(${args.join(", ")})`,
-        python: (_recv, args) => `_keyma_collect(${args.join(", ")})`,
+        js: (_recv, args) => `[${args.join(", ")}].filter((__e) => __e != null)`,
+        python: (_recv, args) => `[__e for __e in [${args.join(", ")}] if __e is not None]`,
         cpp: (_recv, args, opts) => `keyma::collect_errors(${opts?.allocVar ?? "{}"}, ${args.join(", ")})`,
     },
 };

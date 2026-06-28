@@ -1,8 +1,13 @@
 import { describe, it } from "node:test";
 import assert from "node:assert/strict";
 import type { IRClassDeclaration, IRFunctionDeclaration, IRMethod, IRStatement, IRExpression } from "@keyma/core/ir";
-import { checkStatement, checkExpression } from "@keyma/core/ir";
+import { checkStatement, checkExpression, defaultIntrinsics } from "@keyma/core/ir";
 import { synthesizeClassMembers, type SynthesizeDeps } from "../../src/frontend-ts/synthesize.js";
+import { errorCollectIntrinsic } from "../../src/runtime-contract.js";
+
+// Synthesis emits the schema-domain `error.collect` op; register it onto the default registry
+// (exactly as `prepareDomains` does for the CLI) so `checkExpression` accepts the synthesized body.
+defaultIntrinsics.register(errorCollectIntrinsic);
 
 const SRC = { file: "user.ts", line: 1, column: 1 };
 
@@ -63,39 +68,38 @@ describe("schema synthesis — validate()", () => {
         assert.equal(validate!.visibility, "public");
     });
 
-    it("builds the {object: self} ctx and filters non-null checks", () => {
+    it("builds the ValidatorCtx{object: self} ctx and collects non-null checks", () => {
         const stmts = validate!.statements;
         assert.equal(stmts[0]!.kind, "const");
-        assert.deepEqual((stmts[0] as { init: unknown }).init, { kind: "object", properties: [{ key: "object", value: { kind: "intrinsic", op: "self", receiver: null, args: [] } }] });
+        assert.deepEqual((stmts[0] as { init: unknown }).init, { kind: "record", type: { kind: "external", name: "ValidatorCtx" }, properties: [{ key: "object", value: { kind: "intrinsic", op: "self", receiver: null, args: [] } }] });
         const r = stmts[1] as { kind: string; value: IRExpression };
         assert.equal(r.kind, "return");
         assert.equal(r.value.kind, "intrinsic");
-        assert.equal((r.value as { op: string }).op, "array.filter");
+        assert.equal((r.value as { op: string }).op, "error.collect");
     });
 
-    it("calls each factory then invokes it with (value, field, ctx) truncated to inner arity", () => {
+    it("calls each factory then invokes it with the uniform (value, field, ctx)", () => {
         // The full (server) body validates id (required), firstName (minLength), secret (required).
-        const filter = (validate!.statements[1] as { value: { receiver: { elements: IRExpression[] } } }).value;
-        const checks = filter.receiver.elements;
+        const checks = (validate!.statements[1] as { value: { args: IRExpression[] } }).value.args;
         assert.equal(checks.length, 3, "id + firstName + secret");
-        // required()(this.id)  — inner arity 1 → only the value arg
+        // required()(this.id, "id", ctx)
         assert.deepEqual(checks[0], {
             kind: "call",
             callee: { kind: "call", callee: { kind: "identifier", name: "required" }, args: [] },
-            args: [{ kind: "field", name: "id" }],
+            args: [{ kind: "field", name: "id" }, { kind: "literal", value: "id" }, { kind: "identifier", name: "ctx" }],
         });
-        // minLength(2)(this.firstName, "firstName")  — inner arity 2 → value + field
+        // minLength(2)(this.firstName, "firstName", ctx)
         assert.deepEqual(checks[1], {
             kind: "call",
             callee: { kind: "call", callee: { kind: "identifier", name: "minLength" }, args: [{ kind: "literal", value: 2 }] },
-            args: [{ kind: "field", name: "firstName" }, { kind: "literal", value: "firstName" }],
+            args: [{ kind: "field", name: "firstName" }, { kind: "literal", value: "firstName" }, { kind: "identifier", name: "ctx" }],
         });
     });
 
     it("gates the private field's check to server/library (client body omits secret)", () => {
         assert.ok(validate!.bodyAudience !== undefined, "expected bodyAudience for private-field gating");
         assert.deepEqual(validate!.bodyAudience!.audiences, ["server", "library"]);
-        const clientChecks = (validate!.bodyAudience!.fallback[1] as { value: { receiver: { elements: IRExpression[] } } }).value.receiver.elements;
+        const clientChecks = (validate!.bodyAudience!.fallback[1] as { value: { args: IRExpression[] } }).value.args;
         assert.equal(clientChecks.length, 2, "client validates only public id + firstName");
     });
 
@@ -118,7 +122,7 @@ describe("schema synthesis — format phases", () => {
         assert.deepEqual(assignStmt.value, {
             kind: "call",
             callee: { kind: "call", callee: { kind: "identifier", name: "trim" }, args: [] },
-            args: [{ kind: "field", name: "firstName" }],
+            args: [{ kind: "field", name: "firstName" }, { kind: "identifier", name: "ctx" }],
         });
         assertStatementsValid(fc!.statements, "formatChange");
     });
@@ -142,13 +146,8 @@ describe("schema synthesis — format phases", () => {
 
 describe("schema synthesis — applyDefaults()", () => {
     const { methods } = synthesizeClassMembers(USER, DEPS);
-    it("nullish-coalesces each defaulted field's value", () => {
-        const ad = byName(methods, "applyDefaults");
-        assert.ok(ad !== undefined, "applyDefaults missing");
-        assert.deepEqual(ad!.statements, [
-            { kind: "assign", target: { kind: "field", name: "role" }, value: { kind: "binary", op: "??", left: { kind: "field", name: "role" }, right: { kind: "literal", value: "member" } } },
-        ]);
-        assertStatementsValid(ad!.statements, "applyDefaults");
+    it("does NOT synthesize an applyDefaults() method (defaults apply at construction)", () => {
+        assert.equal(byName(methods, "applyDefaults"), undefined);
     });
 });
 
@@ -183,7 +182,7 @@ describe("schema synthesis — metadata static", () => {
 });
 
 describe("schema synthesis — no-op classes", () => {
-    it("omits validate/format/applyDefaults when a class has none, but always emits metadata", () => {
+    it("omits validate/format when a class has none, but always emits metadata", () => {
         const plain: IRClassDeclaration = {
             name: "tag", sourceName: "Tag", visibility: "public",
             fields: [{ name: "label", type: { kind: "string" }, visibility: "public", readonly: false, required: true, source: SRC }],
@@ -213,7 +212,7 @@ describe("schema synthesis — inheritance (flatten)", () => {
     it("validate() flattens inherited fields' checks (own + inherited), no super call", () => {
         const { methods } = synthesizeClassMembers(EMPLOYEE, deps);
         const validate = byName(methods, "validate")!;
-        const checks = (validate.statements[1] as { value: { receiver: { elements: IRExpression[] } } }).value.receiver.elements;
+        const checks = (validate.statements[1] as { value: { args: IRExpression[] } }).value.args;
         assert.equal(checks.length, 2, "validates inherited name + own dept");
         const json = JSON.stringify(validate.statements);
         assert.equal(/"name":"super"|"kind":"super"/.test(json), false, "no super construct");

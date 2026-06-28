@@ -7,6 +7,7 @@ import type {
     IRType,
     IRDiagnostic,
 } from "@keyma/core/ir";
+import { optional, external } from "@keyma/core/ir";
 import {
     lowerExpr,
     lowerStatement,
@@ -45,7 +46,7 @@ export function lowerValidatorFactory(
     deps: LowerDeps,
 ): IRFunctionDeclaration {
     const ctx = mkCtx(collected.sourceFile, extraDiagnostics, deps);
-    return lowerFactory(collected, ctx);
+    return lowerFactory(collected, ctx, "validator");
 }
 
 export function lowerFormatterFactory(
@@ -54,7 +55,30 @@ export function lowerFormatterFactory(
     deps: LowerDeps,
 ): IRFunctionDeclaration {
     const ctx = mkCtx(collected.sourceFile, extraDiagnostics, deps);
-    return lowerFactory(collected, ctx);
+    return lowerFactory(collected, ctx, "formatter");
+}
+
+/** The canonical inner-arrow parameter names a factory of each kind is padded to. Synthesis always
+ *  passes the FULL arity (validators `(value, field, ctx)`, formatters `(value, ctx)`), so every
+ *  backend emits a uniform signature and the call site never over/under-supplies args. */
+const CANONICAL_INNER: Record<"validator" | "formatter", readonly string[]> = {
+    validator: ["value", "field", "ctx"],
+    formatter: ["value", "ctx"],
+};
+
+/** Pad the source inner params up to the canonical arity, keeping the authored names by position and
+ *  synthesizing a fresh non-colliding name (`__field`/`__ctx`/…) for each missing trailing param. A
+ *  source arrow with MORE params than canonical is truncated (validators are 1–3, formatters 1–2). */
+function canonicalInnerNames(existing: readonly string[], kind: "validator" | "formatter"): string[] {
+    const canonical = CANONICAL_INNER[kind];
+    const used = new Set(existing);
+    return canonical.map((fresh, i) => {
+        if (i < existing.length) return existing[i]!;
+        let name = `__${fresh}`;
+        while (used.has(name)) name = `_${name}`;
+        used.add(name);
+        return name;
+    });
 }
 
 function mkCtx(sourceFile: ts.SourceFile, diagnostics: IRDiagnostic[], deps: LowerDeps): LowerCtx {
@@ -98,7 +122,7 @@ function noOpFactory(collected: CollectedFactory, params: IRFunctionParam[]): IR
     };
 }
 
-function lowerFactory(collected: CollectedFactory, ctx: LowerCtx): IRFunctionDeclaration {
+function lowerFactory(collected: CollectedFactory, ctx: LowerCtx, kind: "validator" | "formatter"): IRFunctionDeclaration {
     const func = collected.node;
 
     // Validators/formatters are synthesized into plain synchronous methods (decision 12) — an
@@ -140,30 +164,37 @@ function lowerFactory(collected: CollectedFactory, ctx: LowerCtx): IRFunctionDec
         return noOpFactory(collected, params);
     }
 
-    // Inner params by position: 0=value, 1=field, 2=context. The first carries the
-    // input type; the rest stay name-only (the backend reads them positionally).
-    const innerParamNames = inner.parameters.map((p, i) =>
+    // Inner params: PAD to the canonical arity (validators `(value, field, ctx)`, formatters
+    // `(value, ctx)`) so synthesis always passes the full arity and every backend emits a uniform
+    // signature. Authored names are kept by position; missing trailing params get fresh names.
+    const authoredNames = inner.parameters.map((p, i) =>
         ts.isIdentifier(p.name) ? p.name.text : `_p${i}`,
     );
+    const innerParamNames = canonicalInnerNames(authoredNames, kind);
+
+    // The inner arrow's return type drives the typed C++ lambda (explicit `-> T`) and the JS/Python
+    // `.d.ts`: a validator returns "a ValidationError or none"; a formatter returns the field type.
+    const innerReturnType: IRType = kind === "validator" ? optional(external("ValidationError")) : inputType;
+
     const arrowParams: IRArrowParam[] = innerParamNames.map((name, i) =>
         i === 0 ? { name, type: inputType } : name,
     );
 
     const innerStatements = lowerInnerBody(inner, ctx);
 
-    // The HOF return type — a `function` type whose first param is the input type. Field
-    // (string) and context (json) types are best-effort; the backend reads the inner arrow.
+    // The HOF return type — a `function` type whose first param is the input type, the rest field
+    // (string) / context (json), returning the inner return type (drives the factory's `.d.ts`).
     const returnParams: IRFunctionParam[] = innerParamNames.map((name, i) => ({
         name,
-        type: i === 0 ? inputType : i === 1 ? { kind: "string" } : { kind: "json" },
+        type: i === 0 ? inputType : i === 1 && kind === "validator" ? { kind: "string" } : { kind: "json" },
     }));
 
     return {
         name: collected.name,
         params,
-        returnType: { kind: "function", params: returnParams, returns: { kind: "json" } },
+        returnType: { kind: "function", params: returnParams, returns: innerReturnType },
         statements: [
-            { kind: "return", value: { kind: "arrow", params: arrowParams, statements: innerStatements } },
+            { kind: "return", value: { kind: "arrow", params: arrowParams, statements: innerStatements, returnType: innerReturnType } },
         ],
         source: collected.source,
     };

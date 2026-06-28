@@ -1,8 +1,8 @@
 import type {
     IRClassDeclaration, IRMember, IRType, IRMethod, IREnumDeclaration,
-    IRFunctionDeclaration, IRDiagnostic,
+    IRFunctionDeclaration, IRDiagnostic, IRExpression, IRStatement,
 } from "@keyma/core/ir";
-import { collectRefTargets, collectFunctionRefs, collectStatementIdentifiers, unwrapArray, filterVisible, filterVisibleFields, filterVisibleMethods, inheritedFields, methodBodyForBundle } from "@keyma/core/util";
+import { collectRefTargets, collectFunctionRefs, collectStatementIdentifiers, collectIntrinsicOpsInStatement, unwrapArray, filterVisible, filterVisibleFields, filterVisibleMethods, inheritedFields, methodBodyForBundle } from "@keyma/core/util";
 import { exprToCpp, type ExprOpts } from "./emit-expression.js";
 import { stmtToCpp, plainReturn, factoryIdent, type ReturnLowerer } from "./emit-validators.js";
 import { irTypeToCpp, memberType, traitsArg, whereValueType, fieldKind, refTargetType, binaryFieldPlan, type BinaryFieldPlan } from "./ir-type-to-cpp.js";
@@ -222,10 +222,88 @@ function emitFunctionCpp(decl: IRFunctionDeclaration, diagnostics: IRDiagnostic[
         diagnostics.push(asyncDiagnostic("function", decl.name, decl.source));
         return [];
     }
+    // A validator/formatter FACTORY: a HOF whose body is `return <typed inner arrow>` (the inner
+    // arrow carries a `returnType`, set only by the schema `lower-validator`). It is emitted as a
+    // concretely-typed generic lambda (decisions 4/5/6) — see `emitFactoryCpp`.
+    const factoryArrow = factoryInnerArrow(decl);
+    if (factoryArrow !== undefined) return emitFactoryCpp(decl, factoryArrow);
+
     const params = decl.params.map((p) => `${irTypeToCpp(p.type)} ${p.name}`).join(", ");
     const lines = [`inline auto ${decl.name}(${params}) {`];
     for (const stmt of decl.statements) lines.push(stmtToCpp(stmt, "    ", plainReturn));
     lines.push(`}`);
+    return lines;
+}
+
+type IRArrowExpr = Extract<IRExpression, { kind: "arrow" }>;
+
+/** If `decl` is a validator/formatter factory — its body is a single `return <arrow>` and that
+ *  inner arrow carries an explicit `returnType` (the schema lowering sets it) — return the arrow. */
+function factoryInnerArrow(decl: IRFunctionDeclaration): IRArrowExpr | undefined {
+    const s = decl.statements;
+    const first = s[0];
+    if (s.length === 1 && first !== undefined && first.kind === "return"
+        && first.value !== null && first.value.kind === "arrow" && first.value.returnType !== undefined) {
+        return first.value;
+    }
+    return undefined;
+}
+
+/** A factory parameter declaration. A required param is a deduced `auto` (inferred from the bound
+ *  spec arg); an optional param needs a concrete type with a default value (a template parameter
+ *  cannot be deduced from a default function argument) — string in practice (regex flags, …). */
+function cppFactoryParam(p: { name: string; optional?: boolean }): string {
+    return p.optional === true ? `std::pmr::string ${p.name} = {}` : `auto ${p.name}`;
+}
+
+/**
+ * Emit a validator/formatter factory as a concretely-typed generic lambda (decision 4 — no
+ * `keyma::Value` erasure on the hot path): `inline auto f(<spec params>) { return [<spec params by
+ * value>](const auto& value, …, const auto& ctx) -> <innerRet> { __a = ctx.object.get_allocator();
+ * <body> }; }`. The spec params are captured BY VALUE (the closure escapes the factory call). The
+ * allocator reaches the body through the ctx instance (`ctx.object.get_allocator()`), so no method
+ * gains an allocator parameter. A validator's `optional<ValidationError>` return COERCES each
+ * `return` (the `result()`-style logic relocated from the deleted schema validator backend): an
+ * object literal → a wrapped `ValidationError{…}` aggregate (built on `__a` via the record layout),
+ * `null` → an empty optional, a conditional → both branches coerced. A formatter returns the field
+ * value directly (no coercion).
+ */
+function emitFactoryCpp(decl: IRFunctionDeclaration, arrow: IRArrowExpr): string[] {
+    const factoryParams = decl.params.map(cppFactoryParam).join(", ");
+    const captures = decl.params.map((p) => p.name).join(", ");
+    const paramNames = arrow.params.map((p) => (typeof p === "string" ? p : p.name));
+    const ctxName = paramNames[paramNames.length - 1] ?? "__ctx";
+    const arrowParams = paramNames.map((n) => `const auto& ${n}`).join(", ");
+    const retType = irTypeToCpp(arrow.returnType!);
+    // The factory body references its params/ctx as identifiers (never `this->x` field nodes), so
+    // `fieldExpr` is identity; the lambda allocator `__a` threads to the typed `record`/error build.
+    const opts: ExprOpts = { fieldExpr: (n) => n, allocVar: "__a" };
+
+    // A validator returns `optional(external(ValidationError))` → coerce returns to that optional.
+    const rt = arrow.returnType!;
+    const errorReturn = rt.kind === "optional" && rt.of.kind === "external";
+    const coerce = (e: IRExpression | null): string => {
+        if (e === null || (e.kind === "literal" && e.value === null)) return `${retType}{}`;
+        if (e.kind === "conditional") return `(${exprToCpp(e.condition, opts)} ? ${coerce(e.whenTrue)} : ${coerce(e.whenFalse)})`;
+        if (e.kind === "object") {
+            // An object error literal → the typed aggregate, via the record-layout renderer.
+            const rec: IRExpression = { kind: "record", type: (rt as { of: { kind: "external"; name: string } }).of, properties: e.properties };
+            return `${retType}(${exprToCpp(rec, opts)})`;
+        }
+        if (e.kind === "record") return `${retType}(${exprToCpp(e, opts)})`;
+        return `${retType}(${exprToCpp(e, opts)})`;
+    };
+    const ret: ReturnLowerer = errorReturn
+        ? (value, indent) => `${indent}return ${coerce(value)};`
+        : (value, indent) => (value === null ? `${indent}return;` : `${indent}return ${exprToCpp(value, opts)};`);
+
+    const lines: string[] = [
+        `inline auto ${decl.name}(${factoryParams}) {`,
+        `    return [${captures}](${arrowParams}) -> ${retType} {`,
+        `        [[maybe_unused]] const keyma::alloc_t __a = ${ctxName}.object.get_allocator();`,
+    ];
+    for (const stmt of arrow.statements ?? []) lines.push(stmtToCpp(stmt, "        ", ret, opts));
+    lines.push(`    };`, `}`);
     return lines;
 }
 
@@ -379,9 +457,23 @@ function emitMethod(method: IRMethod, C: string, opts: ExprOpts, deps: ModuleEmi
         diagnostics.push(asyncDiagnostic(method.kind, method.name, method.source));
         return [];
     }
+    // A synthesized method that aggregates errors (`error.collect`) or builds a typed `record`/
+    // default on the method allocator needs an in-scope `keyma::alloc_t`. Bind it from the struct's
+    // `get_allocator()` and thread it (`opts.allocVar`) into the body. Detected by scanning for the
+    // `error.collect` op (the only method-level allocator consumer); plain user methods are unchanged.
+    const stmts = methodBodyForBundle(method, deps.bundle);
+    const needsAlloc = stmts.some((s) => {
+        const ops = new Set<string>();
+        collectIntrinsicOpsInStatement(s, ops);
+        return ops.has("error.collect");
+    });
+    const bodyOpts: ExprOpts = needsAlloc ? { ...opts, allocVar: "__a" } : opts;
     const ret: ReturnLowerer = (v, indent) =>
-        v === null ? `${indent}return;` : `${indent}return ${exprToCpp(v, opts)};`;
-    const body = methodBodyForBundle(method, deps.bundle).map((s) => stmtToCpp(s, "        ", ret, opts));
+        v === null ? `${indent}return;` : `${indent}return ${exprToCpp(v, bodyOpts)};`;
+    const body = [
+        ...(needsAlloc ? ["        [[maybe_unused]] const keyma::alloc_t __a = get_allocator();"] : []),
+        ...stmts.map((s) => stmtToCpp(s, "        ", ret, bodyOpts)),
+    ];
     if (method.kind === "getter") {
         // A getter is a const accessor with a deduced (`auto`) return type.
         return [`    auto ${method.name}() const {`, ...body, `    }`];
@@ -479,6 +571,19 @@ function valueTraitsForwardDecls(ns: string, classes: readonly IRClassDeclaratio
  * target also gets `set_id`/`id_value` so the generic `shared_ptr<T>` traits can build /
  * serialize an id-stub.
  */
+/** The `keyma::Value` expression for a field's construction-time default (built on the from_value
+ *  allocator `a`), or null when nothing applies (no default, or a null/array literal — the Value
+ *  API has no array builder; mirrors `emit-defaults.ts`). Field refs inside an expression default
+ *  read `v.at("x")` (the input record). */
+function fromValueDefaultExpr(def: IRMember["default"]): string | null {
+    if (def === undefined) return null;
+    const vopts: ExprOpts = { fieldExpr: (n) => `v.at(${JSON.stringify(n)})` };
+    if (def.kind === "expression") return `keyma::to_value(${exprToCpp(def.expression, vopts)}, a)`;
+    const val = def.value;
+    if (val === null || Array.isArray(val)) return null;
+    return `keyma::to_value(${exprToCpp({ kind: "literal", value: val } as IRExpression, vopts)}, a)`;
+}
+
 function emitValueTraits(cls: IRClassDeclaration, deps: ModuleEmitDeps): string[] {
     const C = deps.cppTypeByName.get(cls.name) ?? cls.sourceName;
     // The traits are self-contained: enumerate the FULL (own + inherited) field set and assign on
@@ -489,9 +594,19 @@ function emitValueTraits(cls: IRClassDeclaration, deps: ModuleEmitDeps): string[
     for (const f of stored) {
         const key = JSON.stringify(f.name);
         const { tmpl, field } = traitsArg(f, deps.cppTypeByName, deps.enumTypeByName);
-        fromBody.push(field
-            ? `            __o.${f.name} = keyma::from_value_field<${tmpl}>(v.find(${key}), a);`
-            : `            __o.${f.name} = keyma::from_value<${tmpl}>(v.at(${key}), a);`);
+        // Defaults apply at CONSTRUCTION: when the key is absent (a null Value), the field takes its
+        // default (round-tripped through a `keyma::Value` so every default kind — literal, enum,
+        // expression — flows through the same typed `from_value`). Matches the runtime
+        // `apply_defaults` absence test (`v.at(key).is_null()`). Two-axis `Field<T>` + null/array
+        // defaults keep the plain path (no construction-time default).
+        const dflt = field ? null : fromValueDefaultExpr(f.default);
+        if (dflt !== null) {
+            fromBody.push(`            __o.${f.name} = v.at(${key}).is_null() ? keyma::from_value<${tmpl}>(${dflt}, a) : keyma::from_value<${tmpl}>(v.at(${key}), a);`);
+        } else {
+            fromBody.push(field
+                ? `            __o.${f.name} = keyma::from_value_field<${tmpl}>(v.find(${key}), a);`
+                : `            __o.${f.name} = keyma::from_value<${tmpl}>(v.at(${key}), a);`);
+        }
     }
     const toBody = stored.map((f) => `        __v.set(${JSON.stringify(f.name)}, keyma::to_value(x.${f.name}, a));`);
 

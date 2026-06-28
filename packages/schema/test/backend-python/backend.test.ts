@@ -401,15 +401,14 @@ describe("emitPython — validators co-located in their source module", () => {
         diagnostics: [],
     };
 
-    it("the injected type-guard returns a ValidationError dict, not a string", async () => {
+    it("emits the factory WITHOUT an injected type-guard (typed-only, decision 6)", async () => {
         const target: PythonTargetConfig = { language: "python", outDir: "dist/python", library: true };
         const result = await emitPython(VALIDATORS_IR, target, RESOLVED_CONFIG);
         const content = fileContent(result.files, "dist/python/src/schema.py");
-        assert.ok(
-            content.includes(`return {"field": field, "code": "type_error", "message": "expected string"}`),
-            "type-guard must return a ValidationError dict",
-        );
-        assert.ok(!content.includes(`return "expected string"`), "must not return a bare string");
+        // The validator→function collapse drops the per-factory runtime type-guard: the synthesized
+        // typed methods (and construction) own type-correctness, so no `type_error` branch is injected.
+        assert.ok(!content.includes(`"type_error"`), "no injected type-guard / type_error branch");
+        assert.ok(content.includes(`def minLength(`), "factory emitted as a plain def");
     });
 
     const CTX_VALIDATOR_IR: KeymaIR = {
@@ -448,12 +447,15 @@ describe("emitPython — validators co-located in their source module", () => {
         diagnostics: [],
     };
 
-    it("emits the (value, field, ctx) signature and lowers ctx.object.<field> to a dict lookup", async () => {
+    it("emits the (value, field, ctx) signature as a plain factory (ctx.object is the instance, B path)", async () => {
         const target: PythonTargetConfig = { language: "python", outDir: "dist/python", library: true };
         const result = await emitPython(CTX_VALIDATOR_IR, target, RESOLVED_CONFIG);
         const content = fileContent(result.files, "dist/python/src/schema.py");
-        assert.ok(content.includes("def _v(value, field, ctx):"), "must emit the 3-arg (value, field, ctx) signature");
-        assert.ok(content.includes(`ctx.object.get("password")`), "ctx.object.<field> must lower to a Python dict lookup");
-        assert.ok(!content.includes("ctx.object.password"), "must not emit attribute access on the context dict");
+        // The factory is now a plain function (the inner arrow hoists to a nested `def`) over the
+        // uniform `(value, field, ctx)` signature. Under method-driven synthesis `ctx.object` is the
+        // INSTANCE, so cross-field access stays member access `ctx.object.<field>` (the legacy
+        // dict-lookup rewrite is retired — §11.5; the A oracle's dict ctx is a deferred latent gap).
+        assert.ok(/def _arrow\d+\(value, field, ctx\):/.test(content), "must emit the 3-arg (value, field, ctx) inner signature");
+        assert.ok(content.includes("ctx.object.password"), "ctx.object.<field> stays member access (instance, not dict)");
     });
 });

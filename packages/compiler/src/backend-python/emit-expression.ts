@@ -98,16 +98,19 @@ export function exprToPython(expr: IRExpression): string {
             return regexpLiteralToPython(expr.pattern, expr.flags); // Requires import re
 
         case "arrow": {
+            // Params may be plain names or typed `{name, type}` (a factory's inner arrow carries the
+            // value type); Python keeps just the names.
+            const params = expr.params.map((p) => (typeof p === "string" ? p : p.name)).join(", ");
             // Block-body arrow → a hoisted nested `def` (Python lambdas are expression-only).
             // Always rendered inside a statement context, so `currentHoist` is set.
             if (expr.statements !== undefined) {
                 const hoist = currentHoist!;
                 const name = `_arrow${hoist.n.v++}`;
                 const body = renderStatements(expr.statements, "    ");
-                hoist.defs.push(`def ${name}(${expr.params.join(", ")}):\n${body}`);
+                hoist.defs.push(`def ${name}(${params}):\n${body}`);
                 return name;
             }
-            return `lambda ${expr.params.join(", ")}: ${exprToPython(expr.body!)}`;
+            return `lambda ${params}: ${exprToPython(expr.body!)}`;
         }
 
         case "new": {

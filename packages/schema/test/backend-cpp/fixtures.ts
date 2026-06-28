@@ -31,22 +31,26 @@ function f(name: string, type: IRType, extra: FExtra = {}): IRMember {
     return field;
 }
 
-// Validator/formatter factories are ordinary `IRFunctionDeclaration`s whose body returns a
-// typed inner arrow (`function f(spec) { return (value, field) => … }`); the schema backend
-// recovers the factory params / inner positional params / input type via `validatorShape`.
+// Validator/formatter factories are ordinary `IRFunctionDeclaration`s whose body returns a typed
+// inner arrow, padded to the canonical arity by `lower-validator` (validators `(value, field, ctx)`
+// returning `optional(external("ValidationError"))`; formatters `(value, ctx)` returning the field
+// type). These fixtures mirror that lowered shape so the backends emit/compile them as production does.
+const VALIDATION_ERROR: IRType = { kind: "optional", of: { kind: "external", name: "ValidationError" } };
+
 export const minLengthDecl: IRFunctionDeclaration = {
     name: "minLength",
     params: [{ name: "value", type: { kind: "integer" } }],
     returnType: {
         kind: "function",
-        params: [{ name: "raw", type: { kind: "string" } }, { name: "field", type: { kind: "string" } }],
-        returns: { kind: "json" },
+        params: [{ name: "raw", type: { kind: "string" } }, { name: "field", type: { kind: "string" } }, { name: "ctx", type: { kind: "json" } }],
+        returns: VALIDATION_ERROR,
     },
     statements: [{
         kind: "return",
         value: {
             kind: "arrow",
-            params: [{ name: "raw", type: { kind: "string" } }, "field"],
+            params: [{ name: "raw", type: { kind: "string" } }, "field", "ctx"],
+            returnType: VALIDATION_ERROR,
             statements: [{
                 kind: "return",
                 value: {
@@ -70,14 +74,15 @@ export const trimDecl: IRFunctionDeclaration = {
     params: [],
     returnType: {
         kind: "function",
-        params: [{ name: "value", type: { kind: "string" } }],
-        returns: { kind: "json" },
+        params: [{ name: "value", type: { kind: "string" } }, { name: "ctx", type: { kind: "json" } }],
+        returns: { kind: "string" },
     },
     statements: [{
         kind: "return",
         value: {
             kind: "arrow",
-            params: [{ name: "value", type: { kind: "string" } }],
+            params: [{ name: "value", type: { kind: "string" } }, "ctx"],
+            returnType: { kind: "string" },
             statements: [{ kind: "return", value: intr("string.trim", id("value")) }],
         },
     }],

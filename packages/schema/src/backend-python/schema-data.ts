@@ -1,7 +1,6 @@
 import type { IRClassDeclaration, IRMember } from "@keyma/core/ir";
 import { filterVisibleFields } from "@keyma/core/util";
-import { mkRaw, type ClassDataOptions } from "@keyma/compiler/backend-python";
-import { buildFactoryCall } from "./emit-validators.js";
+import { mkRaw, factoryIdent, emitLiteral, type ClassDataOptions } from "@keyma/compiler/backend-python";
 import {
     schemaIndexes, schemaEdge, schemaEphemeral, fieldIndexes, fieldEphemeral,
     fieldValidators, fieldFormatters,
@@ -11,6 +10,21 @@ import {
 export type { ClassDataOptions };
 
 const CLIENT_PHASES = new Set(["change", "blur", "submit"]);
+
+/** Build the factory call that materializes a validator/formatter in the metadata, e.g.
+ *  `min_length(2)`. Field params are ordered positionally by the factory function's parameter list.
+ *  The factory itself is now an ordinary (plain) function emitted by the generic backend — the
+ *  metadata just calls it (the live callable serves both the A runtime driver and the synthesized
+ *  `validate()` method, plan §2.4). */
+export function buildFactoryCall(
+    name: string,
+    params: Record<string, unknown> | undefined,
+    factoryParams: readonly { name: string }[],
+): string {
+    const args = factoryParams.map((p) => params?.[p.name]);
+    while (args.length > 0 && args[args.length - 1] === undefined) args.pop();
+    return `${factoryIdent(name)}(${args.map((a) => emitLiteral(a)).join(", ")})`;
+}
 
 /** Build the metadata object for a class, ready to be emitted with `emitLiteral`. The schema
  *  domain derives its own index/phase gating from the neutral `bundle`: a client bundle keeps

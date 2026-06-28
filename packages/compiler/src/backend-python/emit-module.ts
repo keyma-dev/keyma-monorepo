@@ -2,7 +2,7 @@ import type { IRClassDeclaration, IRMember, IRMethod, IRFunctionDeclaration, IRT
 import { collectRefTargets, collectFunctionRefs, collectStatementIdentifiers, filterVisibleFields, filterVisibleMethods, methodBodyForBundle, type Bundle } from "@keyma/core/util";
 import { defaultRuntimeSymbols } from "../driver/runtime-symbols.js";
 import { renderStatements, factoryIdent } from "./emit-validators.js";
-import { intrinsicImports } from "./emit-expression.js";
+import { intrinsicImports, exprToPython } from "./emit-expression.js";
 import { irTypeToPython } from "./ir-type-to-python.js";
 import type { BuildClassData } from "./emitter-registry.js";
 import { buildApplyDefaults } from "./emit-defaults.js";
@@ -153,7 +153,17 @@ function emitClass(cls: IRClassDeclaration, deps: ModuleEmitDeps): string[] {
     if (fields.length > 0) {
         lines.push(`        if value:`);
         for (const field of fields) {
-            lines.push(`            self.${field.name}: ${fieldAnnotation(field, deps.classNameByName)} = value.get("${field.name}")`);
+            const ann = fieldAnnotation(field, deps.classNameByName);
+            // Defaults apply at CONSTRUCTION: an ABSENT key takes the field's default (literal or
+            // expression). `value.get(name, <default>)` fills only when the key is missing (a
+            // present `None` is kept), matching the runtime `apply_defaults` absence semantics.
+            if (field.default !== undefined) {
+                const def = field.default;
+                const dflt = def.kind === "literal" ? emitLiteral(def.value) : exprToPython(def.expression);
+                lines.push(`            self.${field.name}: ${ann} = value.get("${field.name}", ${dflt})`);
+            } else {
+                lines.push(`            self.${field.name}: ${ann} = value.get("${field.name}")`);
+            }
         }
     } else if (cls.extends === undefined) {
         // Fieldless base class: a valid no-op body.
@@ -254,11 +264,14 @@ function buildImports(moduleRef: string, content: ModuleContent, deps: ModuleEmi
     // the bundle-local baked schema runtime module (`_keyma_schema`, the home of these runtime
     // types). Inert until synthesis emits `external`-typed signatures (registry seeded empty ⇒ zero
     // matches ⇒ byte-identical output today).
+    // Python annotates ONLY getter return types + field annotations (regular method params/returns
+    // are unannotated), so the synthesized `validate()`/`format*()` regular methods reference no
+    // runtime type at all — collect external names only from the constructs Python actually annotates
+    // (getters + statics), avoiding a spurious (and unresolvable) `ValidationError` import.
     const externalNames = new Set<string>();
     for (const cls of classes) {
         for (const m of filterVisibleMethods(cls, deps.includePrivate)) {
-            if (m.returnType !== undefined) collectExternalTypeNames(m.returnType, externalNames);
-            for (const p of m.params) collectExternalTypeNames(p.type, externalNames);
+            if (m.kind === "getter" && m.returnType !== undefined) collectExternalTypeNames(m.returnType, externalNames);
         }
         for (const s of cls.statics ?? []) {
             if (s.type !== undefined) collectExternalTypeNames(s.type, externalNames);

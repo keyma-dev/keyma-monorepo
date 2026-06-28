@@ -82,7 +82,9 @@ export function exprToCpp(expr: IRExpression, opts: ExprOpts = TYPED): string {
             return `keyma::make_regex(${cppStr(expr.pattern)}, ${cppStr(expr.flags)})`;
 
         case "arrow": {
-            const params = expr.params.map((p) => `auto ${p}`).join(", ");
+            // Params may be plain names or typed `{name, type}`; here (an inline/predicate arrow
+            // captured by reference) the type is ignored and each is a deduced `auto`.
+            const params = expr.params.map((p) => `auto ${typeof p === "string" ? p : p.name}`).join(", ");
             // Block-body arrow → a statement lambda. An explicit return type (when the frontend
             // inferred a simple one) guards against `auto` deduction failing on multiple returns.
             if (expr.statements !== undefined) {

@@ -104,7 +104,16 @@ function emitClassJs(cls: IRClassDeclaration, deps: ModuleEmitDeps): string {
     if (cls.extends !== undefined) lines.push(`        super._hydrate(value);`);
     lines.push(`        if (value) {`);
     for (const field of fields) {
-        lines.push(`            this.${field.name} = value.${field.name};`);
+        // Defaults apply at CONSTRUCTION: an absent (`undefined`) key takes the field's default —
+        // literal or expression, required + optional alike (matches the runtime `applyDefaults`
+        // absence semantics). Non-defaulted fields assign through directly.
+        if (field.default !== undefined) {
+            const def = field.default;
+            const dflt = def.kind === "literal" ? emitLiteral(def.value) : exprToJs(def.expression, { fieldAccess: (n) => `value.${n}` });
+            lines.push(`            this.${field.name} = value.${field.name} !== undefined ? value.${field.name} : ${dflt};`);
+        } else {
+            lines.push(`            this.${field.name} = value.${field.name};`);
+        }
     }
     lines.push(`        }`);
     lines.push(`    }`);

@@ -1,4 +1,4 @@
-import type { ClassMetadata } from "../types.js";
+import type { ClassMetadata, ValidationError } from "../types.js";
 
 export declare class User {
     static readonly metadata: ClassMetadata;
@@ -7,5 +7,7 @@ export declare class User {
     lastName: string;
     secretNote: string | undefined;
     get fullName(): string;
+    validate(): ValidationError[];
+    formatChange(): void;
     static fromValue(value?: { id?: string; firstName?: string; lastName?: string; secretNote?: string }): User;
 }

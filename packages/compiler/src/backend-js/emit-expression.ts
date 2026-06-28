@@ -75,14 +75,17 @@ export function exprToJs(expr: IRExpression, opts: ExprEmitOptions = {}): string
                 return `/${e.pattern}/${e.flags}`;
 
             case "arrow": {
+                // Params may be plain names or typed `{name, type}` (a factory's inner arrow carries
+                // the value type); JS keeps just the names.
+                const params = e.params.map((p) => (typeof p === "string" ? p : p.name)).join(", ");
                 // Block-body arrow (multi-statement): a native block lambda.
                 if (e.statements !== undefined) {
                     const stmts = e.statements.map((s) => stmtToJs(s, "", opts)).join(" ");
-                    return `(${e.params.join(", ")}) => { ${stmts} }`;
+                    return `(${params}) => { ${stmts} }`;
                 }
                 // Concise body. Parenthesize an object-literal body so it isn't parsed as a block.
                 const body = e.body!.kind === "object" ? `(${emit(e.body!)})` : emit(e.body!);
-                return `(${e.params.join(", ")}) => ${body}`;
+                return `(${params}) => ${body}`;
             }
 
             case "new": {

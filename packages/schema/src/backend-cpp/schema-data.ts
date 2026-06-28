@@ -1,27 +1,25 @@
 import type { IRClassDeclaration, IRMember } from "@keyma/core/ir";
 import { filterVisibleFields } from "@keyma/core/util";
 import type { CppClassData, CppFieldData, ClassDataOptions } from "@keyma/compiler/backend-cpp";
-import { buildFactoryCall } from "./emit-validators.js";
-import { schemaIndexes, schemaEphemeral, fieldIndexes, fieldValidators, fieldFormatters } from "../ir/extensions.js";
+import { schemaIndexes, schemaEphemeral, fieldIndexes } from "../ir/extensions.js";
 
 export type { ClassDataOptions };
 
-const CLIENT_PHASES = new Set(["change", "blur", "submit"]);
-
-/** Client bundles omit indexes and keep only form-phase formatters; server/library carry the full set. */
+/** Client bundles omit indexes; server/library carry the full set. */
 function includeIndexes(bundle: ClassDataOptions["bundle"]): boolean {
     return bundle !== "client";
 }
-function formPhasesOnly(bundle: ClassDataOptions["bundle"]): boolean {
-    return bundle === "client";
-}
 
 /**
- * Build the neutral metadata for a class's `metadata()` accessor: which fields ride, their
- * validator/formatter factory calls, the indexes and refs, visibility / ephemeral, and the
- * apply_defaults reference. The compiler's `emitClassMeta` renders the span-backed C++
- * `keyma::ClassMetadata` aggregate from this data — so the only C++ this domain still emits is the
- * validator/formatter factory-call fragments (the analogue of the JS model's `mkRaw` calls).
+ * Build the neutral metadata for a class's `metadata()` accessor: which fields ride, the indexes
+ * and refs, visibility / ephemeral, and the apply_defaults reference. The compiler's
+ * `emitClassMeta` renders the span-backed C++ `keyma::ClassMetadata` aggregate from this data.
+ *
+ * Unlike JS/Python, C++ metadata SHEDS the per-field validators/formatters: the typed B path
+ * (the synthesized `validate()`/`format*()` methods over concrete struct members) cannot share a
+ * `keyma::Value`-erased `ValidatorFn` with a metadata span, so the C++ validate/format logic lives
+ * solely in the methods (plan §2 point 4). The runtime `keyma::validate(metadata(), …)` oracle is
+ * therefore unused by generated C++; the parity differential asserts C++-B against the JS oracle.
  */
 export function buildClassData(cls: IRClassDeclaration, opts: ClassDataOptions): CppClassData {
     const fields = filterVisibleFields(cls, opts.includePrivate).map((f) => buildFieldData(f, opts));
@@ -51,21 +49,8 @@ function buildFieldData(field: IRMember, opts: ClassDataOptions): CppFieldData {
     if (field.readonly) out.readonly = true;
     if (field.visibility === "private") out.visibility = "private";
     if (includeIndexes(opts.bundle) && fieldIndexes(field).length > 0) out.indexed = true;
-
-    const validators = fieldValidators(field);
-    if (validators.length > 0) {
-        out.validators = validators.map((v) =>
-            buildFactoryCall(v.name, v.params, opts.functionDecls.get(v.name)?.params ?? [], opts.functionNamespace(v.name)),
-        );
-    }
-    const allFormatters = fieldFormatters(field);
-    const formatters = formPhasesOnly(opts.bundle) ? allFormatters.filter((fm) => CLIENT_PHASES.has(fm.phase)) : allFormatters;
-    if (formatters.length > 0) {
-        out.formatters = formatters.map((fm) => ({
-            phase: fm.phase,
-            fn: buildFactoryCall(fm.spec.name, fm.spec.params, opts.functionDecls.get(fm.spec.name)?.params ?? [], opts.functionNamespace(fm.spec.name)),
-        }));
-    }
+    // Validators/formatters are NOT carried in C++ metadata (the synthesized typed methods own that
+    // logic; see the file-level note). Only introspective field data + the binary wire tag ride.
     if (field.tag !== undefined) out.tag = field.tag;
     return out;
 }
