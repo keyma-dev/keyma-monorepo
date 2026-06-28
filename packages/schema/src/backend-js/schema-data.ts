@@ -1,42 +1,22 @@
 import type { IRClassDeclaration, IRMember } from "@keyma/core/ir";
 import { filterVisibleFields } from "@keyma/core/util";
-import { mkRaw, buildApplyDefaults, factoryIdent, type ClassDataOptions } from "@keyma/compiler/backend-js";
+import { mkRaw, type ClassDataOptions } from "@keyma/compiler/backend-js";
 import {
     schemaIndexes, schemaEdge, schemaEphemeral, fieldIndexes, fieldEphemeral, fieldForm,
-    fieldValidators, fieldFormatters,
     type IRFieldIndex, type IRIndex,
 } from "../ir/extensions.js";
 
 export type { ClassDataOptions };
 
-const CLIENT_PHASES = new Set(["change", "blur", "submit"]);
-
-/**
- * Build the factory call that materializes a validator/formatter in the schema metadata, e.g.
- * `minLength(2)` / `trim()`. Field params (`{value: 2}`) are ordered positionally by the factory
- * function's parameter list. The factory itself is now an ordinary (plain) function emitted by the
- * generic backend — the metadata just calls it (the live callable serves both the metadata
- * validators (the A runtime driver) and the synthesized `validate()` method (B), plan §2.4).
- */
-export function buildFactoryCall(
-    name: string,
-    params: Record<string, unknown> | undefined,
-    factoryParams: readonly { name: string }[],
-): string {
-    const args = factoryParams.map((p) => params?.[p.name]);
-    while (args.length > 0 && args[args.length - 1] === undefined) args.pop();
-    const rendered = args.map((a) => (a === undefined ? "undefined" : JSON.stringify(a)));
-    return `${factoryIdent(name)}(${rendered.join(", ")})`;
-}
-
 /**
  * Build the metadata object for a class, ready to be emitted with `emitLiteral`.
- * Validators/formatters are spliced as live factory calls (`minLength(2)`), `refs`
- * and `applyDefaults` as live code — the object is no longer pure JSON (functions
- * and a Map ride along), so the caller emits it via `emitLiteral`, not JSON.
+ * The metadata is pure introspective data: behaviour (validate/format/defaults) lives
+ * in the synthesized B methods, not here. The only live fragments left are `base`
+ * (`Parent.metadata`) and `refs` (a `new Map([...])` of live class references), so the
+ * caller still emits the object via `emitLiteral`, not JSON.
  *
- * The bundle gate maps to this domain's index/phase rules: a `client` bundle drops
- * indexes and keeps only form-phase formatters; `server`/`library` keep everything.
+ * The bundle gate maps to this domain's index rules: a `client` bundle drops indexes;
+ * `server`/`library` keep everything.
  */
 export function buildClassData(cls: IRClassDeclaration, opts: ClassDataOptions): Record<string, unknown> {
     const includeIndexes = opts.bundle !== "client";
@@ -61,24 +41,13 @@ export function buildClassData(cls: IRClassDeclaration, opts: ClassDataOptions):
         const entries = opts.refs.map((r) => `[${JSON.stringify(r.name)}, ${r.symbol}]`).join(", ");
         out["refs"] = mkRaw(`new Map([${entries}])`);
     }
-    if (opts.includeDefaults) {
-        const applyDefaults = buildApplyDefaults(cls, opts.includePrivate);
-        if (applyDefaults !== null) out["applyDefaults"] = mkRaw(applyDefaults);
-    }
     return out;
 }
 
 // ─── Internal helpers ────────────────────────────────────────────────────────
 
 function buildFieldData(field: IRMember, opts: ClassDataOptions): object {
-    const formPhasesOnly = opts.bundle === "client";
     const includeIndexes = opts.bundle !== "client";
-
-    const validators = fieldValidators(field);
-    const allFormatters = fieldFormatters(field);
-    const formatters = formPhasesOnly
-        ? allFormatters.filter((fmt) => CLIENT_PHASES.has(fmt.phase))
-        : allFormatters;
 
     const indexes: IRFieldIndex[] = includeIndexes ? fieldIndexes(field) : [];
 
@@ -91,17 +60,6 @@ function buildFieldData(field: IRMember, opts: ClassDataOptions): object {
     if (field.readonly) base["readonly"] = true;
     if (!field.required) base["required"] = false;
     if (field.nullable) base["nullable"] = true;
-    if (validators.length > 0) {
-        base["validators"] = validators.map((v) =>
-            mkRaw(buildFactoryCall(v.name, v.params, opts.functionDecls.get(v.name)?.params ?? [])),
-        );
-    }
-    if (formatters.length > 0) {
-        base["formatters"] = formatters.map((fmt) => ({
-            phase: fmt.phase,
-            fn: mkRaw(buildFactoryCall(fmt.spec.name, fmt.spec.params, opts.functionDecls.get(fmt.spec.name)?.params ?? [])),
-        }));
-    }
     if (indexes.length > 0) base["indexes"] = indexes;
 
     if (fieldEphemeral(field)) {

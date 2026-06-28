@@ -1,19 +1,17 @@
-// Cross-language behavioral parity harness — the eliminate-domain-backends Stage-B B==A gate.
+// Cross-language behavioral parity harness — the metadata-neutralization B-consistency gate.
 //
 // One shared fixture IR is emitted to JS, Python, and C++ (with the schema method synthesis applied,
-// exactly as the compile pipeline's `afterNormalize` does). Two worlds are then run against the SAME
-// emitted bundles over a shared corpus:
-//   • A (the oracle): the runtime metadata-driven `validate`/`format`/`applyDefaults` drivers over the
-//     emitted JS `<Class>.metadata` (which keeps live validators/formatters, plan §2.4). This is the
-//     reference — computed INDEPENDENTLY of the synthesized methods.
-//   • B (the flip): the synthesized instance methods + defaults-at-construction —
-//     `Class.fromValue(rec).validate()`, `inst.formatSave()`, `Class.fromValue(rec)` (defaults filled
-//     at hydration) — run in JS, Python, AND C++.
-// The gate asserts B == A byte-identical for all three languages. They must agree INDEPENDENTLY (the
-// oracle is never edited to match B). Validators-only validate (decision 6): the corpus has every
-// required field present, so A's required-presence checks never fire and equal B's validators-only set.
+// exactly as the compile pipeline's `afterNormalize` does). The synthesized instance methods +
+// defaults-at-construction (the "B" world) are then run against the SAME emitted bundles over a
+// shared corpus, in all three languages:
+//   `Class.fromValue(rec).validate()`, `inst.formatSave()`, `Class.fromValue(rec)` (defaults filled
+//   at hydration).
+// Metadata is now PURE introspective data (no live validators/formatters/applyDefaults), so there is
+// no independent runtime A oracle. JS-B is the reference, pinned to known ground-truth values
+// (minLength error, trim, literal default applied); Python-B and C++-B are asserted == JS-B
+// byte-identical. The languages must agree INDEPENDENTLY (JS-B is never edited to match the others).
 //
-// The JS-A reference always runs (in-process). The Python/C++ B legs are gated on `python3` / a C++23
+// The JS-B reference always runs (in-process). The Python/C++ B legs are gated on `python3` / a C++23
 // compiler and skip cleanly when absent. Run explicitly: npm -w @keyma/schema run test:parity
 import { describe, it, before } from "node:test";
 import assert from "node:assert/strict";
@@ -28,7 +26,6 @@ import { emitJs } from "../backend-js/harness.js";
 import { emitPython } from "../backend-python/harness.js";
 import { emitCpp } from "../backend-cpp/harness.js";
 import { minLengthDecl, trimDecl } from "../backend-cpp/fixtures.js";
-import { validate, format, applyDefaults } from "@keyma/runtime";
 
 // ── Shared fixture: a flat, reference-free User. `firstName` carries a minLength validator + a
 //    save-phase `trim` formatter; `role` is required WITH a literal default (filled at construction).
@@ -114,30 +111,8 @@ function writeBundle(files: EmitFileLike[], dir: string): void {
     }
 }
 
-// ── A oracle (reference): the runtime metadata-driven drivers over the emitted JS metadata. ──
-async function runJsOracle(): Promise<ParityResult> {
-    const { files } = await emitJs(PARITY_IR, TARGET("js"), CFG);
-    const dir = mkdtempSync(join(tmpdir(), "parity-jsA-"));
-    try {
-        writeBundle(files, dir);
-        const userFile = files.find((x) => /(^|\/)user\.js$/i.test(x.path) && !x.path.endsWith(".d.ts"))!;
-        const mod = (await import(pathToFileURL(join(dir, userFile.path)).href)) as { User: { metadata: unknown } };
-        const meta = mod.User.metadata as Parameters<typeof validate>[0];
-        const out: ParityResult = { validate: {}, format: {}, defaults: {} };
-        for (const [name, rec] of Object.entries(COMPLETE)) {
-            out.validate[name] = validate(meta, { ...rec }).map((e) => ({ field: e.field, code: e.code }));
-            const fr = { ...rec }; format(meta, fr, "save"); out.format[name] = { firstName: fr["firstName"] };
-        }
-        for (const [name, rec] of Object.entries(DEFAULTS)) {
-            const dr = { ...rec }; applyDefaults(meta, dr); out.defaults[name] = { role: dr["role"] };
-        }
-        return out;
-    } finally {
-        rmSync(dir, { recursive: true, force: true });
-    }
-}
-
-// ── B (JS): the synthesized instance methods + defaults-at-construction, in-process. ──
+// ── B (JS): the synthesized instance methods + defaults-at-construction, in-process. This is the
+//    reference world — pinned below to known ground-truth values, and compared against by Python/C++. ──
 async function runJsB(): Promise<ParityResult> {
     const { files } = await emitJs(PARITY_IR, TARGET("js"), CFG);
     const dir = mkdtempSync(join(tmpdir(), "parity-jsB-"));
@@ -278,18 +253,18 @@ function detectPython3(): string | null {
 const RUNTIME_CPP_INC = join(process.cwd(), "..", "runtime-cpp", "include");
 const RUNTIME_PY_SRC = join(process.cwd(), "..", "runtime-python", "src");
 
-describe("cross-language parity — B (synthesized methods) == A (runtime oracle)", () => {
+describe("cross-language parity — B (synthesized methods) consistency (JS-B reference)", () => {
     let reference: ParityResult;
     let cxx: string | null = null;
     let python: string | null = null;
 
     before(async () => {
-        reference = await runJsOracle();
+        reference = await runJsB();
         cxx = detectCxx23();
         python = detectPython3();
     });
 
-    it("A oracle is a meaningful baseline (minLength error, trim, literal default applied)", () => {
+    it("JS-B is a meaningful baseline (minLength error, trim, literal default applied)", () => {
         assert.deepEqual(reference.validate["valid"], []);
         assert.deepEqual(reference.validate["short"], [{ field: "firstName", code: "minLength" }]);
         assert.equal(reference.format["valid"]!.firstName, "Ada");
@@ -297,17 +272,13 @@ describe("cross-language parity — B (synthesized methods) == A (runtime oracle
         assert.equal(reference.defaults["hasRole"]!.role, "admin");
     });
 
-    it("JS B == A (synthesized validate/formatSave + fromValue defaults)", async () => {
-        assert.deepEqual(normalize(await runJsB()), normalize(reference));
-    });
-
-    it("Python B == A", async (t) => {
+    it("Python B == JS-B", async (t) => {
         if (python === null) { t.skip("no python3 found (set KEYMA_PYTHON to enable)"); return; }
         const { files } = await emitPython(PARITY_IR, TARGET("python"), CFG);
         assert.deepEqual(normalize(runPythonB(files, python, RUNTIME_PY_SRC)), normalize(reference));
     });
 
-    it("C++ B == A", async (t) => {
+    it("C++ B == JS-B", async (t) => {
         if (cxx === null) { t.skip("no C++23 compiler found (set KEYMA_CXX to enable)"); return; }
         const { files } = await emitCpp(PARITY_IR, TARGET("cpp"), CFG);
         assert.deepEqual(normalize(runCppB(files, cxx, RUNTIME_CPP_INC)), normalize(reference));

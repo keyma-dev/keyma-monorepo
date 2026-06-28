@@ -9,7 +9,6 @@ import { irTypeToCpp, memberType, traitsArg, whereValueType, fieldKind, refTarge
 import type { BuildClassData } from "./emitter-registry.js";
 import { emitEnumClass, emitEnumConversions } from "./emit-enum.js";
 import { emitClassMeta } from "./emit-class-meta.js";
-import { buildApplyDefaults } from "./emit-defaults.js";
 import { includePath, namespaceOf, cppSanitizer } from "./module-path.js";
 
 export type ModuleEmitDeps = {
@@ -174,18 +173,12 @@ export function emitModuleCpp(
         lines.push("");
     }
 
-    // ── Block 2b: out-of-line apply_defaults / metadata() + the thin
-    // from_value/to_value forwarder definitions (after the value_traits they delegate to). ──
+    // ── Block 2b: out-of-line metadata() + the thin from_value/to_value forwarder
+    // definitions (after the value_traits they delegate to). ──
     lines.push(`namespace ${ns} {`);
     if (useLines.length > 0) lines.push(...useLines);
     lines.push("");
 
-    if (deps.includeDefaults) {
-        for (const cls of ordered) {
-            const ad = buildApplyDefaults(cls, deps.includePrivate);
-            if (ad !== null) lines.push(ad.def, "");
-        }
-    }
     for (const cls of ordered) {
         lines.push(...emitClassAccessor(cls, deps));
         lines.push("");
@@ -491,9 +484,6 @@ function emitClassAccessor(cls: IRClassDeclaration, deps: ModuleEmitDeps): strin
         `inline keyma::Value ${C}::to_value(const allocator_type& a) const { return keyma::value_traits<${C}>::to_value(*this, a); }`,
     ];
 
-    // apply_defaults reference (server only).
-    const ad = deps.includeDefaults ? buildApplyDefaults(cls, deps.includePrivate) : null;
-
     const accessor: string[] = [
         `inline const keyma::ClassMetadata& ${C}::metadata() {`,
         emitClassMeta(deps.buildClassData(cls, {
@@ -506,7 +496,6 @@ function emitClassAccessor(cls: IRClassDeclaration, deps: ModuleEmitDeps): strin
                 return home !== undefined ? namespaceOf(home, deps.nsRoot) : deps.nsRoot;
             },
             refs: classRefs(stored, deps),
-            ...(ad !== null ? { applyDefaultsName: ad.name } : {}),
             ...(baseFqnOf(cls, deps) !== undefined ? { baseClass: baseFqnOf(cls, deps)! } : {}),
         })),
         `}`,
@@ -554,7 +543,7 @@ function valueTraitsForwardDecls(ns: string, classes: readonly IRClassDeclaratio
  */
 /** The `keyma::Value` expression for a field's construction-time default (built on the from_value
  *  allocator `a`), or null when nothing applies (no default, or a null/array literal — the Value
- *  API has no array builder; mirrors `emit-defaults.ts`). Field refs inside an expression default
+ *  API has no array builder). Field refs inside an expression default
  *  read `v.at("x")` (the input record). */
 function fromValueDefaultExpr(def: IRMember["default"]): string | null {
     if (def === undefined) return null;

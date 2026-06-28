@@ -101,7 +101,7 @@ describe("emitCpp — library bundle", async () => {
         assert.ok(paths.includes("out/src/secret.hpp"));
     });
 
-    it("emits getter accessors, method, from_value, metadata(), apply_defaults — and NO materializer", () => {
+    it("emits getter accessors, method, from_value, metadata() — and NO materializer", () => {
         const u = fileBySuffix(files, "src/user.hpp");
         assert.ok(u.includes("auto fullName() const {"));
         assert.ok(u.includes("auto badge() const {"));
@@ -111,7 +111,8 @@ describe("emitCpp — library bundle", async () => {
         assert.ok(u.includes("static User from_value(const keyma::Value& v, const allocator_type& a);"));
         assert.ok(u.includes("inline const keyma::ClassMetadata& User::metadata()"));
         assert.ok(!u.includes("materialize_User"), "materializers are removed — none should be emitted");
-        assert.ok(u.includes("void apply_defaults_User("));
+        // Metadata is pure introspective data — no apply_defaults fn-ptr / free function.
+        assert.ok(!u.includes("apply_defaults_User"), "apply_defaults free function should not be emitted");
     });
 
     it("emits a thin value_traits specialization and member forwarders for serialization", () => {
@@ -132,14 +133,17 @@ describe("emitCpp — library bundle", async () => {
         assert.ok(u.includes("keyma::Phase::Save"));                              // server/library includes save phase
         assert.ok(u.includes("&app::src::address::Address::metadata"));
         assert.ok(u.includes("&app::src::tag::Tag::metadata"));
-        assert.ok(u.includes(".apply_defaults = &apply_defaults_User"));
+        assert.ok(!u.includes("apply_defaults"), "metadata no longer carries an apply_defaults fn-ptr");
     });
 
-    it("applies both literal and expression defaults in apply_defaults", () => {
+    it("applies both literal and expression defaults at construction (value_traits::from_value)", () => {
         const u = fileBySuffix(files, "src/user.hpp");
-        assert.ok(u.includes('value.set("role", keyma::to_value("user", __a))'));   // literal default
-        assert.ok(u.includes('value.set("status", keyma::to_value("active", __a))')); // enum literal default
-        assert.ok(u.includes('value.set("created"'));                                 // expression default (new Date())
+        // Defaults now apply at construction: an absent key takes the field default, round-tripped
+        // through a keyma::Value so every default kind flows through the same typed from_value.
+        assert.ok(u.includes('v.at("role").is_null() ?'));                            // role takes its default when absent
+        assert.ok(u.includes('keyma::to_value("user", a)'));                          // literal default
+        assert.ok(u.includes('keyma::to_value("active", a)'));                        // enum literal default
+        assert.ok(u.includes('v.at("created").is_null() ?'));                         // expression default (new Date())
     });
 
     it("emits services as abstract classes with pure virtual functions", () => {

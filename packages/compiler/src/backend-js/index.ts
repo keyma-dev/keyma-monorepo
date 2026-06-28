@@ -12,7 +12,6 @@ export { exprToJs, stmtToJs } from "./emit-expression.js";
 export { emitTypesJs, emitTypesDts } from "./emit-types.js";
 export { emitLiteral, mkRaw } from "./emit-literal.js";
 export { factoryIdent } from "./emit-validators.js";
-export { buildApplyDefaults } from "./emit-defaults.js";
 export { relModuleSpecifier } from "./module-path.js";
 
 // Built-in `@Service` emission (compiler-owned, base-language concern) — the bundle shell

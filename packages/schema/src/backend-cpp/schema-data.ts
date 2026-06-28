@@ -39,7 +39,6 @@ export function buildClassData(cls: IRClassDeclaration, opts: ClassDataOptions):
     if (schemaEphemeral(cls)) out.ephemeral = true;
     // Metadata carries OWN fields only — the `.base` accessor lets the runtime walk the chain.
     if (opts.baseClass !== undefined) out.base = opts.baseClass;
-    if (opts.applyDefaultsName !== undefined) out.applyDefaults = opts.applyDefaultsName;
     return out;
 }
 

@@ -39,25 +39,13 @@ User.metadata = Object.freeze({
             "type": {
                 "kind": "id"
             },
-            "readonly": true,
-            "validators": [
-                required()
-            ]
+            "readonly": true
         },
         {
             "name": "firstName",
             "type": {
                 "kind": "string"
-            },
-            "validators": [
-                minLength(2)
-            ],
-            "formatters": [
-                {
-                    "phase": "change",
-                    "fn": trim()
-                }
-            ]
+            }
         },
         {
             "name": "lastName",

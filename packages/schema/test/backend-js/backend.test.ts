@@ -841,9 +841,10 @@ describe("emitJs — formatters in their source module", () => {
         assert.ok(!paths.some((p) => p.endsWith("/formatters.js")), "shared formatters.js bundle should not be emitted");
     });
 
-    it("a field's metadata references the formatter via { phase, fn }", () => {
+    it("a field's formatter factory is imported and called by the synthesized format method", () => {
         const content = fileContent(files, "dist/js/server/src/item.js");
-        assert.ok(content.includes(`"fn": trim()`), "formatter should be a direct fn call");
+        assert.ok(content.includes(`import { trim } from "./schema.js"`), "model should import the formatter factory");
+        assert.ok(content.includes(`trim()`), "the synthesized format method should call the factory directly");
     });
 });
 

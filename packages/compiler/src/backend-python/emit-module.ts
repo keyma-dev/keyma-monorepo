@@ -5,7 +5,6 @@ import { renderStatements, factoryIdent } from "./emit-validators.js";
 import { intrinsicImports, exprToPython } from "./emit-expression.js";
 import { irTypeToPython } from "./ir-type-to-python.js";
 import type { BuildClassData } from "./emitter-registry.js";
-import { buildApplyDefaults } from "./emit-defaults.js";
 import { emitLiteral } from "./emit-literal.js";
 import { pythonRelImport } from "./module-path.js";
 import { EMITTED_PY_RUNTIME_MODULE } from "./emitted-runtime.js";
@@ -159,22 +158,11 @@ function emitClass(cls: IRClassDeclaration, deps: ModuleEmitDeps): string[] {
     }
     lines.push("");
 
-    // Module-level applyDefaults function (referenced from the metadata) — server bundles.
-    let applyDefaultsRef: string | undefined;
-    if (deps.includeDefaults) {
-        const ad = buildApplyDefaults(cls, deps.includePrivate);
-        if (ad !== null) {
-            lines.push(ad.def, "");
-            applyDefaultsRef = ad.name;
-        }
-    }
-
     const classData = deps.buildClassData(cls, {
         includePrivate: deps.includePrivate,
         bundle: deps.bundle,
         functionDecls: deps.functionDecls,
         refs: classRefs(fields, deps.classNameByName),
-        ...(applyDefaultsRef !== undefined ? { applyDefaultsRef } : {}),
     });
     lines.push(`${cls.sourceName}.metadata = ${emitLiteral(classData)}`);
 
