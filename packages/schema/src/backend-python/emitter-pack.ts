@@ -1,5 +1,5 @@
 import type { PythonEmitterPack } from "@keyma/compiler/backend-python";
-import { buildClassData } from "./schema-data.js";
+import { buildClassMetadata as buildClassData } from "../metadata-descriptor.js";
 
 /**
  * The schema-domain Python emitter pack: supplies the per-class `<Class>.metadata` builder. The

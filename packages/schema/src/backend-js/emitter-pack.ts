@@ -1,5 +1,5 @@
 import type { JsEmitterPack } from "@keyma/compiler/backend-js";
-import { buildClassData } from "./schema-data.js";
+import { buildClassMetadata as buildClassData } from "../metadata-descriptor.js";
 import { shapeClassDts } from "./schema-dts.js";
 import { EMITTED_SCHEMA_TYPES_DTS } from "./emitted-runtime-types.js";
 

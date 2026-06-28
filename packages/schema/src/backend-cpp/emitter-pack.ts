@@ -1,5 +1,5 @@
 import type { CppEmitterPack } from "@keyma/compiler/backend-cpp";
-import { buildClassData } from "./schema-data.js";
+import { buildClassMetadata as buildClassData } from "../metadata-descriptor.js";
 
 /**
  * The schema-domain C++ emitter pack: supplies the per-class `metadata()` data (as neutral data

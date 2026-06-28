@@ -29,7 +29,7 @@ const deps: ModuleEmitDeps = {
     functionModule: new Map(),
     classNameByName: new Map(),
     functionDecls: new Map(),
-    buildClassData: () => ({}),
+    buildClassData: () => ({ name: "", sourceName: "", fields: [] }),
 };
 
 const assign = (fieldName: string, from: string): IRStatement => ({

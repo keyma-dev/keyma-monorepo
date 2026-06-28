@@ -7,8 +7,6 @@ export { EmitterRegistry, SERVICES_REF, SERVICE_CLIENT_REF } from "./emitter-reg
 export type {
     CppEmitterPack,
     BuildClassData,
-    CppClassData,
-    CppFieldData,
     ClassDataOptions,
     ServiceEmitDeps,
     ServiceClientEmitDeps,

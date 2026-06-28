@@ -21,5 +21,13 @@ export {
     recordLayout,
 } from "./runtime-symbols.js";
 export type { RuntimeSymbols, RuntimeSymbolLang, RecordLayout, RecordFieldCtor } from "./runtime-symbols.js";
+export type {
+    MetadataFieldIndex,
+    MetadataIndex,
+    MetadataFieldDescriptor,
+    MetadataClassDescriptor,
+    ClassMetadataOptions,
+    MetadataRef,
+} from "./class-metadata.js";
 export type { KeymaDomain, KeymaDomainEmitterPacks } from "./domain.js";
 export type { IntrinsicDef } from "@keyma/core/ir";

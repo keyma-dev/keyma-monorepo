@@ -7,6 +7,7 @@ import { exprToCpp, type ExprOpts } from "./emit-expression.js";
 import { stmtToCpp, plainReturn, factoryIdent, type ReturnLowerer } from "./emit-validators.js";
 import { irTypeToCpp, memberType, traitsArg, whereValueType, fieldKind, refTargetType, binaryFieldPlan, type BinaryFieldPlan } from "./ir-type-to-cpp.js";
 import type { BuildClassData } from "./emitter-registry.js";
+import type { MetadataRef } from "../driver/index.js";
 import { emitEnumClass, emitEnumConversions } from "./emit-enum.js";
 import { emitClassMeta } from "./emit-class-meta.js";
 import { includePath, namespaceOf, cppSanitizer } from "./module-path.js";
@@ -486,18 +487,11 @@ function emitClassAccessor(cls: IRClassDeclaration, deps: ModuleEmitDeps): strin
 
     const accessor: string[] = [
         `inline const keyma::ClassMetadata& ${C}::metadata() {`,
-        emitClassMeta(deps.buildClassData(cls, {
-            includePrivate: deps.includePrivate,
-            bundle: deps.bundle,
-            functionDecls: deps.functionDecls,
-            nsRoot: deps.nsRoot,
-            functionNamespace: (name) => {
-                const home = deps.functionModule.get(name);
-                return home !== undefined ? namespaceOf(home, deps.nsRoot) : deps.nsRoot;
-            },
-            refs: classRefs(stored, deps),
-            ...(baseFqnOf(cls, deps) !== undefined ? { baseClass: baseFqnOf(cls, deps)! } : {}),
-        })),
+        emitClassMeta(
+            deps.buildClassData(cls, { includePrivate: deps.includePrivate, bundle: deps.bundle }),
+            classRefs(stored, deps),
+            baseFqnOf(cls, deps),
+        ),
         `}`,
     ];
     return [...forwarders, ...accessor];
@@ -827,10 +821,10 @@ function initMove(f: IRMember): string {
 
 // ─── refs / includes / collectors ─────────────────────────────────────────────
 
-function classRefs(fields: IRMember[], deps: ModuleEmitDeps): { name: string; cppClass: string }[] {
+function classRefs(fields: IRMember[], deps: ModuleEmitDeps): MetadataRef[] {
     return [...collectRefTargets(fields)]
         .filter((t) => deps.cppTypeByName.has(t))
-        .map((name) => ({ name, cppClass: deps.cppTypeByName.get(name)! }));
+        .map((name) => ({ name, target: deps.cppTypeByName.get(name)! }));
 }
 
 /** Top-of-file includes: embedded targets (by-value, complete type needed), named enums used

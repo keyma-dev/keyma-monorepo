@@ -1,38 +1,25 @@
-import type { KeymaIR, IRClassDeclaration, IRFunctionDeclaration } from "@keyma/core/ir";
-import type { EmitFile } from "../driver/index.js";
+import type { KeymaIR, IRClassDeclaration } from "@keyma/core/ir";
+import type { EmitFile, ClassMetadataOptions, MetadataClassDescriptor } from "../driver/index.js";
 
 /**
- * Options the generic per-module emitter passes to a domain's `buildClassData`. The contract
- * between the bundle shell and the domain pack; carries only IR-derived data, so it stays
- * domain-neutral in `@keyma/compiler`.
+ * Options the generic per-module emitter passes to a domain's `buildClassData`: the IR-neutral
+ * visibility/bundle gate. The live `base`/`refs` are NOT passed — the compiler derives `base`
+ * from `cls.extends` and computes the per-language `refs` symbols itself, then renders both.
  */
-export type ClassDataOptions = {
-    includePrivate: boolean;
-    /** Which bundle is being emitted. A domain pack derives its own visibility/phase gating
-     *  from this (e.g. a client bundle may keep only a subset of per-member reshaping). */
-    bundle: "client" | "server" | "library";
-    /** Every project-local function declaration keyed by name — a domain pack reads a
-     *  referenced function's params from here to order its direct-ref call args. */
-    functionDecls: ReadonlyMap<string, IRFunctionDeclaration>;
-    /** Embedded/reference targets this class needs as a live `refs` dict:
-     *  the target's `name` (lookup key) paired with its emitted Python class. */
-    refs: readonly { name: string; className: string }[];
-    /** Name of the module-level applyDefaults function to reference, if any. */
-    applyDefaultsRef?: string;
-};
+export type ClassDataOptions = ClassMetadataOptions;
 
-/** Builds the per-class metadata dict attached as `<Class>.metadata`. */
-export type BuildClassData = (cls: IRClassDeclaration, opts: ClassDataOptions) => Record<string, unknown>;
+/** Builds the per-class neutral metadata descriptor the compiler renders into `<Class>.metadata`. */
+export type BuildClassData = (cls: IRClassDeclaration, opts: ClassDataOptions) => MetadataClassDescriptor;
 
 /**
  * A domain's Python emission contributions. The generic backend keeps the bundle shell (file
- * layout, visibility gating, class / literal emission) and dispatches the `<Class>.metadata`
- * dict to the registered pack. The data-model domain's pack is registered by the CLI;
- * `@keyma/compiler` references no domain symbol.
+ * layout, visibility gating, class / literal emission, and the live `<Class>.metadata`
+ * rendering) and dispatches only the neutral metadata DESCRIPTOR to the registered pack. The
+ * data-model domain's pack is registered by the CLI; `@keyma/compiler` references no domain symbol.
  *
  * Python omits services and enums (an architectural asymmetry with JS/C++), so the pack has
- * no service/enum hooks. The metadata's camelCase keys (`sourceName`, `applyDefaults`, `refs`,
- * …) are the cross-language runtime contract — a pack must not rename them.
+ * no service/enum hooks. `buildClassData` returns a neutral {@link MetadataClassDescriptor};
+ * the compiler owns the rendered key identity (the cross-language runtime contract).
  */
 export type PythonEmitterPack = {
     name: string;

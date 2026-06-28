@@ -1,10 +1,8 @@
 import type {
     KeymaIR,
     IRClassDeclaration,
-    IRType,
-    IRFunctionDeclaration,
 } from "@keyma/core/ir";
-import type { EmitFile } from "../driver/index.js";
+import type { EmitFile, ClassMetadataOptions, MetadataClassDescriptor } from "../driver/index.js";
 
 /** Bundle-relative module ref (filename stem) of the services header (sits at the bundle root). */
 export const SERVICES_REF = "services";
@@ -12,30 +10,11 @@ export const SERVICES_REF = "services";
 export const SERVICE_CLIENT_REF = "service-client";
 
 /**
- * Options the generic per-module emitter passes to a domain's `buildClassData`. The contract
- * between the bundle shell and the domain pack; carries only IR-derived data, so it stays
- * domain-neutral in `@keyma/compiler`.
+ * Options the generic per-module emitter passes to a domain's `buildClassData`: the IR-neutral
+ * visibility/bundle gate. The live `base`/`refs` are NOT passed — the compiler derives the base
+ * FQN (`&Parent::metadata`) and computes the per-class ref FQNs itself, then renders both.
  */
-export type ClassDataOptions = {
-    includePrivate: boolean;
-    /** Which bundle is being emitted. A domain derives its own per-bundle gating (e.g. index /
-     *  phase inclusion) from this neutral value. */
-    bundle: "client" | "server" | "library";
-    /** Every project-local function declaration keyed by name — a domain pack reads a
-     *  validator/formatter factory's params from here to order its direct-ref call args. */
-    functionDecls: ReadonlyMap<string, IRFunctionDeclaration>;
-    /** Embedded/reference targets: the target's `name` paired with its fully-qualified C++ struct. */
-    refs: readonly { name: string; cppClass: string }[];
-    /** Unqualified name of the apply_defaults free function to reference, if any. */
-    applyDefaultsName?: string;
-    /** Fully-qualified C++ type of the `extends` parent (for `.base = &Parent::metadata`), if any. */
-    baseClass?: string;
-    /** Root namespace. */
-    nsRoot: string;
-    /** A validator/formatter factory's fully-qualified namespace (its SOURCE module's namespace,
-     *  e.g. `app::src::validators`) — the class metadata calls it like a cross-module ref target. */
-    functionNamespace: (name: string) => string;
-};
+export type ClassDataOptions = ClassMetadataOptions;
 
 /** The deps the bundle shell passes to the built-in services emitter (`emit-service.ts`). */
 export type ServiceEmitDeps = {
@@ -81,67 +60,21 @@ export type ServiceClientEmitDeps = {
     enumModuleByName: ReadonlyMap<string, string>;
 };
 
-/**
- * One field's neutral metadata, produced by a domain's `buildClassData` and rendered into a
- * `keyma::FieldMeta` by the compiler's `emitClassMeta`. Carries the IR `type` raw — the
- * compiler derives the `TypeTag` / element / target / bits / id-type tokens, so the domain
- * emits no C++ type syntax. The `validators` / `formatters` factory-call fragments are the
- * domain's sole C++ contribution (the analogue of the JS model's `mkRaw` factory calls).
- */
-export type CppFieldData = {
-    name: string;
-    /** The field's IR type — the compiler maps it to TypeTag / element / target / bits / id-type. */
-    type: IRType;
-    required: boolean;
-    nullable?: boolean;
-    readonly?: boolean;
-    /** Private fields ride only in server/library metadata. */
-    visibility?: "private";
-    /** Field carries at least one index (server bundles); renders `.indexed = true`. */
-    indexed?: boolean;
-    /** Validator factory-call fragments, e.g. `keyma::validators::min_length(2)`. */
-    validators?: readonly string[];
-    /** Formatter entries: a neutral phase name + its factory-call fragment. */
-    formatters?: readonly { phase: string; fn: string }[];
-    /** Stable binary wire tag (present only with binary serialization). */
-    tag?: number;
-};
-
-/**
- * A class's neutral metadata, produced by a domain's `buildClassData`. Language-neutral
- * but for the per-field validator/formatter factory-call fragments; the compiler's
- * `emitClassMeta` renders it into the span-backed `keyma::ClassMetadata` accessor body. The
- * camelCase identity keys are the cross-language runtime contract.
- */
-export type CppClassData = {
-    name: string;
-    sourceName: string;
-    visibility?: "private";
-    ephemeral?: boolean;
-    /** Unqualified `apply_defaults` free-function name to reference (`&name`), if any. */
-    applyDefaults?: string;
-    /** Fully-qualified C++ type of the `extends` parent — renders `.base = &Parent::metadata` so the
-     *  runtime walks the chain (metadata carries OWN fields only). */
-    base?: string;
-    /** Embedded/reference targets: identity `name` + fully-qualified C++ class (for `&Class::metadata`). */
-    refs: readonly { name: string; cppClass: string }[];
-    /** Class-level indexes (already gated by the bundle); `fields` are bare field names. */
-    indexes: readonly { fields: readonly string[]; unique: boolean }[];
-    fields: readonly CppFieldData[];
-};
-
-/** Builds the per-class neutral metadata the compiler renders into the `metadata()` accessor. */
-export type BuildClassData = (cls: IRClassDeclaration, opts: ClassDataOptions) => CppClassData;
+/** Builds the per-class neutral metadata descriptor the compiler renders into the `metadata()`
+ *  accessor. The compiler's `emitClassMeta` derives the typed `keyma::ClassMetadata` aggregate
+ *  (TypeTag / element / target / bits / id-type tokens, the span-backed field array, and the live
+ *  `base`/`refs`) from the descriptor + the per-class ref FQNs the bundle shell computes. */
+export type BuildClassData = (cls: IRClassDeclaration, opts: ClassDataOptions) => MetadataClassDescriptor;
 
 /**
  * A domain's C++ emission contributions. The generic backend keeps the bundle shell (file
  * layout, visibility gating, struct / value_traits / binary_traits emission, named-enum
  * emission, topological ordering, and the built-in service / service-client headers) and
- * dispatches the domain-semantic neutral `metadata()` data to the registered pack. The
- * primary domain pack (registered by the CLI) supplies it.
+ * dispatches only the neutral metadata DESCRIPTOR to the registered pack. The primary domain
+ * pack (registered by the CLI) supplies it.
  *
- * The metadata's camelCase keys (`sourceName`, `applyDefaults`, …) are the cross-language
- * runtime contract — a pack must not rename them.
+ * `buildClassData` returns a neutral {@link MetadataClassDescriptor}; the compiler owns the
+ * rendered key identity (the cross-language runtime contract).
  */
 export type CppEmitterPack = {
     name: string;

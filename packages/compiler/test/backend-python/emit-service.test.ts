@@ -106,7 +106,7 @@ const pack: PythonEmitterPack = {
     buildClassData: (cls) => ({
         name: cls.name,
         sourceName: cls.sourceName,
-        fields: cls.fields.map((f) => ({ name: f.name, type: f.type })),
+        fields: cls.fields.map((f) => ({ name: f.name, type: f.type, required: f.required })),
     }),
 };
 

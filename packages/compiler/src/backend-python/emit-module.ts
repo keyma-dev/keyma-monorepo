@@ -5,7 +5,8 @@ import { renderStatements, factoryIdent } from "./emit-validators.js";
 import { intrinsicImports, exprToPython } from "./emit-expression.js";
 import { irTypeToPython } from "./ir-type-to-python.js";
 import type { BuildClassData } from "./emitter-registry.js";
-import { emitLiteral } from "./emit-literal.js";
+import type { MetadataClassDescriptor, MetadataFieldDescriptor, MetadataRef } from "../driver/index.js";
+import { emitLiteral, mkRaw } from "./emit-literal.js";
 import { pythonRelImport } from "./module-path.js";
 import { EMITTED_PY_RUNTIME_MODULE } from "./emitted-runtime.js";
 
@@ -158,13 +159,11 @@ function emitClass(cls: IRClassDeclaration, deps: ModuleEmitDeps): string[] {
     }
     lines.push("");
 
-    const classData = deps.buildClassData(cls, {
+    const descriptor = deps.buildClassData(cls, {
         includePrivate: deps.includePrivate,
         bundle: deps.bundle,
-        functionDecls: deps.functionDecls,
-        refs: classRefs(fields, deps.classNameByName),
     });
-    lines.push(`${cls.sourceName}.metadata = ${emitLiteral(classData)}`);
+    lines.push(renderClassMetadata(cls, descriptor, classRefs(fields, deps.classNameByName)));
 
     return lines;
 }
@@ -264,15 +263,56 @@ function collectExternalTypeNames(type: IRType, out: Set<string>): void {
     }
 }
 
-/** Embedded/reference targets of a member list as `{ name, className }` pairs for
+/** Embedded/reference targets of a member list as `{ name, target }` pairs for
  *  the live `refs` dict — keyed by the target's `name`, valued by its Python class. */
 function classRefs(
     fields: IRMember[],
     classNameByName: ReadonlyMap<string, string>,
-): { name: string; className: string }[] {
+): MetadataRef[] {
     return [...collectRefTargets(fields)]
         .filter((t) => classNameByName.has(t))
-        .map((name) => ({ name, className: classNameByName.get(name)! }));
+        .map((name) => ({ name, target: classNameByName.get(name)! }));
+}
+
+/**
+ * Render a class's `<Class>.metadata = {…}` dict from the neutral {@link MetadataClassDescriptor},
+ * the live `base` (derived from `cls.extends`), and the live `refs` (a `{name: Class}` dict). Same
+ * key order + conditional inclusion as the JS renderer (the cross-language runtime contract); the
+ * compiler owns it (was the schema domain's `buildClassData`).
+ */
+function renderClassMetadata(cls: IRClassDeclaration, d: MetadataClassDescriptor, refs: readonly MetadataRef[]): string {
+    const out: Record<string, unknown> = {
+        name: d.name,
+        sourceName: d.sourceName,
+        fields: d.fields.map(pyFieldRecord),
+    };
+    // A live reference to the parent's `.metadata` lets the runtime walk the chain (metadata
+    // carries OWN fields only). `cls.extends` is the parent's emit symbol, so `<Parent>.metadata`.
+    if (cls.extends !== undefined) out["base"] = mkRaw(`${cls.extends}.metadata`);
+    if (d.indexes !== undefined && d.indexes.length > 0) out["indexes"] = d.indexes;
+    if (d.edge !== undefined) out["edge"] = d.edge;
+    if (d.visibility === "private") out["visibility"] = "private";
+    if (d.ephemeral === true) out["ephemeral"] = true;
+    if (refs.length > 0) {
+        const entries = refs.map((r) => `"${r.name}": ${r.target}`).join(", ");
+        out["refs"] = mkRaw(`{${entries}}`);
+    }
+    return `${cls.sourceName}.metadata = ${emitLiteral(out)}`;
+}
+
+/** One field's metadata record, in the contract key order. Python omits `form`/`deprecated`
+ *  (an asymmetry with JS) — only the keys the Python metadata contract carries are rendered. */
+function pyFieldRecord(f: MetadataFieldDescriptor): Record<string, unknown> {
+    const out: Record<string, unknown> = { name: f.name, type: f.type };
+    if (f.visibility === "private") out["visibility"] = "private";
+    if (f.readonly) out["readonly"] = true;
+    if (!f.required) out["required"] = false;
+    if (f.nullable) out["nullable"] = true;
+    if (f.indexes !== undefined && f.indexes.length > 0) out["indexes"] = f.indexes;
+    if (f.ephemeral) out["ephemeral"] = true;
+    if (f.default !== undefined) out["default"] = f.default;
+    if (f.tag !== undefined) out["tag"] = f.tag;
+    return out;
 }
 
 function emitMethodPython(

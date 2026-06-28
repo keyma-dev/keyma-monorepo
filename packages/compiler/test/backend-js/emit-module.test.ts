@@ -26,8 +26,8 @@ function content(classes: IRClassDeclaration[], functions: IRFunctionDeclaration
     return { classes, functions };
 }
 
-// Minimal deps — buildClassData returns an empty literal; the class-shell emission is what's
-// under test, so the domain metadata object is irrelevant here.
+// Minimal deps — buildClassData returns a near-empty descriptor; the class-shell emission is
+// what's under test, so the rendered metadata object is irrelevant here.
 const deps: ModuleEmitDeps = {
     includePrivate: true,
     bundle: "library",
@@ -36,7 +36,7 @@ const deps: ModuleEmitDeps = {
     functionModule: new Map(),
     embeddedTypeNames: new Map(),
     functionDecls: new Map(),
-    buildClassData: () => ({}),
+    buildClassData: () => ({ name: "", sourceName: "", fields: [] }),
 };
 
 const assign = (fieldName: string, from: string): IRStatement => ({

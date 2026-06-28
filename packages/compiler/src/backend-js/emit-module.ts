@@ -9,7 +9,8 @@ import { defaultRuntimeSymbols } from "../driver/runtime-symbols.js";
 import { stmtToJs, exprToJs } from "./emit-expression.js";
 import { irTypeToTs } from "./ir-type-to-ts.js";
 import type { BuildClassData, ClassDtsContext, ClassDtsShape } from "./emitter-registry.js";
-import { emitLiteral } from "./emit-literal.js";
+import type { MetadataClassDescriptor, MetadataFieldDescriptor, MetadataRef } from "../driver/index.js";
+import { emitLiteral, mkRaw } from "./emit-literal.js";
 import { factoryIdent } from "./emit-validators.js";
 import { relModuleSpecifier } from "./module-path.js";
 import { TYPES_REF } from "./emit-types.js";
@@ -123,14 +124,11 @@ function emitClassJs(cls: IRClassDeclaration, deps: ModuleEmitDeps): string {
     lines.push("");
 
     const refs = classRefs(fields, deps.embeddedTypeNames);
-    const classData = deps.buildClassData(cls, {
+    const descriptor = deps.buildClassData(cls, {
         includePrivate: deps.includePrivate,
         bundle: deps.bundle,
-        includeDefaults: deps.includeDefaults,
-        functionDecls: deps.functionDecls,
-        refs,
     });
-    lines.push(`${cls.sourceName}.metadata = Object.freeze(${emitLiteral(classData)});`);
+    lines.push(renderClassMetadata(cls, descriptor, refs));
 
     // Synthesized static members (e.g. domain `metadata`): emitted from base IR as
     // `Class.<name> = <value>;`, audience-gated like a method body. Empty for plain classes.
@@ -369,17 +367,59 @@ function collectExternalTypeNames(type: IRType, out: Set<string>): void {
 }
 
 /**
- * Embedded/reference targets referenced by a member list, as `{ name, symbol }`
+ * Embedded/reference targets referenced by a member list, as `{ name, target }`
  * pairs for the live `refs` Map — keyed by the target's `name` (the runtime
  * identity serialize/deserialize look up), valued by its emitted class symbol.
  */
 function classRefs(
     fields: IRMember[],
     embeddedTypeNames: ReadonlyMap<string, string>,
-): { name: string; symbol: string }[] {
+): MetadataRef[] {
     return [...collectRefTargets(fields)]
         .filter((t) => embeddedTypeNames.has(t))
-        .map((name) => ({ name, symbol: embeddedTypeNames.get(name)! }));
+        .map((name) => ({ name, target: embeddedTypeNames.get(name)! }));
+}
+
+/**
+ * Render a class's `<Class>.metadata = Object.freeze({…})` from the neutral
+ * {@link MetadataClassDescriptor}, the live `base` (derived from `cls.extends`), and the live
+ * `refs` (a `new Map([…])` of class references). The key order + conditional inclusion are the
+ * cross-language runtime contract; the compiler owns it (was the schema domain's `buildClassData`).
+ */
+function renderClassMetadata(cls: IRClassDeclaration, d: MetadataClassDescriptor, refs: readonly MetadataRef[]): string {
+    const out: Record<string, unknown> = {
+        name: d.name,
+        sourceName: d.sourceName,
+        fields: d.fields.map(jsFieldRecord),
+    };
+    // A live reference to the parent's `.metadata` lets the runtime walk the chain (metadata
+    // carries OWN fields only). `cls.extends` is the parent's emit symbol, so `<Parent>.metadata`.
+    if (cls.extends !== undefined) out["base"] = mkRaw(`${cls.extends}.metadata`);
+    if (d.indexes !== undefined && d.indexes.length > 0) out["indexes"] = d.indexes;
+    if (d.edge !== undefined) out["edge"] = d.edge;
+    if (d.visibility === "private") out["visibility"] = "private";
+    if (d.ephemeral === true) out["ephemeral"] = true;
+    if (refs.length > 0) {
+        const entries = refs.map((r) => `[${JSON.stringify(r.name)}, ${r.target}]`).join(", ");
+        out["refs"] = mkRaw(`new Map([${entries}])`);
+    }
+    return `${cls.sourceName}.metadata = Object.freeze(${emitLiteral(out)});`;
+}
+
+/** One field's metadata record, in the contract key order. */
+function jsFieldRecord(f: MetadataFieldDescriptor): Record<string, unknown> {
+    const out: Record<string, unknown> = { name: f.name, type: f.type };
+    if (f.visibility === "private") out["visibility"] = "private";
+    if (f.readonly) out["readonly"] = true;
+    if (!f.required) out["required"] = false;
+    if (f.nullable) out["nullable"] = true;
+    if (f.indexes !== undefined && f.indexes.length > 0) out["indexes"] = f.indexes;
+    if (f.ephemeral) out["ephemeral"] = true;
+    if (f.default !== undefined) out["default"] = f.default;
+    if (f.form !== undefined) out["form"] = f.form;
+    if (f.deprecated !== undefined) out["deprecated"] = f.deprecated;
+    if (f.tag !== undefined) out["tag"] = f.tag;
+    return out;
 }
 
 // ─── Helpers ──────────────────────────────────────────────────────────────────

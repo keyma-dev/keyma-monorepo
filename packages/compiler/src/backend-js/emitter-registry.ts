@@ -1,34 +1,18 @@
 import type {
     KeymaIR,
     IRClassDeclaration,
-    IRFunctionDeclaration,
 } from "@keyma/core/ir";
-import type { EmitFile } from "../driver/index.js";
+import type { EmitFile, ClassMetadataOptions, MetadataClassDescriptor } from "../driver/index.js";
 
 /**
- * Options the generic per-module emitter passes to a domain's `buildClassData`. This is the
- * contract between the bundle shell (which knows visibility/default gating and resolves the
- * `refs`) and the domain pack (which assembles the `<Class>.metadata` object). It carries only
- * IR-derived data, so it stays domain-neutral in `@keyma/compiler`.
+ * Options the generic per-module emitter passes to a domain's `buildClassData`: the IR-neutral
+ * visibility/bundle gate. The live `base`/`refs` are NOT passed — the compiler derives `base`
+ * from `cls.extends` and computes the per-language `refs` symbols itself, then renders both.
  */
-export type ClassDataOptions = {
-    /** Include private members. */
-    includePrivate: boolean;
-    /** Which bundle is being emitted. A domain pack may gate its own per-bundle metadata
-     *  (e.g. dropping server-only detail from the client bundle) off this value. */
-    bundle: "client" | "server" | "library";
-    /** Include the per-class `applyDefaults` arrow (server/library bundles only). */
-    includeDefaults: boolean;
-    /** Every project-local function declaration keyed by name — a domain pack reads a
-     *  referenced function's params from here to order its direct-ref call args. */
-    functionDecls: ReadonlyMap<string, IRFunctionDeclaration>;
-    /** Embedded/reference targets this class needs as a live `refs` Map:
-     *  the target's `name` (lookup key) paired with its emitted class symbol. */
-    refs: readonly { name: string; symbol: string }[];
-};
+export type ClassDataOptions = ClassMetadataOptions;
 
-/** Builds the per-class metadata object attached as `<Class>.metadata`. */
-export type BuildClassData = (cls: IRClassDeclaration, opts: ClassDataOptions) => Record<string, unknown>;
+/** Builds the per-class neutral metadata descriptor the compiler renders into `<Class>.metadata`. */
+export type BuildClassData = (cls: IRClassDeclaration, opts: ClassDataOptions) => MetadataClassDescriptor;
 
 /** Context a domain's `shapeClassDts` hook needs to resolve target identities to symbols. */
 export type ClassDtsContext = {
@@ -81,13 +65,14 @@ export type ServiceEmitDeps = {
 
 /**
  * A domain's JS emission contributions. The generic backend keeps the bundle shell (file
- * layout, visibility gating, class / literal emission, and the built-in services file) and
- * dispatches to the registered pack for the domain-semantic `<Class>.metadata` object. The
- * data-model domain's pack lives in a separate package; the CLI registers it.
+ * layout, visibility gating, class / literal emission, the live `<Class>.metadata` rendering,
+ * and the built-in services file) and dispatches to the registered pack only for the neutral
+ * metadata DESCRIPTOR. The data-model domain's pack lives in a separate package; the CLI
+ * registers it.
  *
- * NOTE: the metadata produced by `buildClassData` uses camelCase keys (`sourceName`,
- * `applyDefaults`, `refs`, `tag`, …) — the cross-language runtime contract. A pack must
- * not rename them.
+ * NOTE: `buildClassData` returns a neutral {@link MetadataClassDescriptor} (pure data); the
+ * compiler owns the rendered key identity (the cross-language runtime contract) and the live
+ * `base`/`refs` fragments.
  */
 export type JsEmitterPack = {
     name: string;

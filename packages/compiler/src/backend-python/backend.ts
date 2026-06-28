@@ -146,7 +146,7 @@ function emitBundle(
         const deps: ModuleEmitDeps = {
             ...opts, ...shared,
             bundle,
-            buildClassData: pack?.buildClassData ?? (() => ({})),
+            buildClassData: pack?.buildClassData ?? (() => ({ name: "", sourceName: "", fields: [] })),
         };
         for (const [ref, content] of moduleContent) {
             const c: ModuleContent = content;

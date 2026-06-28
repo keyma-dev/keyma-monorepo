@@ -46,8 +46,6 @@ function makeDeps(classes: readonly IRClassDeclaration[]): ModuleEmitDeps {
         buildClassData: (cls) => ({
             name: cls.name,
             sourceName: cls.sourceName,
-            refs: [],
-            indexes: [],
             fields: [],
         }),
     };
