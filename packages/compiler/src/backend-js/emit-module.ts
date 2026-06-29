@@ -8,7 +8,7 @@ import {
 import { defaultRuntimeSymbols } from "../driver/runtime-symbols.js";
 import { stmtToJs, exprToJs } from "./emit-expression.js";
 import { irTypeToTs } from "./ir-type-to-ts.js";
-import type { BuildClassData, ClassDtsContext, ClassDtsShape } from "./emitter-registry.js";
+import type { BuildClassData } from "./emitter-registry.js";
 import type { MetadataClassDescriptor, MetadataFieldDescriptor, MetadataRef } from "../driver/index.js";
 import { emitLiteral, mkRaw } from "./emit-literal.js";
 import { factoryIdent } from "./emit-validators.js";
@@ -46,10 +46,6 @@ export type ModuleEmitDeps = {
      *  registry's primary pack). Threaded here so the generic module emitter stays
      *  domain-agnostic. */
     buildClassData: BuildClassData;
-    /** Domain hook to override a class's `.d.ts` declaration. From the primary pack; absent for
-     *  plain class sets / core-only builds, in which case every class emits the default
-     *  `export declare class`. */
-    shapeClassDts?: (cls: IRClassDeclaration, ctx: ClassDtsContext) => ClassDtsShape | undefined;
 };
 
 // ─── JS module ─────────────────────────────────────────────────────────────────
@@ -166,11 +162,8 @@ function emitClassDts(cls: IRClassDeclaration, deps: ModuleEmitDeps): string {
     const fields = filterVisibleFields(cls, deps.includePrivate);
     const lines: string[] = [];
 
-    // A domain may reshape the class declaration (e.g. privatize a relationship class and
-    // re-export a branded const). Plain classes / non-domain builds keep the default.
-    const shape = deps.shapeClassDts?.(cls, { embeddedTypeNames: deps.embeddedTypeNames });
-    const declName = shape?.declName ?? cls.sourceName;
-    const declKeyword = shape?.declKeyword ?? "export declare class";
+    const declName = cls.sourceName;
+    const declKeyword = "export declare class";
 
     // Real inheritance: declare `extends Parent` and own members only (inherited come from the base).
     const ext = cls.extends !== undefined ? ` extends ${cls.extends}` : "";
@@ -215,11 +208,6 @@ function emitClassDts(cls: IRClassDeclaration, deps: ModuleEmitDeps): string {
         .join("; ");
     lines.push(`    static fromValue(value?: { ${fromValueParams} }): ${declName};`);
     lines.push(`}`);
-
-    if (shape?.trailer !== undefined && shape.trailer.length > 0) {
-        lines.push("");
-        lines.push(...shape.trailer);
-    }
 
     lines.push("");
     return lines.join("\n");
@@ -280,13 +268,6 @@ function buildImports(
         add(relModuleSpecifier(moduleRef, targetRef), symbol);
     };
     for (const target of collectRefTargets(allFields)) addRef(target);
-    // A domain may need extra .d.ts imports per class (e.g. a relationship's endpoint types).
-    if (typeOnly && deps.shapeClassDts !== undefined) {
-        for (const cls of classes) {
-            const targets = deps.shapeClassDts(cls, { embeddedTypeNames: deps.embeddedTypeNames })?.importTargets;
-            if (targets !== undefined) for (const t of targets) addRef(t);
-        }
-    }
 
     if (!typeOnly) {
         // Functions referenced from this module — by class behaviors/defaults (including the

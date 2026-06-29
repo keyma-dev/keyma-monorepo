@@ -1,7 +1,7 @@
-// Guards the edge `.d.ts` shaping that the schema pack contributes via the generic JS
-// backend's `shapeSchemaDts` hook (residual #2: the shaping used to live in the generic
-// `@keyma/compiler/backend-js/emit-module.ts`). An edge class is privatized to `_X` and the
-// public binding `X` is re-exported as a branded const carrying the `__edge` phantom. No
+// Guards the edge class `.d.ts` emission. The `__edge` phantom brand + `_X` privatization were
+// DROPPED (Step 4 / T-edge): an edge class now emits as a plain `export declare class`, exactly
+// like any other class. Edge SEMANTICS survive in `<Class>.metadata.edge` (untouched by this).
+// The endpoint type (`Person`) is still imported via the class's `a`/`b` reference fields. No
 // other test emits an edge schema's `.d.ts`, so this is the byte-identity guard for that path.
 import { describe, it } from "node:test";
 import assert from "node:assert/strict";
@@ -40,19 +40,16 @@ const CONFIG = { source: [], outDir: "dist", namePrefix: "", targets: [] } as un
 const EXPECTED_KNOWS_DTS = `import type { ClassMetadata } from "../types.js";
 import type { Person } from "./person.js";
 
-declare class _Knows {
+export declare class Knows {
     static readonly metadata: ClassMetadata;
     a: Person;
     b: Person;
-    static fromValue(value?: { a?: Person; b?: Person }): _Knows;
+    static fromValue(value?: { a?: Person; b?: Person }): Knows;
 }
-
-export declare const Knows: typeof _Knows & { readonly __edge?: { from: Person; to: Person } };
-export type Knows = InstanceType<typeof _Knows>;
 `;
 
-describe("emitJs — edge .d.ts shaping (schema pack shapeSchemaDts hook)", () => {
-    it("privatizes the edge class and re-exports a branded const with the __edge phantom", async () => {
+describe("emitJs — edge .d.ts emission (no phantom brand)", () => {
+    it("emits an edge class as a plain `export declare class` (no __edge brand, no privatization)", async () => {
         const { files } = await emitJs(EDGE_IR, LIBRARY_TARGET, CONFIG);
         const dts = files.find((x) => x.path === "dist/src/knows.d.ts");
         assert.ok(dts !== undefined, "edge model .d.ts was emitted");

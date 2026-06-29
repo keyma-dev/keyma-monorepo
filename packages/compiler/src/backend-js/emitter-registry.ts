@@ -14,30 +14,6 @@ export type ClassDataOptions = ClassMetadataOptions;
 /** Builds the per-class neutral metadata descriptor the compiler renders into `<Class>.metadata`. */
 export type BuildClassData = (cls: IRClassDeclaration, opts: ClassDataOptions) => MetadataClassDescriptor;
 
-/** Context a domain's `shapeClassDts` hook needs to resolve target identities to symbols. */
-export type ClassDtsContext = {
-    /** Reference/embedded target `name` → emitted class symbol (`sourceName`). */
-    embeddedTypeNames: ReadonlyMap<string, string>;
-};
-
-/**
- * A domain's override of a class's `.d.ts` declaration. Returned by `shapeClassDts` when the
- * default `export declare class <sourceName> { … }` is not enough — e.g. a domain privatizes a
- * relationship class to `_X` and re-exports `X` as a branded const carrying a phantom marker.
- * All fields are optional; an absent field keeps the generic default.
- */
-export type ClassDtsShape = {
-    /** Override the class declaration's emitted name (default: `cls.sourceName`). */
-    declName?: string;
-    /** Override the class declaration keyword (default: `"export declare class"`). */
-    declKeyword?: string;
-    /** Lines appended after the class body (preceded by one blank line) — e.g. a branded
-     *  const + `InstanceType` alias. */
-    trailer?: readonly string[];
-    /** Extra ref-target identities to import in the `.d.ts` (e.g. a relationship's endpoints). */
-    importTargets?: readonly string[];
-};
-
 /**
  * The per-bundle context the shell passes to a domain's `emitBundleFiles` hook. Lets a
  * domain place its own files under the bundle root (`bundleDir`), gate by which bundle is
@@ -79,13 +55,6 @@ export type JsEmitterPack = {
     /** Build the per-class `.metadata` object. Provided by the data-model domain (the
      *  primary pack); a domain that only contributes bundle files (e.g. UI) omits it. */
     buildClassData?: BuildClassData;
-    /**
-     * Override a class's `.d.ts` declaration when the domain needs more than a plain
-     * `export declare class`. Returns `undefined` to keep the default. Consulted on the
-     * primary pack only (like `buildClassData`); inert for plain classes, so single-domain
-     * bundles stay byte-identical.
-     */
-    shapeClassDts?: (cls: IRClassDeclaration, ctx: ClassDtsContext) => ClassDtsShape | undefined;
     /**
      * The domain's runtime type-declaration block, appended to each bundle's `types.d.ts`.
      * Lets a domain ship its own metadata `.d.ts` surface (e.g. `ClassMetadata`) alongside the

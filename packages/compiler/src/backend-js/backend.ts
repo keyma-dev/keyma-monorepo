@@ -168,7 +168,6 @@ function emitBundle(
         const deps: ModuleEmitDeps = {
             ...opts, ...shared,
             buildClassData: pack?.buildClassData ?? (() => ({ name: "", sourceName: "", fields: [] })),
-            ...(pack?.shapeClassDts !== undefined ? { shapeClassDts: pack.shapeClassDts } : {}),
         };
         for (const [ref, content] of moduleContent) {
             const c: ModuleContent = content;
