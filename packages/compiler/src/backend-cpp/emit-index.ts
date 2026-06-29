@@ -1,6 +1,6 @@
 import type { IRClassDeclaration, IREnumDeclaration, IRService } from "@keyma/core/ir";
 import { includePath, namespaceOf, cppSanitizer } from "./module-path.js";
-import { SERVICES_REF } from "./emitter-registry.js";
+import { SERVICES_REF } from "./emit-service.js";
 
 type IndexEmitOptions = {
     includePrivate: boolean;

@@ -3,7 +3,7 @@ import assert from "node:assert/strict";
 import type { KeymaIR, IRService } from "@keyma/core/ir";
 import { emitServicesPython, SERVICES_REF, type ServiceEmitDeps } from "../../src/backend-python/emit-service.js";
 import { EMITTED_PY_RUNTIME_MODULE } from "../../src/backend-python/emitted-runtime.js";
-import { createPythonBackend, type PythonEmitterPack } from "../../src/backend-python/index.js";
+import { createPythonBackend, type BuildClassData } from "../../src/backend-python/index.js";
 import type { PythonTargetConfig } from "../../src/backend-python/types.js";
 
 const SRC = { file: "user.ts", line: 1, column: 1 };
@@ -101,14 +101,11 @@ describe("emitServicesPython — client bundle (transport-bound client)", () => 
 
 // ── Full bundle shell: self-contained emission ───────────────────────────────────
 
-const pack: PythonEmitterPack = {
-    name: "test-data-model",
-    buildClassData: (cls) => ({
-        name: cls.name,
-        sourceName: cls.sourceName,
-        fields: cls.fields.map((f) => ({ name: f.name, type: f.type, required: f.required })),
-    }),
-};
+const classMetadata: BuildClassData = (cls) => ({
+    name: cls.name,
+    sourceName: cls.sourceName,
+    fields: cls.fields.map((f) => ({ name: f.name, type: f.type, required: f.required })),
+});
 
 const IR: KeymaIR = {
     irVersion: "1.0.0",
@@ -134,7 +131,7 @@ const CONFIG = { source: [], outDir: "dist", namePrefix: "", targets: [] };
 
 describe("emitPython — self-contained service bundle", () => {
     it("emits the baked runtime module, services.py, and a service re-export — importing no keyma package", async () => {
-        const backend = createPythonBackend([pack]);
+        const backend = createPythonBackend({ classMetadata });
         const result = await backend.emit(IR, TARGET as never, CONFIG as never);
         const byPath = new Map(result.files.map((f) => [f.path, f.content as string]));
 

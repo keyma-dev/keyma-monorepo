@@ -3,7 +3,17 @@ import { filterVisible } from "@keyma/core/util";
 import { irTypeToTs } from "./ir-type-to-ts.js";
 import { emitLiteral, mkRaw } from "./emit-literal.js";
 import { relModuleSpecifier } from "./module-path.js";
-import type { ServiceEmitDeps } from "./emitter-registry.js";
+
+/** The deps the bundle shell passes to the built-in services emitter. */
+export type ServiceEmitDeps = {
+    /** Include private services and private methods (server/library bundles). */
+    includePrivate: boolean;
+    /** sourceName → bundle-relative source module ref (e.g. "src/user"). */
+    classModule: ReadonlyMap<string, string>;
+    /** Reference/embedded target `name` → emitted class symbol (for `.d.ts` types
+     *  and the client `refs` Map value / model-import binding). */
+    embeddedTypeNames: ReadonlyMap<string, string>;
+};
 
 // `@Service`/RPC is a base-language concern the compiler owns end-to-end: the bundle shell calls
 // these emitters directly on `ir.services` (gated by visibility like classes). No domain pack

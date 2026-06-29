@@ -1,4 +1,4 @@
-import type { IRType, IRDefault } from "@keyma/core/ir";
+import type { IRType, IRDefault, IRClassDeclaration } from "@keyma/core/ir";
 
 /**
  * The neutral, language-agnostic per-class metadata descriptor. A domain pack's class-metadata
@@ -84,3 +84,19 @@ export type ClassMetadataOptions = {
  *  identity `name` (the runtime lookup key) paired with its emitted per-language symbol — the JS
  *  class binding, the Python class, or the fully-qualified C++ struct. */
 export type MetadataRef = { name: string; target: string };
+
+/**
+ * Options the generic per-module emitter passes to a domain's class-metadata builder: the
+ * IR-neutral visibility/bundle gate. The live `base`/`refs` are NOT passed — the compiler derives
+ * `base` from `cls.extends` and computes the per-language `refs` symbols itself, then renders both.
+ * An alias of {@link ClassMetadataOptions} kept for the backend `BuildClassData` surface.
+ */
+export type ClassDataOptions = ClassMetadataOptions;
+
+/**
+ * Builds the per-class neutral {@link MetadataClassDescriptor} the compiler renders into
+ * `<Class>.metadata` (JS `Object.freeze({…})`, Python dict, C++ `keyma::ClassMetadata` aggregate).
+ * The data-model domain supplies ONE of these as `KeymaDomain.classMetadata`; all three language
+ * backends consume it directly. Replaces the deleted per-language `*EmitterPack.buildClassData`.
+ */
+export type BuildClassData = (cls: IRClassDeclaration, opts: ClassDataOptions) => MetadataClassDescriptor;

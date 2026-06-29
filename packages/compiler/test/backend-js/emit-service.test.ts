@@ -145,7 +145,7 @@ describe("createJsBackend — bundle emits baked runtime, imports no @keyma/runt
     };
 
     it("emits the baked codec/RPC modules into both bundles and never imports @keyma/runtime", async () => {
-        const backend = createJsBackend([]);
+        const backend = createJsBackend({});
         const result = await backend.emit(ir, { language: "js", outDir: "out" }, {
             source: [], outDir: "out", namePrefix: "", targets: [],
         });

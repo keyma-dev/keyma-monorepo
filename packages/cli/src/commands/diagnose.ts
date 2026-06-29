@@ -20,7 +20,9 @@ export type DiagnoseDomainInfo = {
     frontend: string;
     /** Whether it registers an IR section validator. */
     irValidator: boolean;
-    /** Which backend languages it contributes emitter packs for. */
+    /** Which backend languages it emits for. A domain that supplies the neutral `classMetadata`
+     *  builder contributes to all three (the compiler renders it per language); a frontend-only
+     *  domain contributes none. */
     languages: string[];
     /** Whether it will actually be loaded given the current selection. */
     active: boolean;
@@ -47,11 +49,10 @@ export type DiagnoseReport = {
 };
 
 function languagesOf(domain: KeymaDomain): string[] {
-    const langs: string[] = [];
-    if (domain.emitterPacks.js !== undefined) langs.push("js");
-    if (domain.emitterPacks.python !== undefined) langs.push("python");
-    if (domain.emitterPacks.cpp !== undefined) langs.push("cpp");
-    return langs;
+    // The neutral `classMetadata` builder is language-agnostic — the compiler renders it into every
+    // target's `<Class>.metadata` — so a domain that supplies it emits for all three. A
+    // frontend-only domain (no `classMetadata`) contributes no backend emission.
+    return domain.classMetadata !== undefined ? ["js", "python", "cpp"] : [];
 }
 
 /**

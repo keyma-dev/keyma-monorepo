@@ -7,20 +7,29 @@ import { emitServicesPython, SERVICES_REF, type ServiceEmitDeps } from "./emit-s
 import { EMITTED_PY_RUNTIME, EMITTED_PY_RUNTIME_MODULE } from "./emitted-runtime.js";
 import { moduleRefOf } from "./module-path.js";
 import { resolvePythonTargetJSStyle as resolvePythonTarget, type PythonTargetConfig } from "./types.js";
-import { EmitterRegistry, type PythonEmitterPack } from "./emitter-registry.js";
+import type { BuildClassData } from "../driver/index.js";
 
 /**
- * Build a Python backend from the given domain emitter packs. The generic bundle shell here is
- * domain-neutral; the per-class metadata comes from the registered pack (the data-model domain's
- * pack is registered by the CLI).
+ * The neutral hooks the Python backend reads, supplied by the host (the CLI) from the loaded
+ * domains. No per-language packs: the data-model domain provides ONE language-agnostic
+ * `classMetadata` builder, which the compiler renders into each class's `metadata` dict.
  */
-export function createPythonBackend(packs: Iterable<PythonEmitterPack>): KeymaBackend {
-    const registry = new EmitterRegistry();
-    for (const pack of packs) registry.register(pack);
+export type PythonBackendOptions = {
+    /** Build the per-class metadata descriptor (the data-model domain). Absent ⇒ a core-only
+     *  build, which produces no classes. */
+    classMetadata?: BuildClassData | undefined;
+};
+
+/**
+ * Build a Python backend from the neutral domain hooks. The generic bundle shell here is
+ * domain-neutral; the per-class metadata comes from `opts.classMetadata` (the data-model
+ * domain, registered by the CLI).
+ */
+export function createPythonBackend(opts: PythonBackendOptions): KeymaBackend {
     return {
         name: "@keyma/compiler/backend-python",
         target: "python",
-        emit: (ir, target, config) => emitPython(ir, target, config, registry),
+        emit: (ir, target, config) => emitPython(ir, target, config, opts),
     };
 }
 
@@ -37,16 +46,10 @@ export async function emitPython(
     ir: KeymaIR,
     target: KeymaTargetConfig,
     _config: ResolvedConfig,
-    registry: EmitterRegistry
+    opts: PythonBackendOptions
 ): Promise<EmitResult> {
     const pyTarget = resolvePythonTarget(target as PythonTargetConfig);
     const files: EmitFile[] = [];
-
-    // The registered domain emit packs. The first (primary) supplies the per-class metadata
-    // builder + the claimed-function render hook; the bundle shell stays domain-agnostic. The
-    // full list is threaded through so every pack's `emitBundleFiles` can contribute its own
-    // bundle files. Empty for a core-only build.
-    const packs = registry.list();
 
     const decls: Decls = {
         functions: ir.functionDeclarations ?? [],
@@ -73,17 +76,17 @@ export async function emitPython(
     if (pyTarget.emitClient) {
         files.push(...emitBundle(ir, path.posix.join(pyTarget.outDir, "client"), shared, decls, {
             includePrivate: false, includeDefaults: false,
-        }, packs, "client"));
+        }, opts, "client"));
     }
     if (pyTarget.emitServer) {
         files.push(...emitBundle(ir, path.posix.join(pyTarget.outDir, "server"), shared, decls, {
             includePrivate: true, includeDefaults: true,
-        }, packs, "server"));
+        }, opts, "server"));
     }
     if (pyTarget.emitLibrary) {
         files.push(...emitBundle(ir, pyTarget.outDir, shared, decls, {
             includePrivate: true, includeDefaults: true,
-        }, packs, "library"));
+        }, opts, "library"));
     }
 
     return { files, diagnostics: [] };
@@ -100,14 +103,14 @@ function emitBundle(
     shared: SharedDeps,
     decls: Decls,
     opts: BundleOptions,
-    packs: readonly PythonEmitterPack[],
+    backend: PythonBackendOptions,
     bundle: "client" | "server" | "library",
 ): EmitFile[] {
     const files: EmitFile[] = [];
 
-    // Primary pack — the per-class metadata provider (the data-model domain) — selected by
-    // CAPABILITY, not registration order. Undefined only in a core-only build (no classes).
-    const pack = packs.find((p) => p.buildClassData !== undefined);
+    // The neutral per-class metadata builder (the data-model domain). Undefined only in a
+    // core-only build (no classes).
+    const classMetadata = backend.classMetadata;
 
     const visibleClasses: IRClassDeclaration[] = opts.includePrivate
         ? ir.classes
@@ -137,16 +140,16 @@ function emitBundle(
     for (const s of visibleClasses) slot(shared.classModule.get(s.sourceName)!).classes.push(s);
     for (const d of reachableFns) slot(shared.functionModule.get(d.name)!).functions.push(d);
 
-    if (visibleClasses.length > 0 && pack?.buildClassData === undefined) {
+    if (visibleClasses.length > 0 && classMetadata === undefined) {
         // Classes need a domain's metadata builder (the data-model domain). Absent only in a
         // core-only build, which produces no classes — so reaching here is a real error.
-        throw new Error("no Python emitter pack with a class-metadata builder registered, but the IR has classes to emit");
+        throw new Error("no domain `classMetadata` builder provided, but the IR has classes to emit");
     }
     if (moduleContent.size > 0) {
         const deps: ModuleEmitDeps = {
             ...opts, ...shared,
             bundle,
-            buildClassData: pack?.buildClassData ?? (() => ({ name: "", sourceName: "", fields: [] })),
+            buildClassData: classMetadata ?? (() => ({ name: "", sourceName: "", fields: [] })),
         };
         for (const [ref, content] of moduleContent) {
             const c: ModuleContent = content;
@@ -183,15 +186,6 @@ function emitBundle(
     }, visibleServices.map((s) => s.sourceName));
     files.push({ path: path.posix.join(bundleDir, "index.py"), content: indexContent });
     files.push({ path: path.posix.join(bundleDir, "__init__.py"), content: indexContent });
-
-    // Every registered pack may contribute its own bundle files from its IR slice (e.g. the
-    // UI domain's view modules under `ui/`). Inert for packs without the hook (the data-model
-    // pack), so a single-domain bundle is byte-identical.
-    for (const p of packs) {
-        if (p.emitBundleFiles !== undefined) {
-            files.push(...p.emitBundleFiles(ir, { bundle, bundleDir, includePrivate: opts.includePrivate }));
-        }
-    }
 
     return files;
 }

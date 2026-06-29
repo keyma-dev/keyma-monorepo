@@ -1,7 +1,7 @@
 {
   "name": "@keyma/schema",
   "version": "0.0.1",
-  "description": "Keyma schema domain — DSL decorators, IR checks, frontend extraction, and JS/Python/C++ emitter packs, plus the built-in validator/formatter libraries (one publishable package, subpath exports)",
+  "description": "Keyma schema domain — DSL decorators, IR checks, frontend extraction, and the neutral class-metadata descriptor builder, plus the built-in validator/formatter libraries (one publishable package, subpath exports)",
   "type": "module",
   "exports": {
     ".": {
@@ -20,18 +20,6 @@
       "import": "./dist/src/frontend-ts/index.js",
       "types": "./dist/src/frontend-ts/index.d.ts"
     },
-    "./backend-js": {
-      "import": "./dist/src/backend-js/index.js",
-      "types": "./dist/src/backend-js/index.d.ts"
-    },
-    "./backend-python": {
-      "import": "./dist/src/backend-python/index.js",
-      "types": "./dist/src/backend-python/index.d.ts"
-    },
-    "./backend-cpp": {
-      "import": "./dist/src/backend-cpp/index.js",
-      "types": "./dist/src/backend-cpp/index.d.ts"
-    },
     "./validators": {
       "types": "./src/validators/index.ts",
       "import": "./src/validators/index.ts"
@@ -46,9 +34,6 @@
     "dist/src/dsl",
     "dist/src/ir",
     "dist/src/frontend-ts",
-    "dist/src/backend-js",
-    "dist/src/backend-python",
-    "dist/src/backend-cpp",
     "src/validators",
     "src/formatters"
   ],
@@ -61,10 +46,10 @@
     "access": "public"
   },
   "scripts": {
-    "gen-types": "node src/backend-js/scripts/gen-schema-types.mjs",
-    "prebuild": "node src/backend-js/scripts/gen-schema-types.mjs",
+    "gen-types": "node src/scripts/gen-schema-types.mjs",
+    "prebuild": "node src/scripts/gen-schema-types.mjs",
     "build": "tsc",
-    "pretest": "node src/backend-js/scripts/gen-schema-types.mjs",
+    "pretest": "node src/scripts/gen-schema-types.mjs",
     "test": "tsc && cp -r test/backend-js/snapshots dist/test/backend-js/ && node --test dist/test/dsl/*.test.js dist/test/ir/*.test.js dist/test/frontend-ts/*.test.js dist/test/backend-js/*.test.js dist/test/backend-python/*.test.js",
     "test:parity": "tsc && node --test dist/test/parity/*.test.js"
   },

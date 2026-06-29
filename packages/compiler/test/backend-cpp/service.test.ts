@@ -6,9 +6,8 @@ import { tmpdir } from "node:os";
 import path from "node:path";
 import { fileURLToPath } from "node:url";
 import type { IRService, IRSourceLocation, IRType } from "@keyma/core/ir";
-import { emitServicesCpp } from "../../src/backend-cpp/emit-service.js";
-import { emitServiceClientCpp } from "../../src/backend-cpp/emit-service-client.js";
-import type { ServiceEmitDeps, ServiceClientEmitDeps } from "../../src/backend-cpp/emitter-registry.js";
+import { emitServicesCpp, type ServiceEmitDeps } from "../../src/backend-cpp/emit-service.js";
+import { emitServiceClientCpp, type ServiceClientEmitDeps } from "../../src/backend-cpp/emit-service-client.js";
 
 // The C++ @Service/RPC emission: the server abstract base (meta + dispatch over both encodings) and
 // the typed client (task<result<T, error>>). Mirrors the JS/Python backend-service tests' intent —

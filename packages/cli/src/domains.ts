@@ -32,7 +32,8 @@ export type DomainResolution = {
 export type DomainSetup = {
     /** Frontend extraction domains, passed to `compile({ domains })`. */
     frontendDomains: FrontendDomain[];
-    /** The per-language backends, assembled from each domain's emitter packs. */
+    /** The per-language backends, assembled from each domain's neutral emission hooks
+     *  (`classMetadata` + `runtimeTypeDecls`). */
     backends: KeymaBackend[];
     /** Specifiers that were loaded (for logging/diagnostics). */
     loaded: string[];
@@ -77,9 +78,7 @@ function isKeymaDomain(value: unknown): value is KeymaDomain {
         typeof frontend === "object" &&
         frontend !== null &&
         typeof frontend["dslModule"] === "string" &&
-        Array.isArray(frontend["decorators"]) &&
-        typeof d["emitterPacks"] === "object" &&
-        d["emitterPacks"] !== null
+        Array.isArray(frontend["decorators"])
     );
 }
 
@@ -110,7 +109,7 @@ export async function probeDomain(spec: string): Promise<DomainProbe> {
             status: "invalid",
             message:
                 `does not export a valid \`keymaDomain\` ` +
-                `(expected { name, frontend, emitterPacks })`,
+                `(expected { name, frontend })`,
         };
     }
     return { spec, status: "loaded", domain };
@@ -209,7 +208,7 @@ function setupKey(requested?: readonly string[]): string {
 /**
  * Resolve the configured/auto-detected domains and wire them across the seams a build needs:
  * register each domain's IR validator + intrinsics (idempotently), collect the frontend domains,
- * and assemble the per-language backends from the domain emitter packs. When `configuredTargets`
+ * and assemble the per-language backends from the domains' neutral emission hooks. When `configuredTargets`
  * is given, a domain that declares `targets` must cover every configured target or the build
  * fails fast with a config error. Cached per resolution key.
  */
@@ -255,13 +254,15 @@ export async function prepareDomains(
     }
 
     const frontendDomains = domains.map((d) => d.frontend);
-    const jsPacks = domains.flatMap((d) => (d.emitterPacks.js !== undefined ? [d.emitterPacks.js] : []));
-    const pyPacks = domains.flatMap((d) => (d.emitterPacks.python !== undefined ? [d.emitterPacks.python] : []));
-    const cppPacks = domains.flatMap((d) => (d.emitterPacks.cpp !== undefined ? [d.emitterPacks.cpp] : []));
+    // The neutral emission hooks: ONE language-agnostic per-class metadata-descriptor builder (the
+    // data-model domain) fed to every backend, plus the JS-only `.d.ts` type-surface blocks the JS
+    // backend appends. No per-language packs — adding a domain needs no per-language backend code.
+    const classMetadata = domains.map((d) => d.classMetadata).find((x) => x !== undefined);
+    const runtimeTypeDecls = domains.flatMap((d) => (d.runtimeTypeDecls !== undefined ? [d.runtimeTypeDecls] : []));
     const backends: KeymaBackend[] = [
-        createJsBackend(jsPacks),
-        createPythonBackend(pyPacks),
-        createCppBackend(cppPacks),
+        createJsBackend({ classMetadata, runtimeTypeDecls }),
+        createPythonBackend({ classMetadata }),
+        createCppBackend({ classMetadata }),
     ];
 
     const label = autoDetected ? "auto-detected" : "configured";

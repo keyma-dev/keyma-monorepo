@@ -1,19 +1,12 @@
 export { createCppBackend, emitCpp } from "./backend.js";
+export type { CppBackendOptions } from "./backend.js";
 export type { CppTargetConfig } from "./types.js";
 
-// The emitter-registry seam: the class, the bundle-layout refs, and the pack/contract types.
-// Domain packs (a domain pack registered by the CLI) implement `CppEmitterPack`.
-export { EmitterRegistry, SERVICES_REF, SERVICE_CLIENT_REF } from "./emitter-registry.js";
-export type {
-    CppEmitterPack,
-    BuildClassData,
-    ClassDataOptions,
-    ServiceEmitDeps,
-    ServiceClientEmitDeps,
-    BundleEmitContext,
-} from "./emitter-registry.js";
+// The neutral metadata seam: a domain supplies a `BuildClassData` as `KeymaDomain.classMetadata`
+// (the data-model domain); the C++ backend renders the descriptor into each `metadata()` aggregate.
+export type { BuildClassData, ClassDataOptions } from "../driver/index.js";
 
-// ── Generic emission helpers, exported so domain emitter packs build on the same engine ──
+// ── Generic emission helpers, exported so external consumers build on the same engine ──
 export { typeTag, irTypeToCpp, memberType, valueBinding, irTypeGuard, irTypeLabel } from "./ir-type-to-cpp.js";
 // Statement/return lowering + identifier/context helpers — a domain pack reuses these to emit
 // the validator/formatter `ValidatorFn`/`FormatterFn` wrappers it now owns (validators.hpp/formatters.hpp).
@@ -24,6 +17,9 @@ export { exprToCpp } from "./emit-expression.js";
 export { emitSupportHpp } from "./emit-support.js";
 
 // Built-in `@Service` emission (compiler-owned, base-language concern) — the bundle shell
-// emits these directly; exported for tests and direct consumers.
-export { emitServicesCpp } from "./emit-service.js";
-export { emitServiceClientCpp } from "./emit-service-client.js";
+// emits these directly; exported for tests and direct consumers. The bundle-layout refs +
+// emitter deps live alongside their emitters.
+export { emitServicesCpp, SERVICES_REF } from "./emit-service.js";
+export type { ServiceEmitDeps } from "./emit-service.js";
+export { emitServiceClientCpp, SERVICE_CLIENT_REF } from "./emit-service-client.js";
+export type { ServiceClientEmitDeps } from "./emit-service-client.js";

@@ -9,22 +9,31 @@ import { emitIndexCpp } from "./emit-index.js";
 import { emitSupportHpp } from "./emit-support.js";
 import { moduleRefOf, namespaceOf, cppSanitizer } from "./module-path.js";
 import { resolveCppTarget, VENDOR_RUNTIME_HEADER, type CppTargetConfig } from "./types.js";
-import { EmitterRegistry, SERVICES_REF, SERVICE_CLIENT_REF, type CppEmitterPack } from "./emitter-registry.js";
-import { emitServicesCpp } from "./emit-service.js";
-import { emitServiceClientCpp } from "./emit-service-client.js";
+import type { BuildClassData } from "../driver/index.js";
+import { emitServicesCpp, SERVICES_REF } from "./emit-service.js";
+import { emitServiceClientCpp, SERVICE_CLIENT_REF } from "./emit-service-client.js";
 
 /**
- * Build a C++ backend from the given domain emitter packs. The generic bundle shell here is
- * domain-neutral; the class metadata + enums + services come from the registered pack (the
- * primary domain pack is registered by the CLI).
+ * The neutral hooks the C++ backend reads, supplied by the host (the CLI) from the loaded
+ * domains. No per-language packs: the data-model domain provides ONE language-agnostic
+ * `classMetadata` builder, which the compiler renders into each class's `metadata()` aggregate.
  */
-export function createCppBackend(packs: Iterable<CppEmitterPack>): KeymaBackend {
-    const registry = new EmitterRegistry();
-    for (const pack of packs) registry.register(pack);
+export type CppBackendOptions = {
+    /** Build the per-class metadata descriptor (the data-model domain). Absent ⇒ a core-only
+     *  build, which produces no classes. */
+    classMetadata?: BuildClassData | undefined;
+};
+
+/**
+ * Build a C++ backend from the neutral domain hooks. The generic bundle shell here is
+ * domain-neutral; the class metadata comes from `opts.classMetadata` (the data-model domain,
+ * registered by the CLI); enums and services are compiler-owned.
+ */
+export function createCppBackend(opts: CppBackendOptions): KeymaBackend {
     return {
         name: "@keyma/compiler/backend-cpp",
         target: "cpp",
-        emit: (ir, target, config) => emitCpp(ir, target, config, registry),
+        emit: (ir, target, config) => emitCpp(ir, target, config, opts),
     };
 }
 
@@ -45,15 +54,11 @@ export async function emitCpp(
     ir: KeymaIR,
     target: KeymaTargetConfig,
     config: ResolvedConfig,
-    registry: EmitterRegistry
+    opts: CppBackendOptions
 ): Promise<EmitResult> {
     const cppTarget = resolveCppTarget(target as CppTargetConfig);
     const nsRoot = cppTarget.namespaceRoot;
     const files: EmitFile[] = [];
-
-    // The registered domain emit packs. The first (primary) supplies the per-class metadata,
-    // enum, and service emitters; the bundle shell stays domain-agnostic. Empty for a core build.
-    const packs = registry.list();
 
     const decls: Decls = {
         functions: ir.functionDeclarations ?? [],
@@ -125,17 +130,17 @@ export async function emitCpp(
     if (cppTarget.emitClient) {
         files.push(...emitBundle(ir, path.posix.join(cppTarget.outDir, "client"), shared, decls, {
             includePrivate: false, includeDefaults: false, bundle: "client",
-        }, cppTarget.vendorRuntime, packs, diagnostics));
+        }, cppTarget.vendorRuntime, opts, diagnostics));
     }
     if (cppTarget.emitServer) {
         files.push(...emitBundle(ir, path.posix.join(cppTarget.outDir, "server"), shared, decls, {
             includePrivate: true, includeDefaults: true, bundle: "server",
-        }, cppTarget.vendorRuntime, packs, diagnostics));
+        }, cppTarget.vendorRuntime, opts, diagnostics));
     }
     if (cppTarget.emitLibrary) {
         files.push(...emitBundle(ir, cppTarget.outDir, shared, decls, {
             includePrivate: true, includeDefaults: true, bundle: "library",
-        }, cppTarget.vendorRuntime, packs, diagnostics));
+        }, cppTarget.vendorRuntime, opts, diagnostics));
     }
 
     return { files, diagnostics: dedupeDiagnostics(diagnostics) };
@@ -164,14 +169,14 @@ function emitBundle(
     decls: Decls,
     opts: BundleOptions,
     vendorRuntime: boolean,
-    packs: readonly CppEmitterPack[],
+    backend: CppBackendOptions,
     diagnostics: IRDiagnostic[],
 ): EmitFile[] {
     const files: EmitFile[] = [];
 
-    // Primary pack — the per-class metadata provider (the primary domain) — selected by
-    // CAPABILITY, not registration order. Undefined only in a core-only build (no classes).
-    const pack = packs.find((p) => p.buildClassData !== undefined);
+    // The neutral per-class metadata builder (the data-model domain). Undefined only in a
+    // core-only build (no classes).
+    const classMetadata = backend.classMetadata;
 
     // Vendor the runtime header into the bundle only when opted in; by default generated
     // headers depend on @keyma/runtime-cpp via `#include <keyma/runtime.hpp>`.
@@ -212,16 +217,16 @@ function emitBundle(
         (fnGroups.get(ref) ?? fnGroups.set(ref, []).get(ref)!).push(d);
     }
     const moduleRefs = new Set([...classGroups.keys(), ...enumGroups.keys(), ...fnGroups.keys()]);
-    if (classGroups.size > 0 && pack?.buildClassData === undefined) {
-        // Classes need a domain's metadata builder (the primary domain). It is absent only in a
+    if (classGroups.size > 0 && classMetadata === undefined) {
+        // Classes need a domain's metadata builder (the data-model domain). It is absent only in a
         // core-only build, which produces no classes — so reaching here is a real error.
-        throw new Error("no C++ emitter pack with a class metadata builder registered, but the IR has classes to emit");
+        throw new Error("no domain `classMetadata` builder provided, but the IR has classes to emit");
     }
     if (moduleRefs.size > 0) {
         const deps: ModuleEmitDeps = {
             ...opts, ...shared,
-            // Only invoked when classGroups is non-empty, which the guard above proves has a pack.
-            buildClassData: pack?.buildClassData ?? (() => { throw new Error("buildClassData missing"); }),
+            // Only invoked when classGroups is non-empty, which the guard above proves has a builder.
+            buildClassData: classMetadata ?? (() => { throw new Error("classMetadata missing"); }),
         };
         for (const ref of moduleRefs) {
             const content = emitModuleCpp(ref, classGroups.get(ref) ?? [], enumGroups.get(ref) ?? [], fnGroups.get(ref) ?? [], deps, diagnostics);
@@ -279,17 +284,6 @@ function emitBundle(
             services: visibleServices,
         }),
     });
-
-    // Every registered pack may contribute its own bundle files from its IR slice (e.g. the
-    // UI domain's view headers under `ui/`). Inert for packs without the hook.
-    for (const p of packs) {
-        if (p.emitBundleFiles !== undefined) {
-            files.push(...p.emitBundleFiles(ir, {
-                bundle: opts.bundle, bundleDir, includePrivate: opts.includePrivate,
-                nsRoot: shared.nsRoot, runtimeInclude: shared.runtimeInclude,
-            }));
-        }
-    }
 
     return files;
 }

@@ -1,7 +1,7 @@
 // Bakes the data-model metadata type declarations (the `ClassMetadata` surface) into a string
-// constant the schema JS emitter pack returns from `runtimeTypeDecls()`. The generic backend
-// appends it to every generated bundle's `types.d.ts`, alongside the compiler-owned
-// service/request blob. Mirrors the compiler's `gen-emitted-types.mjs` pattern.
+// constant the schema domain ships as `KeymaDomain.runtimeTypeDecls`. The JS backend appends it
+// to every generated bundle's `types.d.ts`, alongside the compiler-owned service/request blob.
+// Mirrors the compiler's `gen-emitted-types.mjs` pattern.
 //
 // Runs as `prebuild`/`pretest` so the copy never drifts. `runtime/src/types.ts` is the SOURCE
 // and is never modified (deferred to the runtime rewrite); this slices + renames it.
@@ -11,7 +11,7 @@ import { fileURLToPath } from "node:url";
 import path from "node:path";
 
 const here = path.dirname(fileURLToPath(import.meta.url));
-const SOURCE = path.resolve(here, "../../../../runtime/src/types.ts");
+const SOURCE = path.resolve(here, "../../../runtime/src/types.ts");
 const OUT = path.resolve(here, "../emitted-runtime-types.ts");
 
 // The data-model metadata declarations to keep (the service/request surface is sliced by the

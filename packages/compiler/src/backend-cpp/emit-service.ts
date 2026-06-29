@@ -5,7 +5,32 @@ import { includePath } from "./module-path.js";
 import {
     jsonEncode, jsonDecode, binaryEncode, binaryDecode, cppType, passByRef,
 } from "./emit-service-marshal.js";
-import type { ServiceEmitDeps } from "./emitter-registry.js";
+
+/** Bundle-relative module ref (filename stem) of the services header (sits at the bundle root). */
+export const SERVICES_REF = "services";
+
+/** The deps the bundle shell passes to the built-in services emitter. */
+export type ServiceEmitDeps = {
+    /** Include private services and private methods (server/library bundles). */
+    includePrivate: boolean;
+    nsRoot: string;
+    /** Complete `#include` token (with delimiters) for the runtime header. */
+    runtimeInclude: string;
+    /** Typed binary codec is enabled (the project-level `binary` config). When off, the generated
+     *  dispatch / client marshals JSON only (the per-type `binary_traits<T>` for class params are
+     *  emitted only under binary, so the binary branch would not compile). */
+    binary: boolean;
+    /** sourceName → bundle-relative model module ref (e.g. "models/user"). */
+    classModule: ReadonlyMap<string, string>;
+    /** Reference/embedded target `name` → emitted C++ class (`sourceName`). */
+    classNameByName: ReadonlyMap<string, string>;
+    /** Reference/embedded target `name` → fully-qualified C++ struct type. */
+    cppTypeByName: ReadonlyMap<string, string>;
+    /** Named enum `name` → fully-qualified `enum class` type. */
+    enumTypeByName: ReadonlyMap<string, string>;
+    /** Named enum `name` → bundle-relative module ref of its declaring file. */
+    enumModuleByName: ReadonlyMap<string, string>;
+};
 
 // `@Service`/RPC is a base-language concern the compiler owns end-to-end: the bundle shell calls
 // this emitter directly on `ir.services` (gated by visibility like classes). No domain pack

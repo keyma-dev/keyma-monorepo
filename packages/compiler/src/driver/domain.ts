@@ -1,30 +1,21 @@
 import type { IRDocumentValidator, IntrinsicDef } from "@keyma/core/ir";
 import type { FrontendDomain } from "../frontend-ts/index.js";
-import type { JsEmitterPack } from "../backend-js/index.js";
-import type { PythonEmitterPack } from "../backend-python/index.js";
-import type { CppEmitterPack } from "../backend-cpp/index.js";
+import type { BuildClassData } from "./class-metadata.js";
 import type { RuntimeSymbols, RecordLayout } from "./runtime-symbols.js";
-
-/**
- * A domain's backend emitter packs, keyed by target language. A domain may contribute to
- * any subset of the languages (one domain might contribute all three; another might cover
- * only some). Each pack is the per-language contribution consumed by the matching
- * `create{Js,Python,Cpp}Backend(packs)` factory.
- */
-export type KeymaDomainEmitterPacks = {
-    js?: JsEmitterPack;
-    python?: PythonEmitterPack;
-    cpp?: CppEmitterPack;
-};
 
 /**
  * The single descriptor a domain package exports from its **package root** as `keymaDomain`.
  * It bundles the domain's contribution to every extension seam so a host (the CLI) can load
- * one well-known export and wire all four seams without naming any domain-specific symbol:
+ * one well-known export and wire all the seams without naming any domain-specific symbol:
  *
- *  - `frontend`     → registered on the frontend's `FrontendExtensionRegistry`
- *  - `irValidator`  → registered on the IR `IRValidatorRegistry` (`defaultIRValidators`)
- *  - `emitterPacks` → fed to the per-language backend factories
+ *  - `frontend`        → registered on the frontend's `FrontendExtensionRegistry`
+ *  - `irValidator`     → registered on the IR `IRValidatorRegistry` (`defaultIRValidators`)
+ *  - `classMetadata`   → the neutral per-class metadata-descriptor builder, fed to every backend
+ *  - `runtimeTypeDecls`→ the JS-only runtime `.d.ts` type-surface block the JS backend appends
+ *
+ * There are no per-language backend *packs* anymore: a domain ships at most ONE neutral,
+ * language-agnostic metadata-descriptor builder (the compiler renders it for every target). The
+ * thesis holds — adding a domain needs no per-language backend code.
  *
  * `@keyma/compiler` stays domain-neutral: it only defines this contract (and the seams),
  * never a concrete domain. The type lives here — the package every domain already depends
@@ -38,8 +29,20 @@ export interface KeymaDomain {
     frontend: FrontendDomain;
     /** Optional IR section validator, registered onto the driver's validator registry. */
     irValidator?: IRDocumentValidator;
-    /** Per-language backend emitter packs (any language may be omitted). */
-    emitterPacks: KeymaDomainEmitterPacks;
+    /**
+     * The neutral, language-agnostic per-class metadata-descriptor builder (the data-model domain
+     * supplies it). Consumed by all three backends — each renders the descriptor into its
+     * `<Class>.metadata` form. Omit when the domain contributes no class metadata (e.g. a
+     * frontend-only domain); a build whose IR has classes requires exactly one domain to provide it.
+     */
+    classMetadata?: BuildClassData;
+    /**
+     * The domain's runtime type-declaration block (`ClassMetadata`/`ValidationError`/…), appended
+     * by the JS backend to every bundle's `types.d.ts` alongside the compiler-owned service/request
+     * surface. JS-only (the `.d.ts` type surface has no Python/C++ analogue). Omit when the domain
+     * inlines no type surface.
+     */
+    runtimeTypeDecls?: () => string;
     /**
      * New primitive ops this domain contributes to the intrinsic registry — recognition (so the
      * frontend lowers them to `{kind:"intrinsic"}`) **and** per-language native-snippet emission.

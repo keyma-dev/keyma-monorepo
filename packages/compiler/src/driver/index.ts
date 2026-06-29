@@ -28,6 +28,8 @@ export type {
     MetadataClassDescriptor,
     ClassMetadataOptions,
     MetadataRef,
+    ClassDataOptions,
+    BuildClassData,
 } from "./class-metadata.js";
-export type { KeymaDomain, KeymaDomainEmitterPacks } from "./domain.js";
+export type { KeymaDomain } from "./domain.js";
 export type { IntrinsicDef } from "@keyma/core/ir";

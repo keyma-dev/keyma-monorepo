@@ -6,22 +6,34 @@ import { emitIndexJs, emitIndexDts } from "./emit-index.js";
 import { emitTypesJs, emitTypesDts } from "./emit-types.js";
 import { identitySanitizer } from "./module-path.js";
 import { resolveJsTarget, type JsTargetConfig } from "./types.js";
-import { EmitterRegistry, type JsEmitterPack, type ServiceEmitDeps } from "./emitter-registry.js";
-import { emitServicesJs, emitServicesDts } from "./emit-service.js";
+import type { BuildClassData } from "../driver/index.js";
+import { emitServicesJs, emitServicesDts, type ServiceEmitDeps } from "./emit-service.js";
 import { EMITTED_RUNTIME_MODULES } from "./emitted-runtime-modules.js";
 
 /**
- * Build a JS backend from the given domain emitter packs. The generic bundle shell here is
- * domain-neutral; the per-class metadata + services come from the registered pack(s) (the
- * data-model pack is registered by the CLI). The first pack owns the core `<Class>.metadata`.
+ * The neutral hooks the JS backend reads, supplied by the host (the CLI) from the loaded domains.
+ * No per-language packs: the data-model domain provides ONE language-agnostic `classMetadata`
+ * builder (the compiler renders it into `<Class>.metadata`), plus any `.d.ts` type-surface blocks.
  */
-export function createJsBackend(packs: Iterable<JsEmitterPack>): KeymaBackend {
-    const registry = new EmitterRegistry();
-    for (const pack of packs) registry.register(pack);
+export type JsBackendOptions = {
+    /** Build the per-class metadata descriptor (the data-model domain). Absent ⇒ a core-only
+     *  build, which produces no classes. */
+    classMetadata?: BuildClassData | undefined;
+    /** Domain runtime type-declaration blocks, appended to every bundle's `types.d.ts` after the
+     *  compiler-owned service/request surface. Empty for a core-only build. */
+    runtimeTypeDecls?: readonly (() => string)[] | undefined;
+};
+
+/**
+ * Build a JS backend from the neutral domain hooks. The generic bundle shell here is
+ * domain-neutral; the per-class metadata comes from `opts.classMetadata` (the data-model
+ * domain, registered by the CLI) and the appended type surface from `opts.runtimeTypeDecls`.
+ */
+export function createJsBackend(opts: JsBackendOptions): KeymaBackend {
     return {
         name: "@keyma/compiler/backend-js",
         target: "js",
-        emit: (ir, target, config) => emitJs(ir, target, config, registry),
+        emit: (ir, target, config) => emitJs(ir, target, config, opts),
     };
 }
 
@@ -38,16 +50,10 @@ export async function emitJs(
     ir: KeymaIR,
     target: KeymaTargetConfig,
     _config: ResolvedConfig,
-    registry: EmitterRegistry
+    opts: JsBackendOptions
 ): Promise<EmitResult> {
     const jsTarget = resolveJsTarget(target as JsTargetConfig);
     const files: EmitFile[] = [];
-
-    // The registered domain emit packs. The first (primary) supplies the per-class metadata
-    // builder + the per-member function hook + the `.d.ts` shaping; the bundle shell below stays
-    // domain-agnostic. The full list is threaded through so every pack's `emitBundleFiles` can
-    // contribute its own bundle files (e.g. a UI domain). Empty for a core-only build.
-    const packs = registry.list();
 
     const decls: Decls = {
         functions: ir.functionDeclarations ?? [],
@@ -75,17 +81,17 @@ export async function emitJs(
     if (jsTarget.emitClient) {
         files.push(...emitBundle(ir, path.posix.join(jsTarget.outDir, "client"), shared, decls, {
             includePrivate: false, includeDefaults: false, bundle: "client",
-        }, packs));
+        }, opts));
     }
     if (jsTarget.emitServer) {
         files.push(...emitBundle(ir, path.posix.join(jsTarget.outDir, "server"), shared, decls, {
             includePrivate: true, includeDefaults: true, bundle: "server",
-        }, packs));
+        }, opts));
     }
     if (jsTarget.emitLibrary) {
         files.push(...emitBundle(ir, jsTarget.outDir, shared, decls, {
             includePrivate: true, includeDefaults: true, bundle: "library",
-        }, packs));
+        }, opts));
     }
 
     return { files, diagnostics: [] };
@@ -102,22 +108,20 @@ function emitBundle(
     shared: SharedDeps,
     decls: Decls,
     opts: BundleOptions,
-    packs: readonly JsEmitterPack[],
+    backend: JsBackendOptions,
 ): EmitFile[] {
     const files: EmitFile[] = [];
-    const bundle = opts.bundle;
 
-    // The primary pack — the one that builds per-class metadata (the data-model domain) —
-    // selected by CAPABILITY, not registration order. Undefined only when no registered pack
-    // builds class metadata (a core-only build, which produces no classes).
-    const pack = packs.find((p) => p.buildClassData !== undefined);
+    // The neutral per-class metadata builder (the data-model domain). Undefined only in a
+    // core-only build, which produces no classes.
+    const classMetadata = backend.classMetadata;
 
     // Inlined, dependency-free type surface — every generated `.d.ts` imports its runtime types
-    // from here. The compiler base blob carries the service/request types; each domain pack
-    // appends its own metadata declarations (e.g. `ClassMetadata`).
-    const extraTypeDecls = packs
-        .map((p) => p.runtimeTypeDecls?.())
-        .filter((d): d is string => d !== undefined && d.length > 0);
+    // from here. The compiler base blob carries the service/request types; each domain appends
+    // its own metadata declarations (e.g. `ClassMetadata`) via `runtimeTypeDecls`.
+    const extraTypeDecls = (backend.runtimeTypeDecls ?? [])
+        .map((fn) => fn())
+        .filter((d) => d.length > 0);
     files.push({ path: path.posix.join(bundleDir, "types.js"), content: emitTypesJs() });
     files.push({ path: path.posix.join(bundleDir, "types.d.ts"), content: emitTypesDts(extraTypeDecls) });
 
@@ -159,15 +163,15 @@ function emitBundle(
     for (const s of visibleClasses) slot(shared.classModule.get(s.sourceName)!).classes.push(s);
     for (const d of reachableFns) slot(shared.functionModule.get(d.name)!).functions.push(d);
 
-    if (visibleClasses.length > 0 && pack?.buildClassData === undefined) {
+    if (visibleClasses.length > 0 && classMetadata === undefined) {
         // Classes need a domain's metadata builder. Absent only in a core-only build, which
         // produces no classes — so reaching here is a real error.
-        throw new Error("no JS emitter pack with a class-metadata builder registered, but the IR has classes to emit");
+        throw new Error("no domain `classMetadata` builder provided, but the IR has classes to emit");
     }
     if (moduleContent.size > 0) {
         const deps: ModuleEmitDeps = {
             ...opts, ...shared,
-            buildClassData: pack?.buildClassData ?? (() => ({ name: "", sourceName: "", fields: [] })),
+            buildClassData: classMetadata ?? (() => ({ name: "", sourceName: "", fields: [] })),
         };
         for (const [ref, content] of moduleContent) {
             const c: ModuleContent = content;
@@ -195,15 +199,6 @@ function emitBundle(
     const indexOpts = { includePrivate: opts.includePrivate };
     files.push({ path: path.posix.join(bundleDir, "index.js"), content: emitIndexJs(visibleClasses, shared.classModule, indexOpts, serviceNames) });
     files.push({ path: path.posix.join(bundleDir, "index.d.ts"), content: emitIndexDts(visibleClasses, shared.classModule, indexOpts, serviceNames) });
-
-    // Every registered pack may contribute its own bundle files from its IR slice (e.g. the
-    // UI domain's view modules under `ui/`). Runs for all packs, not just the primary, so a
-    // second domain emits alongside the data model. Inert for packs without the hook.
-    for (const p of packs) {
-        if (p.emitBundleFiles !== undefined) {
-            files.push(...p.emitBundleFiles(ir, { bundle, bundleDir, includePrivate: opts.includePrivate }));
-        }
-    }
 
     return files;
 }

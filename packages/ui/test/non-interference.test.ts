@@ -22,11 +22,15 @@ import type { FrontendDomain } from "@keyma/compiler/frontend-ts";
 
 import { schemaFrontendDomain } from "@keyma/schema/frontend-ts";
 import { schemaIRValidator } from "@keyma/schema/ir";
-import { schemaJsEmitterPack } from "@keyma/schema/backend-js";
-import { schemaPythonEmitterPack } from "@keyma/schema/backend-python";
-import { schemaCppEmitterPack } from "@keyma/schema/backend-cpp";
+import { buildClassMetadata, EMITTED_SCHEMA_TYPES_DTS } from "@keyma/schema";
 
 import { uiFrontendDomain } from "../src/frontend-ts/index.js";
+
+// The schema domain's neutral emission hooks (the data-model `classMetadata` builder + the JS
+// `.d.ts` type surface), bound into backend options exactly as the CLI's `prepareDomains` does.
+const jsOpts = { classMetadata: buildClassMetadata, runtimeTypeDecls: [() => EMITTED_SCHEMA_TYPES_DTS] };
+const pyOpts = { classMetadata: buildClassMetadata };
+const cppOpts = { classMetadata: buildClassMetadata };
 
 // Register the schema-domain IR validator exactly as the CLI does, so validateIR runs the full
 // envelope + schema-section checks against the UI-bearing document below.
@@ -136,24 +140,24 @@ describe("non-interference: domains ['schema','ui']", () => {
     });
 
     it("JS: non-UI output byte-identical; @UiView class gains a structured `view` static", async () => {
-        const schemaOnly = await emit(createJsBackend([schemaJsEmitterPack]), irSchemaOnly, "js");
-        const both = await emit(createJsBackend([schemaJsEmitterPack]), irBoth, "js");
+        const schemaOnly = await emit(createJsBackend(jsOpts), irSchemaOnly, "js");
+        const both = await emit(createJsBackend(jsOpts), irBoth, "js");
         const changed = assertNonInterference("js", schemaOnly, both);
         assert.match(changed, /UserView\.view = \{/, "JS emits the structured view object literal");
         assert.match(changed, /"field": "name", "kind": "text"/);
     });
 
     it("Python: non-UI output byte-identical; @UiView class gains a `view` dict static", async () => {
-        const schemaOnly = await emit(createPythonBackend([schemaPythonEmitterPack]), irSchemaOnly, "python");
-        const both = await emit(createPythonBackend([schemaPythonEmitterPack]), irBoth, "python");
+        const schemaOnly = await emit(createPythonBackend(pyOpts), irSchemaOnly, "python");
+        const both = await emit(createPythonBackend(pyOpts), irBoth, "python");
         const changed = assertNonInterference("python", schemaOnly, both);
         assert.match(changed, /UserView\.view = \{/, "Python emits the view dict literal");
         assert.match(changed, /"field": "name", "kind": "text"/);
     });
 
     it("C++: non-UI output byte-identical; @UiView class gains a `view` JSON-string static", async () => {
-        const schemaOnly = await emit(createCppBackend([schemaCppEmitterPack]), irSchemaOnly, "cpp");
-        const both = await emit(createCppBackend([schemaCppEmitterPack]), irBoth, "cpp");
+        const schemaOnly = await emit(createCppBackend(cppOpts), irSchemaOnly, "cpp");
+        const both = await emit(createCppBackend(cppOpts), irBoth, "cpp");
         const changed = assertNonInterference("cpp", schemaOnly, both);
         assert.match(changed, /static inline constexpr const char\* view = R"json\(/, "C++ emits the view as a JSON-string constant");
         assert.match(changed, /"name": "UserView"/);
@@ -179,11 +183,11 @@ describe("end-to-end via drive() with both domains", () => {
             return { ir, diagnostics };
         },
     };
-    // No UI backend pack: the UI domain is frontend-only now (its `view` static rides the class module).
+    // No UI backend hooks: the UI domain is frontend-only now (its `view` static rides the class module).
     const backends: KeymaBackend[] = [
-        createJsBackend([schemaJsEmitterPack]),
-        createPythonBackend([schemaPythonEmitterPack]),
-        createCppBackend([schemaCppEmitterPack]),
+        createJsBackend(jsOpts),
+        createPythonBackend(pyOpts),
+        createCppBackend(cppOpts),
     ];
     const driveConfig = {
         source: [],

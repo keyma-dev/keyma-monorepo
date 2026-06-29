@@ -6,8 +6,7 @@ import { collectRefTargets, collectFunctionRefs, collectStatementIdentifiers, co
 import { exprToCpp, type ExprOpts } from "./emit-expression.js";
 import { stmtToCpp, plainReturn, factoryIdent, type ReturnLowerer } from "./emit-validators.js";
 import { irTypeToCpp, memberType, traitsArg, whereValueType, fieldKind, refTargetType, binaryFieldPlan, type BinaryFieldPlan } from "./ir-type-to-cpp.js";
-import type { BuildClassData } from "./emitter-registry.js";
-import type { MetadataRef } from "../driver/index.js";
+import type { BuildClassData, MetadataRef } from "../driver/index.js";
 import { emitEnumClass, emitEnumConversions } from "./emit-enum.js";
 import { emitClassMeta } from "./emit-class-meta.js";
 import { includePath, namespaceOf, cppSanitizer } from "./module-path.js";

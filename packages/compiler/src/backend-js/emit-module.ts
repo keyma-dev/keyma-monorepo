@@ -8,8 +8,7 @@ import {
 import { defaultRuntimeSymbols } from "../driver/runtime-symbols.js";
 import { stmtToJs, exprToJs } from "./emit-expression.js";
 import { irTypeToTs } from "./ir-type-to-ts.js";
-import type { BuildClassData } from "./emitter-registry.js";
-import type { MetadataClassDescriptor, MetadataFieldDescriptor, MetadataRef } from "../driver/index.js";
+import type { BuildClassData, MetadataClassDescriptor, MetadataFieldDescriptor, MetadataRef } from "../driver/index.js";
 import { emitLiteral, mkRaw } from "./emit-literal.js";
 import { factoryIdent } from "./emit-validators.js";
 import { relModuleSpecifier } from "./module-path.js";

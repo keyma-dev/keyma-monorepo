@@ -2,8 +2,8 @@
 // STATIC member (a `{kind:"json"}` blob), and the compiler's generic static-member emission renders
 // it into the class module. This test drives the real JS backend over a UI-bearing IR and asserts
 // the `view` static lands in the class's `.js` (structured literal) + `.d.ts` (`unknown`), and that a
-// plain class gets none. The schema pack is registered only to supply the per-class metadata builder
-// the JS backend requires (@keyma/schema is a test-only devDependency of @keyma/ui).
+// plain class gets none. The schema domain's neutral `classMetadata` builder is passed only to supply
+// the per-class metadata the JS backend requires (@keyma/schema is a test-only devDependency of @keyma/ui).
 import { describe, it } from "node:test";
 import assert from "node:assert/strict";
 import path from "node:path";
@@ -14,7 +14,7 @@ import type { JsTargetConfig } from "@keyma/compiler/backend-js";
 import type { KeymaIR } from "@keyma/core/ir";
 import type { ResolvedConfig, EmitFile } from "@keyma/compiler";
 import { schemaFrontendDomain } from "@keyma/schema/frontend-ts";
-import { schemaJsEmitterPack } from "@keyma/schema/backend-js";
+import { buildClassMetadata, EMITTED_SCHEMA_TYPES_DTS } from "@keyma/schema";
 import { uiFrontendDomain } from "../../src/frontend-ts/index.js";
 
 const __dirname = path.dirname(fileURLToPath(import.meta.url));
@@ -27,7 +27,7 @@ function compile(src: string): KeymaIR {
 }
 
 async function emitJs(ir: KeymaIR): Promise<EmitFile[]> {
-    const backend = createJsBackend([schemaJsEmitterPack]);
+    const backend = createJsBackend({ classMetadata: buildClassMetadata, runtimeTypeDecls: [() => EMITTED_SCHEMA_TYPES_DTS] });
     return (await backend.emit(ir, target, config)).files;
 }
 
