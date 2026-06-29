@@ -126,14 +126,19 @@ describe("emitCpp — library bundle", async () => {
         assert.ok(u.includes("inline keyma::Value User::to_value(const allocator_type& a) const { return keyma::value_traits<User>::to_value(*this, a); }"));
     });
 
-    it("attaches validators/formatters/refs by direct-ref factory call (no registry)", () => {
+    it("synthesizes validate()/format*() methods from the factories; metadata carries only ref pointers", () => {
         const u = fileBySuffix(files, "src/user.hpp");
-        assert.ok(u.includes("app::src::validators::minLength(2)"));
-        assert.ok(u.includes("keyma::Phase::Change, app::src::formatters::trim()"));
-        assert.ok(u.includes("keyma::Phase::Save"));                              // server/library includes save phase
+        // Post-Stage-B: validators/formatters no longer live in the metadata. They are lowered into
+        // synthesized methods that call the factory directly (the `using namespace` brings it into scope).
+        assert.ok(u.includes('minLength(2)(this->firstName, "firstName", ctx)'));   // validate() body
+        assert.ok(u.includes("void formatChange()"));
+        assert.ok(u.includes("void formatSave()"));                                 // save phase present in server/library
+        assert.ok(u.includes("this->firstName = trim()(this->firstName, ctx);"));   // change + save formatter call
+        // Metadata is pure introspective data: only ref pointers to the referenced classes' metadata.
         assert.ok(u.includes("&app::src::address::Address::metadata"));
         assert.ok(u.includes("&app::src::tag::Tag::metadata"));
         assert.ok(!u.includes("apply_defaults"), "metadata no longer carries an apply_defaults fn-ptr");
+        assert.ok(!u.includes("keyma::Phase::"), "metadata no longer carries phase-tagged formatters");
     });
 
     it("applies both literal and expression defaults at construction (value_traits::from_value)", () => {
@@ -146,30 +151,31 @@ describe("emitCpp — library bundle", async () => {
         assert.ok(u.includes('v.at("created").is_null() ?'));                         // expression default (new Date())
     });
 
-    it("emits services as abstract classes with pure virtual functions", () => {
+    it("emits services as RPC service classes with pure virtual coroutine methods", () => {
         const s = fileBySuffix(files, "services.hpp");
         assert.ok(s.includes("namespace app::services {"));
-        assert.ok(s.includes("class AccountService {"));
+        assert.ok(s.includes("class AccountService : public keyma::service {"));
         assert.ok(s.includes("virtual ~AccountService() = default;"));
-        assert.ok(s.includes("virtual std::shared_ptr<app::src::user::User> signup(const app::src::user::User& user) = 0;"));
-        assert.ok(s.includes("virtual bool resend(const std::pmr::string& email) = 0;"));
-        assert.ok(s.includes("virtual std::pmr::vector<app::src::tag::Tag> listTags() = 0;"));
-        assert.ok(s.includes("virtual bool purge() = 0;"));                        // private method present in server/library
+        assert.ok(s.includes("virtual keyma::task<std::shared_ptr<app::src::user::User>> signup(const app::src::user::User& user, const keyma::RequestContext& ctx) = 0;"));
+        assert.ok(s.includes("virtual keyma::task<bool> resend(const std::pmr::string& email, const keyma::RequestContext& ctx) = 0;"));
+        assert.ok(s.includes("virtual keyma::task<std::pmr::vector<app::src::tag::Tag>> listTags(const keyma::RequestContext& ctx) = 0;"));
+        assert.ok(s.includes("virtual keyma::task<bool> purge(const keyma::RequestContext& ctx) = 0;")); // private method present in server/library
         assert.ok(s.includes('#include "src/user.hpp"'));
         assert.ok(s.includes('#include "src/tag.hpp"'));
     });
 
-    it("emits typed service-call client stubs (CallLeaf builders) as an opt-in header", () => {
+    it("emits typed transport-backed service-call client stubs as an opt-in header", () => {
         const c = fileBySuffix(files, "service-client.hpp");
-        assert.ok(c.includes("#include <keyma/client.hpp>"));                       // depends on the client runtime
+        assert.ok(c.includes("#include <keyma/runtime.hpp>"));                       // depends on the runtime (transport/client_invoke)
         assert.ok(c.includes("namespace app::client {"));
-        assert.ok(c.includes("struct AccountService {"));
-        // schema return (IR reference) → hydrate the full object to the value type
-        assert.ok(c.includes("static keyma::CallLeaf<app::src::user::User> signup(const app::src::user::User& user, keyma::alloc_t __alloc = {})"));
-        assert.ok(c.includes('__args.set("user", keyma::to_value(user, __alloc));'));  // embedded arg → full object
-        assert.ok(c.includes("static keyma::CallLeaf<bool> resend(const std::pmr::string& email, keyma::alloc_t __alloc = {})"));
-        assert.ok(c.includes("static keyma::CallLeaf<std::pmr::vector<app::src::tag::Tag>> listTags(keyma::alloc_t __alloc = {})"));  // array return
-        assert.ok(c.includes("keyma::Keyma::call("));
+        assert.ok(c.includes("class AccountService {"));
+        assert.ok(c.includes("explicit AccountService(keyma::transport& transport, keyma::alloc_t alloc = {})"));
+        // schema return (IR reference) → hydrate the full object to the value type, behind a result<>
+        assert.ok(c.includes("keyma::task<keyma::result<std::shared_ptr<app::src::user::User>, keyma::error>> signup(const app::src::user::User& user) {"));
+        assert.ok(c.includes('__obj.set("user", keyma::to_value(user, __alloc));'));  // embedded arg → full object
+        assert.ok(c.includes("keyma::task<keyma::result<bool, keyma::error>> resend(const std::pmr::string& email) {"));
+        assert.ok(c.includes("keyma::task<keyma::result<std::pmr::vector<app::src::tag::Tag>, keyma::error>> listTags() {"));  // array return
+        assert.ok(c.includes('keyma::client_invoke(*__tx, "AccountService", "signup", std::move(__args))'));
         // the opt-in stub header is NOT pulled into index.hpp (keeps it vendor-safe)
         const idx = fileBySuffix(files, "index.hpp");
         assert.ok(!idx.includes("service-client.hpp"), "service-client.hpp must stay opt-in");
@@ -193,15 +199,15 @@ describe("emitCpp — library bundle", async () => {
         assert.ok(idx.includes("using services::AccountService;"));
     });
 
-    it("validators/formatters live in the configured namespace and use C++23 std::expected", () => {
+    it("validators/formatters live in the configured namespace as typed factory lambdas", () => {
         const v = fileBySuffix(files, "validators.hpp");
         assert.ok(v.includes("namespace app::src::validators {"));
-        assert.ok(v.includes("inline keyma::ValidatorFn minLength(auto value)"));
-        assert.ok(v.includes("std::expected<void, keyma::ValidationError>"));
-        assert.ok(v.includes('std::unexpected(keyma::ValidationError{'));
+        assert.ok(v.includes("inline auto minLength(auto value)"));
+        assert.ok(v.includes("std::optional<keyma::ValidationError>"));            // returns optional<error>, not expected<void>
+        assert.ok(v.includes("keyma::ValidationError{"));
         const f = fileBySuffix(files, "formatters.hpp");
         assert.ok(f.includes("namespace app::src::formatters {"));
-        assert.ok(f.includes("inline keyma::FormatterFn trim()"));
+        assert.ok(f.includes("inline auto trim()"));
     });
 });
 
@@ -227,17 +233,18 @@ describe("emitCpp — client bundle gating", async () => {
         assert.ok(!u.includes("materialize_User"), "materializer leaked into client bundle");
     });
 
-    it("still emits public fields, the change-phase formatter, and validators", () => {
+    it("still emits public fields, the change-phase formatter method, and the validate method", () => {
         assert.ok(u.includes("std::pmr::string firstName;"));
-        assert.ok(u.includes("keyma::Phase::Change"));
-        assert.ok(u.includes("app::src::validators::minLength(2)"));
+        assert.ok(u.includes("void formatChange()"));
+        assert.ok(u.includes("this->firstName = trim()(this->firstName, ctx);"));   // change-phase formatter survives
+        assert.ok(u.includes('minLength(2)(this->firstName, "firstName", ctx)'));    // validator survives in validate()
         assert.ok(u.includes("std::shared_ptr<app::src::tag::Tag> primaryTag;")); // references map the same way
     });
 
     it("emits public services but omits private methods", () => {
         assert.ok(paths.includes("out/client/services.hpp"));
         const s = fileBySuffix(files, "client/services.hpp");
-        assert.ok(s.includes("virtual bool resend(const std::pmr::string& email) = 0;"));
+        assert.ok(s.includes("virtual keyma::task<bool> resend(const std::pmr::string& email, const keyma::RequestContext& ctx) = 0;"));
         assert.ok(!s.includes("purge"), "private service method leaked into client bundle");
     });
 });
@@ -252,7 +259,7 @@ describe("emitCpp — vendorRuntime (zero-dependency drop)", async () => {
         assert.ok(rt.includes("class Value"));
         assert.ok(rt.includes("class move_only_function"), "vendored runtime should carry the move_only_function polyfill");
         assert.ok(!/\bstd::move_only_function\s*</.test(rt), "vendored runtime should not depend on std::move_only_function");
-        assert.ok(rt.includes("struct SchemaMeta"));
+        assert.ok(rt.includes("struct ClassMetadata"));
         assert.ok(rt.includes("struct value_traits"));
         assert.ok(rt.includes("from_value"));
         assert.ok(!rt.includes("#include <nlohmann") && !/#include\s+<boost/.test(rt));

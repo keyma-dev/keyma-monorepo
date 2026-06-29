@@ -122,6 +122,8 @@ describe("intrinsic lowering", () => {
             for (let i = 0; i < def.minArgs; i++) args.push(def.op === "type-is" ? lit("string") : def.op === "instance-of" ? lit("Date") : lit("x"));
             const out = exprToCpp(intr(def.op, recv, args));
             assert.ok(!out.includes("unsupported_intrinsic"), `${def.op} produced an unsupported marker: ${out}`);
+            // `self` lowers to the C++ receiver `(*this)`, not a keyma:: helper.
+            if (def.op === "self") { assert.equal(out, "(*this)"); continue; }
             assert.ok(out.startsWith("keyma::"), `${def.op} did not map to a keyma:: helper: ${out}`);
         }
     });

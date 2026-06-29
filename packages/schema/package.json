@@ -50,8 +50,9 @@
     "prebuild": "node src/scripts/gen-schema-types.mjs",
     "build": "tsc",
     "pretest": "node src/scripts/gen-schema-types.mjs",
-    "test": "tsc && cp -r test/backend-js/snapshots dist/test/backend-js/ && node --test dist/test/dsl/*.test.js dist/test/ir/*.test.js dist/test/frontend-ts/*.test.js dist/test/backend-js/*.test.js dist/test/backend-python/*.test.js",
-    "test:parity": "tsc && node --test dist/test/parity/*.test.js"
+    "test": "tsc && cp -r test/backend-js/snapshots dist/test/backend-js/ && node --test dist/test/dsl/*.test.js dist/test/ir/*.test.js dist/test/frontend-ts/*.test.js dist/test/backend-js/*.test.js dist/test/backend-python/*.test.js dist/test/backend-cpp/ir-type-to-cpp.test.js dist/test/backend-cpp/emit-expression.test.js dist/test/backend-cpp/backend.test.js",
+    "test:parity": "tsc && node --test dist/test/parity/*.test.js",
+    "test:cpp": "tsc && node --test dist/test/backend-cpp/binary.test.js dist/test/backend-cpp/compile-smoke.test.js"
   },
   "dependencies": {
     "@keyma/core": "^0.0.1",

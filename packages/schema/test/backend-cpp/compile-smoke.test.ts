@@ -77,33 +77,28 @@ int main() {
     assert(keyma::to_string(app::Status::Active) == "active");
     assert(keyma::from_string<app::Status>(std::string_view{"archived"}) == app::Status::Archived);
 
+    // Metadata is now PURE introspective data — validators/formatters/defaults no longer live in it
+    // (Stage B moved them into synthesized methods; defaults apply at construction, and the
+    // metadata-driven keyma::validate/format/apply_defaults A-oracle was deleted). So we read only the
+    // structural facts off the metadata and exercise the synthesized methods directly.
     const keyma::ClassMetadata& m = app::User::metadata();
-    keyma::Context ctx{rec};
-    for (const auto& fld : m.fields) {
-        if (fld.name == "firstName") {
-            auto r = fld.validators[0](rec.at("firstName"), "firstName", ctx);
-            assert(r.has_value());
-            auto fmtd = fld.formatters[0].fn(rec.at("firstName"), ctx);
-            assert(fmtd.as_string() == "Ada");
-        }
-    }
-    if (m.apply_defaults) m.apply_defaults(rec, a);
-    assert(rec.at("role").as_string() == "user");        // literal default applied
+    assert(m.name == "user" && m.source_name == "User");
+    assert(m.fields.size() > 0);
 
-    // The opt-in validation DRIVERS over the metadata — keyma::validate / format / apply_defaults.
-    // They live in the vendored runtime header too (gen-runtime-header ORDER), so THIS SAME consumer
-    // compiles in both the -I runtime bundle and the zero-dependency vendored bundle (the drivers
-    // are exercised behaviorally by the cross-language parity harness; here they only need to
-    // resolve + instantiate against whichever runtime header the bundle carries).
+    // Defaults apply at construction (value_traits::from_value): rec omits "role", so the typed
+    // model already carries the literal default — there is no metadata-driven apply_defaults pass.
+    assert(u.role == "user");
+
+    // The synthesized validate()/formatSave() carry what the metadata used to: the minLength
+    // validator and the trim save-formatter. Instantiating them proves they compile and resolve
+    // against whichever runtime header the bundle carries (the -I runtime AND the zero-dependency
+    // vendored bundle); they are exercised behaviorally by the cross-language parity harness.
     {
-        keyma::Value vrec = keyma::Value::object(a);
-        vrec.set("firstName", keyma::Value(std::string_view{"  Ada  "}, a));
-        std::pmr::vector<keyma::ValidationError> verrs = keyma::validate(m, vrec, a);
-        (void) verrs;                                    // required-but-absent fields → errors
-        keyma::format(m, vrec, keyma::Phase::Save);      // trim formatter on firstName
-        assert(vrec.at("firstName").as_string() == "Ada");
-        keyma::apply_defaults(m, vrec, a);
-        assert(vrec.at("role").as_string() == "user");
+        app::User vu = app::User::from_value(rec, a);    // firstName == "  Ada " from the record above
+        auto verrs = vu.validate();                      // runs the minLength validator on firstName
+        (void) verrs;
+        vu.formatSave();                                 // trim save-phase formatter on firstName
+        assert(vu.firstName == "Ada");
     }
 
     // Getters are accessors on the typed struct (no materializer is emitted).

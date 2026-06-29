@@ -34,7 +34,7 @@ function fld(
 /**
  * A binary-enabled IR exercising the typed-binary codegen across every framing kind. Since
  * schema-data.ts now emits the full nested wire detail (element/target/bits/unsigned/idType),
- * the dynamic codec over `schema()` is a complete byte-equality oracle for BOTH structs:
+ * the dynamic codec over `metadata()` is a complete byte-equality oracle for BOTH structs:
  *  - Doc: scalar / optional-only / nullable / two-axis Field / array / json / string-id reference.
  *  - Rich: embedded / int-id reference / named enum / float32 / unsigned / array-of-embedded /
  *    array-of-references.
@@ -199,7 +199,7 @@ int main() {
 }
 
 // Consumer: compiles the emitted binary codec, asserts Doc byte-equality vs the dynamic
-// schema()-driven codec (the cardinal cross-path invariant) and a full struct round-trip,
+// metadata()-driven codec (the cardinal cross-path invariant) and a full struct round-trip,
 // plus a Rich round-trip exercising embedded / enum / float / unsigned / int-id reference.
 const CONSUMER = `#include "index.hpp"
 #include <keyma/binary.hpp>
@@ -223,7 +223,7 @@ static std::string hx(std::span<const std::byte> b) {
 int main() {
     std::pmr::monotonic_buffer_resource pool; alloc_t a(&pool);
 
-    // ── Doc: byte-equality vs encode_binary(Doc::schema(), v, Server) + round-trip ──
+    // ── Doc: byte-equality vs encode_binary(Doc::metadata(), v, Server) + round-trip ──
     Value v = Value::object(a);
     v.set("id", Value(std::string_view("d-1"), a));
     v.set("name", Value(std::string_view("Title"), a));
@@ -238,7 +238,7 @@ int main() {
 
     D doc = D::from_value(v, a);
     ByteBuf typed = keyma::to_binary<D>(doc, a);
-    ByteBuf dyn = keyma::encode_binary(D::schema(), v, SerializeTarget::Server, a);
+    ByteBuf dyn = keyma::encode_binary(D::metadata(), v, SerializeTarget::Server, a);
     if (hx(sp(typed)) != hx(sp(dyn))) {
         std::cerr << "Doc byte mismatch\\n  typed   " << hx(sp(typed)) << "\\n  dynamic " << hx(sp(dyn)) << "\\n";
         return 1;
@@ -273,7 +273,7 @@ int main() {
 
     R rich = R::from_value(rv, a);
     ByteBuf rtyped = keyma::to_binary<R>(rich, a);
-    ByteBuf rdyn = keyma::encode_binary(R::schema(), rv, SerializeTarget::Server, a);
+    ByteBuf rdyn = keyma::encode_binary(R::metadata(), rv, SerializeTarget::Server, a);
     if (hx(sp(rtyped)) != hx(sp(rdyn))) {
         std::cerr << "Rich byte mismatch\\n  typed   " << hx(sp(rtyped)) << "\\n  dynamic " << hx(sp(rdyn)) << "\\n";
         return 1;
