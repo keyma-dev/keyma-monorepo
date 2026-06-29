@@ -1,5 +1,5 @@
 import type { IRClassDeclaration, IRMember, IRMethod, IRFunctionDeclaration, IRType } from "@keyma/core/ir";
-import { collectRefTargets, collectFunctionRefs, collectStatementIdentifiers, filterVisibleFields, filterVisibleMethods, methodBodyForBundle, type Bundle } from "@keyma/core/util";
+import { collectRefTargets, collectFunctionRefs, collectStatementIdentifiers, filterVisibleFields, filterVisibleMethods, methodBodyForBundle, staticValueForBundle, type Bundle } from "@keyma/core/util";
 import { defaultRuntimeSymbols } from "../driver/runtime-symbols.js";
 import { renderStatements, factoryIdent } from "./emit-validators.js";
 import { intrinsicImports, exprToPython } from "./emit-expression.js";
@@ -164,6 +164,14 @@ function emitClass(cls: IRClassDeclaration, deps: ModuleEmitDeps): string[] {
         bundle: deps.bundle,
     });
     lines.push(renderClassMetadata(cls, descriptor, classRefs(fields, deps.classNameByName)));
+
+    // Synthesized static members (e.g. a domain `metadata`-style blob): emitted from base IR as
+    // module-level `Class.<name> = <value>` after the class body — the same shape as the metadata
+    // line above — audience-gated like a method body. Empty for plain classes (additive: no class
+    // carries a static today, so existing output is byte-identical).
+    for (const s of cls.statics ?? []) {
+        lines.push(`${cls.sourceName}.${s.name} = ${exprToPython(staticValueForBundle(s, deps.bundle))}`);
+    }
 
     return lines;
 }

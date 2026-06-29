@@ -7,6 +7,7 @@ import type {
     IRFunctionDeclaration,
     IRMethod,
     IRDiagnostic,
+    IRExpression,
 } from "@keyma/core/ir";
 import { stmtToCpp, plainReturn } from "../../src/backend-cpp/emit-validators.js";
 import { emitModuleCpp, CPP_ASYNC_DIAGNOSTIC, type ModuleEmitDeps } from "../../src/backend-cpp/emit-module.js";
@@ -295,5 +296,53 @@ describe("emitModuleCpp — async diagnostic (issue 010)", () => {
         assert.equal(sink[0]!.code, CPP_ASYNC_DIAGNOSTIC);
         assert.ok(!content.includes("fetch"), "async method must be omitted");
         assert.ok(!content.includes("net("), "the awaited body must not be emitted");
+    });
+});
+
+// ─── statics — synthesized static members + audience gating ───────────────────
+
+describe("emitModuleCpp — static members + audience", () => {
+    const num = (v: number): IRExpression => ({ kind: "literal", value: v });
+    const withStatics: IRClassDeclaration = {
+        name: "Cfg",
+        sourceName: "Cfg",
+        visibility: "public",
+        fields: [{ name: "id", type: { kind: "id" }, visibility: "public", readonly: false, required: true, source: loc() }],
+        statics: [
+            { name: "version", value: num(2) },
+            {
+                name: "shape",
+                value: num(99),                       // full (server/library)
+                audience: { audiences: ["server", "library"], fallback: num(1) },  // reduced (client)
+            },
+        ],
+        source: loc(),
+    };
+
+    it("emits each static as an in-struct `static inline const` for the bundle audience", () => {
+        const content = emitModuleCpp(MODULE_REF, [withStatics], [], [], makeDeps([withStatics]));
+        // Untyped statics deduce (`auto`); the value is the full audience value (library bundle).
+        assert.ok(content.includes("static inline const auto version = 2;"), content);
+        assert.ok(content.includes("static inline const auto shape = 99;"), content);
+    });
+
+    it("picks the audience fallback value for the client bundle", () => {
+        const content = emitModuleCpp(MODULE_REF, [withStatics], [], [], { ...makeDeps([withStatics]), bundle: "client" });
+        assert.ok(content.includes("static inline const auto version = 2;"), content);
+        assert.ok(content.includes("static inline const auto shape = 1;"), content);
+        assert.ok(!content.includes("static inline const auto shape = 99;"), content);
+    });
+
+    it("spells the C++ type when the static carries one", () => {
+        const typed: IRClassDeclaration = {
+            name: "Cfg",
+            sourceName: "Cfg",
+            visibility: "public",
+            fields: [{ name: "id", type: { kind: "id" }, visibility: "public", readonly: false, required: true, source: loc() }],
+            statics: [{ name: "version", value: num(2), type: { kind: "number" } }],
+            source: loc(),
+        };
+        const content = emitModuleCpp(MODULE_REF, [typed], [], [], makeDeps([typed]));
+        assert.ok(content.includes("static inline const double version = 2;"), content);
     });
 });

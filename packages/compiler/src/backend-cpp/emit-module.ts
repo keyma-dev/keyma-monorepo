@@ -2,7 +2,7 @@ import type {
     IRClassDeclaration, IRMember, IRType, IRMethod, IREnumDeclaration,
     IRFunctionDeclaration, IRDiagnostic, IRExpression, IRStatement,
 } from "@keyma/core/ir";
-import { collectRefTargets, collectFunctionRefs, collectStatementIdentifiers, collectIntrinsicOpsInStatement, unwrapArray, filterVisible, filterVisibleFields, filterVisibleMethods, inheritedFields, methodBodyForBundle } from "@keyma/core/util";
+import { collectRefTargets, collectFunctionRefs, collectStatementIdentifiers, collectIntrinsicOpsInStatement, unwrapArray, filterVisible, filterVisibleFields, filterVisibleMethods, inheritedFields, methodBodyForBundle, staticValueForBundle } from "@keyma/core/util";
 import { exprToCpp, type ExprOpts } from "./emit-expression.js";
 import { stmtToCpp, plainReturn, factoryIdent, type ReturnLowerer } from "./emit-validators.js";
 import { irTypeToCpp, memberType, traitsArg, whereValueType, fieldKind, refTargetType, binaryFieldPlan, type BinaryFieldPlan } from "./ir-type-to-cpp.js";
@@ -395,6 +395,16 @@ function emitStruct(cls: IRClassDeclaration, deps: ModuleEmitDeps, diagnostics: 
     // Typed field descriptors (consumed by keyma/query.hpp). The full set — a child's `f` would
     // otherwise HIDE the base's, so `Child::f::baseField` must resolve here.
     lines.push(...emitFieldDescriptors(C, fullFields(cls, deps), deps));
+
+    // Synthesized static members (e.g. a domain `json` blob): emitted from base IR as in-struct
+    // `static inline const` constants, audience-gated like a method body. A typed static spells
+    // its C++ type; an untyped one deduces (`auto`). The value expression names no instance field
+    // (a static has no `this`), so `fieldExpr` is identity. Empty for plain classes (additive: no
+    // struct carries a static today, so existing output is byte-identical).
+    for (const s of cls.statics ?? []) {
+        const ty = s.type !== undefined ? irTypeToCpp(s.type, deps.cppTypeByName, deps.enumTypeByName) : "auto";
+        lines.push(`    static inline const ${ty} ${s.name} = ${exprToCpp(staticValueForBundle(s, deps.bundle), { fieldExpr: (n) => n })};`);
+    }
 
     lines.push(`    static const keyma::ClassMetadata& metadata();`);
     lines.push(`};`);

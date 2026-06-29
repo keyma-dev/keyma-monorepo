@@ -156,6 +156,37 @@ describe("emitModulePython — bodyAudience (method body gated per bundle)", () 
     });
 });
 
+// ─── statics — synthesized static members + audience gating ───────────────────
+describe("emitModulePython — static members + audience", () => {
+    const num = (v: number): IRExpression => ({ kind: "literal", value: v });
+    const withStatics = cls({
+        name: "Cfg",
+        sourceName: "Cfg",
+        fields: [field("id", { kind: "id" })],
+        statics: [
+            { name: "version", value: num(2) },
+            {
+                name: "shape",
+                value: num(99),                       // full (server/library)
+                audience: { audiences: ["server", "library"], fallback: num(1) },  // reduced (client)
+            },
+        ],
+    });
+
+    it("emits each static as `Class.<name> = <value>` for the bundle audience", () => {
+        const py = emitModulePython("src/cfg", content([withStatics]), { ...deps, bundle: "library" });
+        assert.ok(py.includes("Cfg.version = 2"), py);
+        assert.ok(py.includes("Cfg.shape = 99"), py);
+    });
+
+    it("picks the audience fallback value for the client bundle", () => {
+        const py = emitModulePython("src/cfg", content([withStatics]), { ...deps, bundle: "client" });
+        assert.ok(py.includes("Cfg.version = 2"), py);
+        assert.ok(py.includes("Cfg.shape = 1"), py);
+        assert.ok(!py.includes("Cfg.shape = 99"), py);
+    });
+});
+
 // ─── 008 from_value walks the inheritance chain ───────────────────────────────
 describe("emitModulePython — from_value under real inheritance (008)", () => {
     it("a subclass _hydrate delegates to super()._hydrate", () => {
