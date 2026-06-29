@@ -1,87 +1,120 @@
 import ts from "typescript";
-import { isFromModule } from "@keyma/compiler/frontend-ts";
-import type { FrontendDomain, DomainContext } from "@keyma/compiler/frontend-ts";
-import { UI_DOMAIN, UI_DSL_MODULE, type UiExtension, type UiView, type UiWidget } from "../extension.js";
+import { staticMember, obj, arrayExpr, literal } from "@keyma/core/ir";
+import type { IRClassDeclaration, IRMember, IRExpression } from "@keyma/core/ir";
+import type {
+    FrontendDomain, DomainBaseContext, DomainContext,
+} from "@keyma/compiler/frontend-ts";
+import { UI_DOMAIN, UI_DSL_MODULE, type UiWidget } from "../extension.js";
 
 const VIEW_DECORATOR = "UiView";
 const WIDGET_DECORATOR = "Widget";
 
 /**
- * The UI frontend domain in the inverted control flow: a declarative descriptor whose artifact is
- * a program-wide scan, not per-class IR enrichment. It registers NO IR-mutating decorators — a
- * `@UiView` class is lowered by the compiler as an ordinary data class (so the schema IR sections
- * are byte-identical with or without this domain) — and contributes a single document-level slice
- * via `documentExtension`: the catalog of `@UiView` classes (and their `@Widget` fields) imported
- * from `@keyma/ui/dsl`, written to `ir.extensions['ui']`. It depends only on
- * `@keyma/compiler/frontend-ts` (the neutral recognition helper `isFromModule`) and `@keyma/core`,
- * never on `@keyma/schema`, so it composes with the schema domain without interference: a class
- * without `@UiView` is invisible to it, and the schema domain is equally blind to `@UiView`.
+ * The per-class view data the UI frontend accumulates while it walks a class's decorators.
+ * `isView` is set the moment the class's `@UiView` is dispatched; `widgets` accrues each
+ * `@Widget`-decorated field in declaration order (a member handler may fire before or after the
+ * class handler, so both use get-or-create). Synthesized into the `view` static in `afterNormalize`.
+ */
+type StashedView = {
+    isView: boolean;
+    title: string;
+    route: string;
+    widgets: UiWidget[];
+};
+
+/** The UI domain's per-compile state: the accumulated view data, keyed by the class IR node. */
+type UiState = {
+    views: WeakMap<IRClassDeclaration, StashedView>;
+};
+
+/**
+ * The UI frontend domain — now FRONTEND-ONLY (no per-language backend pack). It owns the
+ * `@UiView` (class) and `@Widget` (member) decorators: their handlers stash each view's
+ * `{ title, route }` + ordered widget list into `ctx.state`, and `afterNormalize` synthesizes a
+ * per-class `view` STATIC member (a `{kind:"json"}` object literal) that the compiler's generic
+ * static-member emission renders blindly (JS/Python as a structured literal, C++ as a JSON string).
+ *
+ * It depends only on `@keyma/compiler/frontend-ts` + `@keyma/core`, never on `@keyma/schema`, so it
+ * composes with the schema domain without interference: a class without `@UiView` gains no static
+ * (so NON-`@UiView` output stays byte-identical with or without this domain), and the schema domain
+ * is equally blind to `@UiView`. There is no longer a document-level `ir.extensions['ui']` slice.
  */
 export const uiFrontendDomain: FrontendDomain = {
     name: UI_DOMAIN,
     dslModule: UI_DSL_MODULE,
-    decorators: [],
-    documentExtension(program: ts.Program, ctx: DomainContext): UiExtension | undefined {
-        const { checker } = ctx;
-        const dslModule = ctx.dslModuleName ?? UI_DSL_MODULE;
-        const views: UiView[] = [];
 
-        for (const sf of program.getSourceFiles()) {
-            if (sf.isDeclarationFile) continue;
-            ts.forEachChild(sf, (node) => {
-                if (!ts.isClassDeclaration(node) || node.name === undefined) return;
-                if (findDecorator(node, checker, dslModule, VIEW_DECORATOR) === undefined) return;
+    init(_ctx: DomainBaseContext): UiState {
+        return { views: new WeakMap() };
+    },
 
-                const { title, route } = readViewOptions(node, checker, dslModule);
-                const widgets: UiWidget[] = [];
-                for (const member of node.members) {
-                    if (!ts.isPropertyDeclaration(member) || !ts.isIdentifier(member.name)) continue;
-                    const widget = findDecorator(member, checker, dslModule, WIDGET_DECORATOR);
-                    if (widget === undefined) continue;
-                    widgets.push({ field: member.name.text, kind: readWidgetKind(widget) });
-                }
+    decorators: [
+        {
+            // `@UiView({ title, route })` marks the class as a view and records its options.
+            name: VIEW_DECORATOR,
+            module: UI_DSL_MODULE,
+            target: "class",
+            handle(deco, ir, ctx) {
+                const stash = stashOf(ctx.state as UiState, ir as IRClassDeclaration);
+                stash.isView = true;
+                const { title, route } = readViewOptions(deco);
+                stash.title = title;
+                stash.route = route;
+            },
+        },
+        {
+            // `@Widget(kind)` binds the field to a widget; appended to the owning view in order.
+            name: WIDGET_DECORATOR,
+            module: UI_DSL_MODULE,
+            target: "member",
+            handle(deco, ir, ctx) {
+                const stash = stashOf(ctx.state as UiState, ctx.class);
+                stash.widgets.push({ field: (ir as IRMember).name, kind: readWidgetKind(deco) });
+            },
+        },
+    ],
 
-                views.push({ name: node.name.text, title, route, widgets });
+    /**
+     * Post-normalize: synthesize the `view` static on each `@UiView` class. The static's value is a
+     * `json` object literal `{ name, title, route, widgets: [{ field, kind }, …] }` (the same shape
+     * the legacy document catalog carried, with `name` = the class's `sourceName`). The `{kind:"json"}`
+     * type makes the compiler render it as an introspective data blob. A class never marked `@UiView`
+     * gets no static — leaving its output byte-identical to a UI-domain-free build.
+     */
+    afterNormalize(classes: readonly IRClassDeclaration[], _nameMap, ctx: DomainContext): void {
+        const state = ctx.state as UiState;
+        for (const cls of classes) {
+            const stash = state.views.get(cls);
+            if (stash === undefined || !stash.isView) continue;
+            const value: IRExpression = obj({
+                name: literal(cls.sourceName),
+                title: literal(stash.title),
+                route: literal(stash.route),
+                widgets: arrayExpr(
+                    stash.widgets.map((w) => obj({ field: literal(w.field), kind: literal(w.kind) })),
+                ),
             });
+            const view = staticMember({ name: "view", value, type: { kind: "json" } });
+            cls.statics = [...(cls.statics ?? []), view];
         }
-
-        // Returning undefined contributes nothing (the driver omits the `ui` extension key).
-        return views.length > 0 ? { views } : undefined;
     },
 };
 
-/**
- * Find a `@Name(...)`/`@Name` decorator on a class or property whose identifier resolves to an
- * import from `dslModule`. The specifier gate (via `isFromModule`) is what keeps a UI domain
- * from claiming an identically-named decorator from some other package.
- */
-function findDecorator(
-    node: ts.HasDecorators,
-    checker: ts.TypeChecker,
-    dslModule: string,
-    name: string,
-): ts.Decorator | undefined {
-    for (const decorator of ts.getDecorators(node) ?? []) {
-        const expr = decorator.expression;
-        const ident = ts.isCallExpression(expr) ? expr.expression : expr;
-        if (!ts.isIdentifier(ident) || ident.text !== name) continue;
-        const symbol = checker.getSymbolAtLocation(ident);
-        if (symbol !== undefined && isFromModule(symbol, checker, dslModule)) return decorator;
+/** Get-or-create the per-class view stash in the domain state. */
+function stashOf(state: UiState, cls: IRClassDeclaration): StashedView {
+    let stash = state.views.get(cls);
+    if (stash === undefined) {
+        stash = { isView: false, title: "", route: "", widgets: [] };
+        state.views.set(cls, stash);
     }
-    return undefined;
+    return stash;
 }
 
-/** Read `{ title, route }` string options off the `@UiView(...)` decorator; "" when absent. */
-function readViewOptions(
-    node: ts.ClassDeclaration,
-    checker: ts.TypeChecker,
-    dslModule: string,
-): { title: string; route: string } {
+/** Read `{ title, route }` string options off the `@UiView(...)` decorator node; "" when absent. */
+function readViewOptions(deco: ts.Decorator): { title: string; route: string } {
     let title = "";
     let route = "";
-    const view = findDecorator(node, checker, dslModule, VIEW_DECORATOR);
-    const expr = view?.expression;
-    if (expr !== undefined && ts.isCallExpression(expr) && expr.arguments.length > 0) {
+    const expr = deco.expression;
+    if (ts.isCallExpression(expr) && expr.arguments.length > 0) {
         const arg = expr.arguments[0];
         if (arg !== undefined && ts.isObjectLiteralExpression(arg)) {
             for (const prop of arg.properties) {
@@ -96,8 +129,8 @@ function readViewOptions(
 }
 
 /** Read the first string-literal argument of `@Widget(kind)`; "" when absent. */
-function readWidgetKind(decorator: ts.Decorator): string {
-    const expr = decorator.expression;
+function readWidgetKind(deco: ts.Decorator): string {
+    const expr = deco.expression;
     if (ts.isCallExpression(expr) && expr.arguments.length > 0) {
         const arg = expr.arguments[0];
         if (arg !== undefined && ts.isStringLiteralLike(arg)) return arg.text;

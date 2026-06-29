@@ -402,13 +402,40 @@ function emitStruct(cls: IRClassDeclaration, deps: ModuleEmitDeps, diagnostics: 
     // (a static has no `this`), so `fieldExpr` is identity. Empty for plain classes (additive: no
     // struct carries a static today, so existing output is byte-identical).
     for (const s of cls.statics ?? []) {
+        const value = staticValueForBundle(s, deps.bundle);
+        // A `json`-typed static cannot be a `keyma::Value` here: a static initializes with no
+        // allocator (objectToCpp/arrayToCpp build a Value on a passed alloc_t). Render it instead
+        // as a JSON STRING constant — serialize the pure-JSON literal at emit time, embedded as a
+        // raw string (the same representation the legacy UI `views.hpp` used for the view blob).
+        if (s.type?.kind === "json") {
+            const json = JSON.stringify(jsonFromExpr(value), null, 2);
+            lines.push(`    static inline constexpr const char* ${s.name} = R"json(${json})json";`);
+            continue;
+        }
         const ty = s.type !== undefined ? irTypeToCpp(s.type, deps.cppTypeByName, deps.enumTypeByName) : "auto";
-        lines.push(`    static inline const ${ty} ${s.name} = ${exprToCpp(staticValueForBundle(s, deps.bundle), { fieldExpr: (n) => n })};`);
+        lines.push(`    static inline const ${ty} ${s.name} = ${exprToCpp(value, { fieldExpr: (n) => n })};`);
     }
 
     lines.push(`    static const keyma::ClassMetadata& metadata();`);
     lines.push(`};`);
     return lines;
+}
+
+/** Serialize a pure-JSON IR expression (object/array/literal trees) to a plain JS value, for the
+ *  C++ json-static string representation. Throws on any non-literal node — a `{kind:"json"}` static
+ *  must carry a literal blob (the only such static today is the UI `view` catalog). */
+function jsonFromExpr(e: IRExpression): unknown {
+    switch (e.kind) {
+        case "literal": return e.value;
+        case "array": return e.elements.map(jsonFromExpr);
+        case "object": {
+            const out: Record<string, unknown> = {};
+            for (const p of e.properties) out[p.key] = jsonFromExpr(p.value);
+            return out;
+        }
+        default:
+            throw new Error(`json static: unsupported expression kind "${e.kind}" — a {kind:"json"} static must be a pure JSON literal`);
+    }
 }
 
 // ─── Field descriptors (`struct f`) ───────────────────────────────────────────

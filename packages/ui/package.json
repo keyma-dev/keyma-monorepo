@@ -2,7 +2,7 @@
   "name": "@keyma/ui",
   "version": "0.0.1",
   "private": true,
-  "description": "Keyma UI domain (smoke) — proves a second domain plugs into the same four seams (DSL recognition, frontend extraction, IR extensions, JS/Python/C++ emitter packs) without editing @keyma/compiler",
+  "description": "Keyma UI domain (smoke) — a FRONTEND-ONLY second domain: its @UiView/@Widget decorators synthesize a per-class `view` static the compiler emits blindly, with zero per-language backend code, without editing @keyma/compiler",
   "type": "module",
   "exports": {
     ".": {
@@ -16,27 +16,12 @@
     "./frontend-ts": {
       "import": "./dist/src/frontend-ts/index.js",
       "types": "./dist/src/frontend-ts/index.d.ts"
-    },
-    "./backend-js": {
-      "import": "./dist/src/backend-js/index.js",
-      "types": "./dist/src/backend-js/index.d.ts"
-    },
-    "./backend-python": {
-      "import": "./dist/src/backend-python/index.js",
-      "types": "./dist/src/backend-python/index.d.ts"
-    },
-    "./backend-cpp": {
-      "import": "./dist/src/backend-cpp/index.js",
-      "types": "./dist/src/backend-cpp/index.d.ts"
     }
   },
   "files": [
     "dist/src",
     "dist/src/dsl",
-    "dist/src/frontend-ts",
-    "dist/src/backend-js",
-    "dist/src/backend-python",
-    "dist/src/backend-cpp"
+    "dist/src/frontend-ts"
   ],
   "repository": {
     "type": "git",
